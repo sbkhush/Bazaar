@@ -106,7 +106,7 @@ export const DynamicSeoHead: React.FC<DynamicSeoHeadProps> = ({
     const canonicalUrl =
       typeof window !== 'undefined'
         ? `${window.location.origin}${window.location.pathname}`
-        : `https://bazaarpk.com${location.pathname}`;
+        : `https://sbkhush.com${location.pathname}`;
 
     const tags =
       mode === 'platform'

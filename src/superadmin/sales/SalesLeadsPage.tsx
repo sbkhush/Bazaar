@@ -305,7 +305,7 @@ export const SalesLeadsPage: React.FC = () => {
 
   const exportCsv = () => {
     downloadCsvFile(
-      `bazaarpk-sales-leads-${new Date().toISOString().slice(0, 10)}.csv`,
+      `sbkhush-sales-leads-${new Date().toISOString().slice(0, 10)}.csv`,
       ['Lead ID', 'Business Name', 'Owner Name', 'Phone', 'Email', 'City', 'Industry', 'Status', 'Assigned To', 'Source', 'Next Follow-Up', 'Notes'],
       filtered.map((l) => [
         l.id,

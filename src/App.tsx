@@ -22,6 +22,9 @@ import { PlatformLandingPage } from './platform/PlatformLandingPage';
 import { RegisterShopPage } from './platform/RegisterShopPage';
 import { LoginPage } from './platform/LoginPage';
 import { ReferralRedirectPage } from './platform/ReferralRedirectPage';
+import { PlatformLegalPage } from './pages/PlatformLegalPage';
+import { PWAStatusBanner } from './components/common/PWAStatusBanner';
+import { BRAND } from './config/brand';
 
 // Layer 2: Super Admin Portal
 import { SuperAdminLayout } from './superadmin/SuperAdminLayout';
@@ -50,10 +53,16 @@ import { SalesReportsPage } from './superadmin/sales/SalesReportsPage';
 import { SalesActivityLogsPage } from './superadmin/sales/SalesActivityLogsPage';
 import { SalesSettingsPage } from './superadmin/sales/SalesSettingsPage';
 
-// Layer 2B: Individual Salesman Portal
+// Layer 2B: Individual Salesman, Sales Manager & Referral Agent Portals
 import { SalesmanLoginPage } from './salesman/SalesmanLoginPage';
 import { SalesmanLayout } from './salesman/SalesmanLayout';
 import { SalesmanDashboardPage } from './salesman/SalesmanDashboardPage';
+import { SalesManagerLoginPage } from './salesmanager/SalesManagerLoginPage';
+import { SalesManagerLayout } from './salesmanager/SalesManagerLayout';
+import { SalesManagerDashboardPage } from './salesmanager/SalesManagerDashboardPage';
+import { ReferralLoginPage } from './referral/ReferralLoginPage';
+import { ReferralLayout } from './referral/ReferralLayout';
+import { ReferralDashboardPage } from './referral/ReferralDashboardPage';
 
 // Layer 3: Merchant Shop Dashboard
 import { ShopDashboardLayout } from './dashboard/ShopDashboardLayout';
@@ -106,7 +115,7 @@ const StorefrontLayout: React.FC = () => {
   const hasChildSeo =
     pathname.includes('/product/') ||
     pathname.endsWith('/shop') ||
-    /\/(about|faq|return-policy|terms|privacy)$/.test(pathname);
+    /\/(about|faq|return-policy|terms|privacy|privacy-policy|terms-and-conditions)$/.test(pathname);
 
   if (loading) {
     return (
@@ -125,7 +134,7 @@ const StorefrontLayout: React.FC = () => {
         </div>
         <h1 className="text-2xl font-black text-slate-900">Storefront Not Found</h1>
         <p className="text-xs text-slate-500 max-w-sm leading-relaxed">
-          No active store was found at <span className="font-mono text-slate-700">/s/{shopSlug}</span>. Verify the store URL or launch your own store on BazaarPK Cloud.
+          No active store was found at <span className="font-mono text-slate-700">{storeBasePath}</span>. Verify the store URL or launch your own store on {BRAND.name}.
         </p>
         <div className="flex flex-wrap gap-3 pt-2 justify-center">
           <Link
@@ -191,10 +200,12 @@ const StorefrontLayout: React.FC = () => {
   );
 };
 
-const TenantRouteWrapper: React.FC = () => {
+const TenantRouteWrapper: React.FC<{ basePrefix?: '/s' | '/shop' }> = ({
+  basePrefix = '/s',
+}) => {
   const { shopSlug } = useParams<{ shopSlug: string }>();
   return (
-    <TenantProvider slug={shopSlug || DEFAULT_SHOP_ID}>
+    <TenantProvider slug={shopSlug || DEFAULT_SHOP_ID} basePrefix={basePrefix}>
       <CartProvider>
         <WishlistProvider>
           <StorefrontLayout />
@@ -279,14 +290,18 @@ export default function App() {
       <AuthProvider>
         <ToastProvider>
           <BrowserRouter basename={basename}>
+            <PWAStatusBanner />
             <Routes>
-              {/* Layer 1: SaaS Platform Marketing & Auth */}
+              {/* Layer 1: SaaS Platform Marketing, Legal & Auth */}
               <Route path="/" element={<PlatformLandingPage />} />
               <Route path="/register" element={<RegisterShopPage />} />
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/merchant/login" element={<LoginPage />} />
+              <Route path="/privacy-policy" element={<PlatformLegalPage type="privacy" />} />
+              <Route path="/terms-and-conditions" element={<PlatformLegalPage type="terms" />} />
               <Route path="/r/:refCode" element={<ReferralRedirectPage />} />
 
-              {/* Layer 2B: Individual Salesman Portal */}
+              {/* Layer 2B: Individual Salesman Portal (Strict Role Guard) */}
               <Route path="/salesman/login" element={<SalesmanLoginPage />} />
               <Route path="/salesman" element={<SalesmanLayout />}>
                 <Route index element={<SalesmanDashboardPage />} />
@@ -295,40 +310,64 @@ export default function App() {
                 <Route path="targets" element={<SalesmanDashboardPage />} />
                 <Route path="commissions" element={<SalesmanDashboardPage />} />
                 <Route path="payouts" element={<SalesmanDashboardPage />} />
+                <Route path="expenses" element={<SalesmanDashboardPage />} />
+                <Route path="materials" element={<SalesmanDashboardPage />} />
                 <Route path="activities" element={<SalesmanDashboardPage />} />
                 <Route path="qr" element={<SalesmanDashboardPage />} />
                 <Route path="notifications" element={<SalesmanDashboardPage />} />
-                <Route path="team" element={<SalesmanDashboardPage />} />
               </Route>
 
-              {/* Layer 2: Super Admin Portal */}
-              <Route path="/super-admin" element={<SuperAdminLayout />}>
-                <Route index element={<SuperAdminDashboardPage />} />
-                <Route path="shops" element={<SuperAdminShopsPage />} />
-                <Route path="shops/:shopId" element={<SuperAdminShopDetailPage />} />
-                <Route path="plans" element={<SuperAdminPlansPage />} />
-                <Route path="payments" element={<SuperAdminPaymentsPage />} />
-                <Route path="analytics" element={<SuperAdminAnalyticsPage />} />
-                <Route path="support" element={<SuperAdminSupportPage />} />
-                <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
-                <Route path="settings" element={<SuperAdminSettingsPage />} />
-                <Route path="sales" element={<SalesOverviewPage />} />
-                <Route path="sales/portal" element={<SalesPortalAccessPage />} />
-                <Route path="sales/members" element={<SalesMembersPage />} />
-                <Route path="sales/members/new" element={<SalesMembersPage defaultCreateOpen />} />
-                <Route path="sales/members/:memberId" element={<SalesMemberDetailPage />} />
-                <Route path="sales/teams" element={<SalesTeamsPage />} />
-                <Route path="sales/leads" element={<SalesLeadsPage />} />
-                <Route path="sales/registrations" element={<SalesRegistrationsPage />} />
-                <Route path="sales/referrals" element={<SalesReferralsPage />} />
-                <Route path="sales/targets" element={<SalesTargetsPage />} />
-                <Route path="sales/commissions" element={<SalesCommissionsPage />} />
-                <Route path="sales/payouts" element={<SalesPayoutsPage />} />
-                <Route path="sales/qr-codes" element={<SalesQrCodesPage />} />
-                <Route path="sales/reports" element={<SalesReportsPage />} />
-                <Route path="sales/activity-logs" element={<SalesActivityLogsPage />} />
-                <Route path="sales/settings" element={<SalesSettingsPage />} />
+              {/* Layer 2C: Sales Manager Portal (Strict Team-Scoped Role Guard) */}
+              <Route path="/sales-manager/login" element={<SalesManagerLoginPage />} />
+              <Route path="/sales-manager" element={<SalesManagerLayout />}>
+                <Route index element={<SalesManagerDashboardPage />} />
+                <Route path="team" element={<SalesManagerDashboardPage />} />
+                <Route path="leads" element={<SalesManagerDashboardPage />} />
+                <Route path="activities" element={<SalesManagerDashboardPage />} />
+                <Route path="targets" element={<SalesManagerDashboardPage />} />
+                <Route path="reports" element={<SalesManagerDashboardPage />} />
+                <Route path="bonuses" element={<SalesManagerDashboardPage />} />
               </Route>
+
+              {/* Layer 2D: Referral Agent Portal (Referral & Approved Rewards Only) */}
+              <Route path="/referral/login" element={<ReferralLoginPage />} />
+              <Route path="/referral" element={<ReferralLayout />}>
+                <Route index element={<ReferralDashboardPage />} />
+                <Route path="qr" element={<ReferralDashboardPage />} />
+                <Route path="referrals" element={<ReferralDashboardPage />} />
+                <Route path="rewards" element={<ReferralDashboardPage />} />
+              </Route>
+
+              {/* Layer 2: Super Admin Portal (/super-admin/* and /admin/* strictly Super Admin only) */}
+              {['/super-admin', '/admin'].map((adminPrefix) => (
+                <Route key={adminPrefix} path={adminPrefix} element={<SuperAdminLayout />}>
+                  <Route index element={<SuperAdminDashboardPage />} />
+                  <Route path="shops" element={<SuperAdminShopsPage />} />
+                  <Route path="shops/:shopId" element={<SuperAdminShopDetailPage />} />
+                  <Route path="plans" element={<SuperAdminPlansPage />} />
+                  <Route path="payments" element={<SuperAdminPaymentsPage />} />
+                  <Route path="analytics" element={<SuperAdminAnalyticsPage />} />
+                  <Route path="support" element={<SuperAdminSupportPage />} />
+                  <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
+                  <Route path="settings" element={<SuperAdminSettingsPage />} />
+                  <Route path="sales" element={<SalesOverviewPage />} />
+                  <Route path="sales/portal" element={<SalesPortalAccessPage />} />
+                  <Route path="sales/members" element={<SalesMembersPage />} />
+                  <Route path="sales/members/new" element={<SalesMembersPage defaultCreateOpen />} />
+                  <Route path="sales/members/:memberId" element={<SalesMemberDetailPage />} />
+                  <Route path="sales/teams" element={<SalesTeamsPage />} />
+                  <Route path="sales/leads" element={<SalesLeadsPage />} />
+                  <Route path="sales/registrations" element={<SalesRegistrationsPage />} />
+                  <Route path="sales/referrals" element={<SalesReferralsPage />} />
+                  <Route path="sales/targets" element={<SalesTargetsPage />} />
+                  <Route path="sales/commissions" element={<SalesCommissionsPage />} />
+                  <Route path="sales/payouts" element={<SalesPayoutsPage />} />
+                  <Route path="sales/qr-codes" element={<SalesQrCodesPage />} />
+                  <Route path="sales/reports" element={<SalesReportsPage />} />
+                  <Route path="sales/activity-logs" element={<SalesActivityLogsPage />} />
+                  <Route path="sales/settings" element={<SalesSettingsPage />} />
+                </Route>
+              ))}
 
               {/* Layer 3: Shop Admin Management Portal */}
               <Route path="/dashboard" element={<ShopDashboardLayout />}>
@@ -352,26 +391,37 @@ export default function App() {
                 <Route path="profile" element={<ShopProfilePage />} />
               </Route>
 
-              {/* Layer 4: Multi-Tenant Public Storefronts */}
-              <Route path="/s/:shopSlug" element={<TenantRouteWrapper />}>
-                <Route index element={<HomePage />} />
-                <Route path="shop" element={<ShopPage />} />
-                <Route path="product/:id" element={<ProductDetailPage />} />
-                <Route path="cart" element={<CartPage />} />
-                <Route path="checkout" element={<CheckoutPage />} />
-                <Route path="order-success/:id" element={<OrderSuccessPage />} />
-                <Route path="account" element={<AccountPage />} />
-                <Route path="tracking" element={<OrderTrackingPage />} />
-                <Route path="contact" element={<ContactPage />} />
-                <Route path="about" element={<AboutPage />} />
-                <Route path="faq" element={<FAQPage />} />
-                <Route path="return-policy" element={<ReturnPolicyPage />} />
-                <Route path="terms" element={<TermsPage />} />
-                <Route path="privacy" element={<PrivacyPage />} />
-                <Route path="*" element={<StoreNotFoundPage />} />
-              </Route>
+              {/* Layer 4: Multi-Tenant Public Storefronts (/s/:shopSlug & /shop/:shopSlug) */}
+              {[
+                { path: '/s/:shopSlug', prefix: '/s' as const },
+                { path: '/shop/:shopSlug', prefix: '/shop' as const },
+              ].map((mount) => (
+                <Route
+                  key={mount.path}
+                  path={mount.path}
+                  element={<TenantRouteWrapper basePrefix={mount.prefix} />}
+                >
+                  <Route index element={<HomePage />} />
+                  <Route path="shop" element={<ShopPage />} />
+                  <Route path="product/:id" element={<ProductDetailPage />} />
+                  <Route path="cart" element={<CartPage />} />
+                  <Route path="checkout" element={<CheckoutPage />} />
+                  <Route path="order-success/:id" element={<OrderSuccessPage />} />
+                  <Route path="account" element={<AccountPage />} />
+                  <Route path="tracking" element={<OrderTrackingPage />} />
+                  <Route path="contact" element={<ContactPage />} />
+                  <Route path="about" element={<AboutPage />} />
+                  <Route path="faq" element={<FAQPage />} />
+                  <Route path="return-policy" element={<ReturnPolicyPage />} />
+                  <Route path="terms" element={<TermsPage />} />
+                  <Route path="terms-and-conditions" element={<TermsPage />} />
+                  <Route path="privacy" element={<PrivacyPage />} />
+                  <Route path="privacy-policy" element={<PrivacyPage />} />
+                  <Route path="*" element={<StoreNotFoundPage />} />
+                </Route>
+              ))}
 
-              {/* Legacy Flagship BazaarPK Route Redirects */}
+              {/* Legacy Flagship Store Route Redirects */}
               <Route path="/shop" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/shop`} replace />} />
               <Route path="/product/:id" element={<LegacyProductRedirect />} />
               <Route path="/cart" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/cart`} replace />} />
@@ -383,10 +433,8 @@ export default function App() {
               <Route path="/about" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/about`} replace />} />
               <Route path="/faq" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/faq`} replace />} />
               <Route path="/return-policy" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/return-policy`} replace />} />
-              <Route path="/terms" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/terms`} replace />} />
-              <Route path="/privacy" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/privacy`} replace />} />
-              <Route path="/admin/*" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/admin" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/terms" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/terms-and-conditions`} replace />} />
+              <Route path="/privacy" element={<Navigate to={`/s/${DEFAULT_SHOP_ID}/privacy-policy`} replace />} />
 
               {/* Platform-wide Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />

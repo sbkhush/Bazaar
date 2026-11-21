@@ -28,6 +28,7 @@ import {
   INITIAL_PRODUCTS,
   INITIAL_CATEGORIES,
 } from '../../data/seedData';
+import { SafeImage } from './SafeImage';
 
 export const Header: React.FC = () => {
   const { currentUser, logout } = useAuth();
@@ -147,13 +148,17 @@ export const Header: React.FC = () => {
               <Link to={`${storeBasePath}/tracking`} className="hover:text-white flex items-center gap-1 transition">
                 <Truck className="w-3.5 h-3.5" /> Track Order
               </Link>
-              <span>|</span>
-              <a
-                href={`tel:${settings.contactPhone}`}
-                className="hover:text-white flex items-center gap-1 transition"
-              >
-                <Phone className="w-3.5 h-3.5" /> {settings.contactPhone}
-              </a>
+              {settings.contactPhone && (
+                <>
+                  <span>|</span>
+                  <a
+                    href={`tel:${settings.contactPhone}`}
+                    className="hover:text-white flex items-center gap-1 transition"
+                  >
+                    <Phone className="w-3.5 h-3.5" /> {settings.contactPhone}
+                  </a>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -173,7 +178,7 @@ export const Header: React.FC = () => {
             {/* Logo */}
             <Link to={storeBasePath} className="flex items-center gap-2.5 shrink-0 min-w-0">
               {settings.logoUrl ? (
-                <img
+                <SafeImage
                   src={settings.logoUrl}
                   alt={settings.siteName}
                   className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl object-cover border border-slate-200 shrink-0"
@@ -183,14 +188,14 @@ export const Header: React.FC = () => {
                   className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl flex items-center justify-center text-white font-extrabold text-lg sm:text-xl shadow-md shrink-0"
                   style={{ backgroundColor: brandColor }}
                 >
-                  <span>{(settings.siteName || 'B')[0].toUpperCase()}</span>
+                  <span>{(settings.siteName || 'S')[0].toUpperCase()}</span>
                 </div>
               )}
               <div className="flex flex-col min-w-0">
                 <span className="text-lg sm:text-2xl font-black tracking-tight text-slate-900 flex items-center gap-0.5 truncate">
-                  {settings.siteName === 'BazaarPK' ? (
+                  {settings.siteName === 'SB Khush' ? (
                     <>
-                      Bazaar<span className="text-emerald-700">PK</span>
+                      SB <span className="text-emerald-700">Khush</span>
                     </>
                   ) : (
                     <span>{settings.siteName}</span>
@@ -248,13 +253,11 @@ export const Header: React.FC = () => {
                           onClick={() => setSearchFocused(false)}
                           className="flex items-center gap-3 p-2 rounded-xl hover:bg-slate-50 transition"
                         >
-                          <img
+                          <SafeImage
                             src={item.images[0] || FALLBACK_PRODUCT_IMAGE}
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).src = FALLBACK_PRODUCT_IMAGE;
-                            }}
+                            fallbackSrc={FALLBACK_PRODUCT_IMAGE}
                             alt={item.title}
-                            className="w-12 h-12 object-cover rounded-lg border border-slate-100"
+                            className="w-12 h-12 object-cover rounded-lg border border-slate-100 shrink-0"
                           />
                           <div className="flex-1 min-w-0">
                             <h4 className="text-xs font-semibold text-slate-800 truncate">
@@ -437,11 +440,9 @@ export const Header: React.FC = () => {
                         onClick={() => setSearchFocused(false)}
                         className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-slate-50"
                       >
-                        <img
+                        <SafeImage
                           src={item.images[0] || FALLBACK_PRODUCT_IMAGE}
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).src = FALLBACK_PRODUCT_IMAGE;
-                          }}
+                          fallbackSrc={FALLBACK_PRODUCT_IMAGE}
                           alt={item.title}
                           className="w-10 h-10 object-cover rounded-lg border border-slate-100 shrink-0"
                         />

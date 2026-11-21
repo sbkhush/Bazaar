@@ -27,7 +27,7 @@ export const SalesReferralsPage: React.FC = () => {
 
   const exportCsv = () => {
     downloadCsvFile(
-      `bazaarpk-referrals-${new Date().toISOString().slice(0, 10)}.csv`,
+      `sbkhush-referrals-${new Date().toISOString().slice(0, 10)}.csv`,
       ['Shop ID', 'Shop Name', 'Owner Email', 'Referral Code', 'Salesman', 'Source', 'Attribution Status', 'Revenue Generated', 'Date'],
       filtered.map((r) => [
         r.shopId,

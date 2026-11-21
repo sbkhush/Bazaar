@@ -31,8 +31,9 @@ const TenantContext = createContext<TenantContextType | undefined>(undefined);
 export const TenantProvider: React.FC<{
   slug?: string;
   shopIdOverride?: string;
+  basePrefix?: '/s' | '/shop';
   children: React.ReactNode;
-}> = ({ slug, shopIdOverride, children }) => {
+}> = ({ slug, shopIdOverride, basePrefix = '/s', children }) => {
   const domainTenant = resolveTenantFromHostname();
   const targetSlug = slug || domainTenant || DEFAULT_SHOP_ID;
   const [shop, setShop] = useState<ShopPublic | null>(null);
@@ -56,7 +57,7 @@ export const TenantProvider: React.FC<{
         : await getShopPublicBySlug(targetSlug);
 
       if (!resolvedShop) {
-        // Graceful flagship BazaarPK compatibility if migration hasn't run yet
+        // Graceful flagship legacy store compatibility if migration hasn't run yet
         if (targetSlug === DEFAULT_SHOP_ID) {
           setShop({
             id: DEFAULT_SHOP_ID,
@@ -135,7 +136,7 @@ export const TenantProvider: React.FC<{
         notFound,
         isSuspended,
         isExpired,
-        storeBasePath: `/s/${effectiveSlug}`,
+        storeBasePath: `${basePrefix}/${effectiveSlug}`,
         refreshTenant: loadTenant,
       }}
     >

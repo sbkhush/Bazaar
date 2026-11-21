@@ -18,6 +18,7 @@ import {
   deleteStorageImageByUrl,
   StorageFolder,
 } from '../../services/storageService';
+import { SafeImage } from './SafeImage';
 
 interface ImageUploaderProps {
   shopId: string;
@@ -235,7 +236,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           <input
             ref={inputRef}
             type="file"
-            accept="image/jpeg,image/png,image/webp,image/gif"
+            accept="image/jpeg,image/png,image/webp,image/gif,image/*"
             multiple={multiple}
             onChange={(e) => handleFiles(e.target.files)}
             className="hidden"
@@ -298,9 +299,10 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
               key={`${src.slice(0, 32)}_${idx}`}
               className="group relative aspect-square bg-slate-100 rounded-lg border border-slate-200 overflow-hidden"
             >
-              <img
+              <SafeImage
                 src={src}
                 alt={`Preview ${idx + 1}`}
+                fallbackText="Unavailable"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />

@@ -22,7 +22,7 @@ export const AdminProductsPage: React.FC = () => {
   const [sku, setSku] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('eastern-wear');
-  const [brand, setBrand] = useState('BazaarPK');
+  const [brand, setBrand] = useState('SB Khush');
   const [regularPrice, setRegularPrice] = useState<number>(3500);
   const [salePrice, setSalePrice] = useState<number | undefined>(undefined);
   const [stock, setStock] = useState<number>(20);
@@ -56,7 +56,7 @@ export const AdminProductsPage: React.FC = () => {
     setSku(`SKU-${Math.floor(100000 + Math.random() * 900000)}`);
     setDescription('');
     setCategory(categories[0]?.slug || 'eastern-wear');
-    setBrand('BazaarPK');
+    setBrand('SB Khush');
     setRegularPrice(3500);
     setSalePrice(undefined);
     setStock(25);

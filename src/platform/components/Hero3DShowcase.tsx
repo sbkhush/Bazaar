@@ -103,7 +103,7 @@ export const Hero3DShowcase: React.FC<{ announcement?: string }> = ({ announceme
 
             <p className="text-sm sm:text-base lg:text-lg text-slate-300 leading-relaxed max-w-xl">
               Products, inventory, sales, customers aur online orders — sab kuch ek hi powerful
-              platform par manage karein. BazaarPK ke saath apne business ko digital banayein.
+              platform par manage karein. SB Khush ke saath apne business ko digital banayein.
             </p>
 
             <div className="flex flex-wrap items-center gap-3.5 pt-1">
@@ -154,11 +154,11 @@ export const Hero3DShowcase: React.FC<{ announcement?: string }> = ({ announceme
                     <span className="w-2.5 h-2.5 rounded-full bg-amber-400/80 shrink-0" />
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400/80 shrink-0" />
                     <span className="ml-2 font-mono text-[11px] text-slate-400 truncate">
-                      bazaarpk.app/s/al-madina-mart
+                      sbkhush.com/s/your-store
                     </span>
                   </div>
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-300 shrink-0">
-                    Sample Preview
+                    Capability Preview
                   </span>
                 </div>
 
@@ -168,8 +168,8 @@ export const Hero3DShowcase: React.FC<{ announcement?: string }> = ({ announceme
                   <div className="sm:col-span-7 rounded-xl border border-white/10 bg-white/[0.04] p-3.5 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-[11px] font-medium text-slate-400">Weekly Store Revenue</p>
-                        <p className="text-lg font-extrabold text-white tabular-nums">Rs. 184,500</p>
+                        <p className="text-[11px] font-medium text-slate-400">Daily Revenue &amp; Profit</p>
+                        <p className="text-lg font-extrabold text-white">Live PKR Ledger</p>
                       </div>
                       <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300">
                         <BarChart3 className="w-4 h-4" />
@@ -238,12 +238,12 @@ export const Hero3DShowcase: React.FC<{ announcement?: string }> = ({ announceme
                         <Receipt className="w-4 h-4" />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-white truncate">POS Counter Bill #1042</p>
-                        <p className="text-[11px] text-slate-300 truncate">Barcode Scan · Cash Paid</p>
+                        <p className="text-xs font-bold text-white truncate">Counter POS Billing</p>
+                        <p className="text-[11px] text-slate-300 truncate">Barcode Scan · Thermal Print</p>
                       </div>
                     </div>
-                    <span className="text-xs font-extrabold text-cyan-300 tabular-nums shrink-0">
-                      Rs. 2,890
+                    <span className="text-xs font-extrabold text-cyan-300 shrink-0">
+                      Instant
                     </span>
                   </div>
 
@@ -254,8 +254,8 @@ export const Hero3DShowcase: React.FC<{ announcement?: string }> = ({ announceme
                         <ShoppingBag className="w-4 h-4" />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-white truncate">Order PK-391840</p>
-                        <p className="text-[11px] text-slate-300 truncate">JazzCash Receipt · TCS Ready</p>
+                        <p className="text-xs font-bold text-white truncate">Online Order Workflow</p>
+                        <p className="text-[11px] text-slate-300 truncate">JazzCash Proof · TCS Ready</p>
                       </div>
                     </div>
                     <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />

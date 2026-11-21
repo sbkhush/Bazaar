@@ -29,14 +29,15 @@ import {
   getPayoutsForSalesman,
   getReferralsForSalesman,
   getSalesActivitiesBySalesman,
-  getSalesLeadsForManager,
+  getSalesExpensesForMember,
   getSalesLeadsForSalesman,
-  getSalesMembersForManager,
   getSalesNotifications,
   getSalesTargetsForMember,
+  getApprovedSalesMaterials,
   markAllSalesNotificationsRead,
   markSalesNotificationRead,
   recordSalesActivity,
+  submitSalesExpense,
   updateSalesLead,
   updateSalesMember,
 } from '../services/salesService';
@@ -55,9 +56,10 @@ import {
   PayoutMethod,
   ReferralAttribution,
   SalesActivity,
+  SalesExpense,
   SalesLead,
   SalesLeadStatus,
-  SalesMember,
+  SalesMaterial,
   SalesNotification,
   SalesTarget,
 } from '../types';
@@ -69,13 +71,14 @@ type PortalSection =
   | 'targets'
   | 'commissions'
   | 'payouts'
+  | 'expenses'
+  | 'materials'
   | 'activities'
   | 'qr'
-  | 'notifications'
-  | 'team';
+  | 'notifications';
 
 export const SalesmanDashboardPage: React.FC = () => {
-  const { currentUser, salesMember, isSalesManager, refreshSalesMember } = useAuth();
+  const { currentUser, salesMember, refreshSalesMember } = useAuth();
   const { showToast } = useToast();
   const { pathname } = useLocation();
 
@@ -85,10 +88,11 @@ export const SalesmanDashboardPage: React.FC = () => {
     if (pathname.endsWith('/targets')) return 'targets';
     if (pathname.endsWith('/commissions')) return 'commissions';
     if (pathname.endsWith('/payouts')) return 'payouts';
+    if (pathname.endsWith('/expenses')) return 'expenses';
+    if (pathname.endsWith('/materials')) return 'materials';
     if (pathname.endsWith('/activities')) return 'activities';
     if (pathname.endsWith('/qr')) return 'qr';
     if (pathname.endsWith('/notifications')) return 'notifications';
-    if (pathname.endsWith('/team')) return 'team';
     return 'overview';
   }, [pathname]);
 
@@ -100,8 +104,16 @@ export const SalesmanDashboardPage: React.FC = () => {
   const [activities, setActivities] = useState<SalesActivity[]>([]);
   const [targets, setTargets] = useState<SalesTarget[]>([]);
   const [notifications, setNotifications] = useState<SalesNotification[]>([]);
-  const [teamMembers, setTeamMembers] = useState<SalesMember[]>([]);
-  const [teamLeads, setTeamLeads] = useState<SalesLead[]>([]);
+  const [expenses, setExpenses] = useState<SalesExpense[]>([]);
+  const [materials, setMaterials] = useState<SalesMaterial[]>([]);
+  const [expenseForm, setExpenseForm] = useState({
+    category: 'travel' as SalesExpense['category'],
+    amount: '',
+    expenseDate: new Date().toISOString().slice(0, 10),
+    description: '',
+    receiptUrl: '',
+  });
+  const [submittingExpense, setSubmittingExpense] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [copied, setCopied] = useState(false);
 
@@ -143,7 +155,7 @@ export const SalesmanDashboardPage: React.FC = () => {
     try {
       const uid = currentUser.uid;
       const mid = salesMember.id;
-      const [l, r, c, p, a, t, n] = await Promise.all([
+      const [l, r, c, p, a, t, n, ex, mats] = await Promise.all([
         getSalesLeadsForSalesman(mid, uid),
         getReferralsForSalesman(mid, uid),
         getCommissionsForSalesman(mid, uid),
@@ -151,6 +163,8 @@ export const SalesmanDashboardPage: React.FC = () => {
         getSalesActivitiesBySalesman(mid, uid),
         getSalesTargetsForMember(mid, uid),
         getSalesNotifications(mid, uid),
+        getSalesExpensesForMember(uid),
+        getApprovedSalesMaterials(),
       ]);
       setLeads(l);
       setReferrals(r);
@@ -159,15 +173,8 @@ export const SalesmanDashboardPage: React.FC = () => {
       setActivities(a);
       setTargets(t);
       setNotifications(n);
-
-      if (isSalesManager) {
-        const [tm, tl] = await Promise.all([
-          getSalesMembersForManager(uid),
-          getSalesLeadsForManager(uid, true),
-        ]);
-        setTeamMembers(tm);
-        setTeamLeads(tl);
-      }
+      setExpenses(ex);
+      setMaterials(mats.filter((m) => m.audience === 'all_sales' || m.audience === 'salesmen_only'));
 
       if (salesMember.referralLink) {
         const url = await generateQrDataUrl(salesMember.referralLink, 480);
@@ -180,7 +187,7 @@ export const SalesmanDashboardPage: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [currentUser?.uid, salesMember?.id, isSalesManager]);
+  }, [currentUser?.uid, salesMember?.id]);
 
   if (!salesMember || !currentUser) return null;
 
@@ -312,6 +319,42 @@ export const SalesmanDashboardPage: React.FC = () => {
       showToast('Preferred payout account saved.', 'success');
     } catch (err: any) {
       showToast(err?.message || 'Could not update payout account details.', 'error');
+    }
+  };
+
+  const handleSubmitExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amt = Number(expenseForm.amount);
+    if (!Number.isFinite(amt) || amt <= 0 || !expenseForm.description.trim()) {
+      showToast('Enter a valid expense amount and description.', 'error');
+      return;
+    }
+    setSubmittingExpense(true);
+    try {
+      await submitSalesExpense({
+        salesmanId: salesMember.id,
+        salesmanUid: currentUser.uid,
+        salesmanName: salesMember.fullName,
+        managerUid: salesMember.assignedManagerUid,
+        category: expenseForm.category,
+        amount: amt,
+        expenseDate: expenseForm.expenseDate,
+        description: expenseForm.description,
+        receiptUrl: expenseForm.receiptUrl.trim() || undefined,
+      });
+      showToast('Expense claim submitted as pending Super Admin approval.', 'success');
+      setExpenseForm({
+        category: 'travel',
+        amount: '',
+        expenseDate: new Date().toISOString().slice(0, 10),
+        description: '',
+        receiptUrl: '',
+      });
+      await loadData();
+    } catch (err: any) {
+      showToast(err?.message || 'Unable to submit expense.', 'error');
+    } finally {
+      setSubmittingExpense(false);
     }
   };
 
@@ -912,40 +955,137 @@ export const SalesmanDashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* TEAM VIEW (MANAGERS ONLY) */}
-      {section === 'team' && isSalesManager && (
+      {/* BUSINESS EXPENSES (PENDING SUPER ADMIN APPROVAL; NO SELF-APPROVAL) */}
+      {section === 'expenses' && (
         <div className="space-y-6">
-          <h2 className="text-xl font-extrabold text-slate-900">
-            My Team ({teamMembers.length} Rep(s) · {teamLeads.length} Team Lead(s))
-          </h2>
+          <form onSubmit={handleSubmitExpense} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs">
+            <div>
+              <h2 className="text-base font-extrabold text-slate-900">Submit Field Business Expense</h2>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                All expense claims start as pending and require independent Super Admin approval.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <select
+                value={expenseForm.category}
+                onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value as SalesExpense['category'] })}
+                className="px-3 py-2 border border-slate-200 rounded-xl bg-white"
+              >
+                <option value="travel">Travel &amp; Conveyance</option>
+                <option value="fuel">Fuel Allowance</option>
+                <option value="meals">Client Meals</option>
+                <option value="internet_calls">Mobile / Data Package</option>
+                <option value="client_demo">Client Demo Supplies</option>
+                <option value="other">Other Authorized Expense</option>
+              </select>
+              <input
+                type="number"
+                min="1"
+                required
+                placeholder="Amount (PKR) *"
+                value={expenseForm.amount}
+                onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })}
+                className="px-3 py-2 border border-slate-200 rounded-xl"
+              />
+              <input
+                type="date"
+                required
+                value={expenseForm.expenseDate}
+                onChange={(e) => setExpenseForm({ ...expenseForm, expenseDate: e.target.value })}
+                className="px-3 py-2 border border-slate-200 rounded-xl"
+              />
+            </div>
+            <input
+              type="text"
+              required
+              placeholder="Expense description & shop visit purpose *"
+              value={expenseForm.description}
+              onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-200 rounded-xl"
+            />
+            <button
+              type="submit"
+              disabled={submittingExpense}
+              className="px-5 py-2.5 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl font-bold"
+            >
+              {submittingExpense ? 'Submitting...' : 'Submit Expense Claim'}
+            </button>
+          </form>
+
           <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-            {teamMembers.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-500">No salesmen assigned under your manager account yet.</div>
+            <div className="px-5 py-4 border-b border-slate-100 font-extrabold text-sm text-slate-900">
+              My Expense Claims ({expenses.length})
+            </div>
+            <div className="divide-y divide-slate-100 text-xs">
+              {expenses.length === 0 ? (
+                <p className="p-8 text-center text-slate-500">No expense claims submitted yet.</p>
+              ) : (
+                expenses.map((ex) => (
+                  <div key={ex.id} className="p-4 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-bold text-slate-900 capitalize">
+                        {ex.category.replace('_', ' ')} · {formatPKR(ex.amount)}
+                      </p>
+                      <p className="text-slate-600 mt-0.5">{ex.description} ({ex.expenseDate})</p>
+                      {ex.rejectionReason && (
+                        <p className="text-rose-700 text-[11px] mt-0.5">Reason: {ex.rejectionReason}</p>
+                      )}
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-bold capitalize ${
+                        ex.status === 'approved'
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : ex.status === 'rejected'
+                          ? 'bg-rose-50 text-rose-700'
+                          : 'bg-amber-50 text-amber-700'
+                      }`}
+                    >
+                      {ex.status}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* APPROVED SALES MATERIALS */}
+      {section === 'materials' && (
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-xl font-extrabold text-slate-900">Approved Sales Materials</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Official merchant pitch decks, pricing sheets, and onboarding brochures approved by Super Admin.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            {materials.length === 0 ? (
+              <div className="md:col-span-2 bg-white border border-slate-200 rounded-2xl p-10 text-center text-slate-500">
+                No sales collateral uploaded by Super Admin yet.
+              </div>
             ) : (
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Rep</th>
-                    <th className="px-4 py-3">Territory & City</th>
-                    <th className="px-4 py-3">Monthly Target</th>
-                    <th className="px-4 py-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {teamMembers.map((m) => (
-                    <tr key={m.id}>
-                      <td className="px-4 py-3 font-bold text-slate-900">
-                        {m.fullName} ({m.employeeId})
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">
-                        {m.territory} · {m.city}
-                      </td>
-                      <td className="px-4 py-3 font-semibold tabular-nums">{formatPKR(m.monthlyTarget)}</td>
-                      <td className="px-4 py-3 capitalize">{m.accountStatus}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              materials.map((m) => (
+                <div key={m.id} className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col justify-between gap-3">
+                  <div>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-[#065F46] text-[10px] font-bold uppercase">
+                      {m.category.replace('_', ' ')}
+                    </span>
+                    <h3 className="text-sm font-extrabold text-slate-900 mt-2">{m.title}</h3>
+                    <p className="text-slate-600 mt-1 leading-relaxed">{m.description}</p>
+                  </div>
+                  {m.fileUrl && (
+                    <a
+                      href={m.fileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-[#065F46] hover:underline"
+                    >
+                      <FileDown className="w-4 h-4" /> Open / Download Resource
+                    </a>
+                  )}
+                </div>
+              ))
             )}
           </div>
         </div>

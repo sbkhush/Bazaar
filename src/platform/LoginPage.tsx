@@ -3,11 +3,18 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Lock, Mail, Loader2, ShieldCheck, Store, ArrowRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { DEFAULT_SHOP_ID } from '../data/seedData';
+import { BrandLogo } from '../components/common/BrandLogo';
+import { BRAND } from '../config/brand';
 
 export const LoginPage: React.FC = () => {
   const {
     currentUser,
     isSuperAdmin,
+    isSalesManager,
+    isSalesman,
+    isReferralAgent,
+    authorizedRole,
+    authorizedHomePath,
     shopMemberships,
     loginWithEmail,
     loginWithGoogle,
@@ -22,15 +29,28 @@ export const LoginPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
 
-  // Automatic smart workspace suggestion / redirect when signed in
+  // Automatic strict workspace routing based on verified role
   useEffect(() => {
     if (loading || !currentUser) return;
     if (isSuperAdmin && shopMemberships.length === 0) {
       navigate('/super-admin', { replace: true });
+    } else if (isSalesManager || isSalesman || isReferralAgent) {
+      navigate(authorizedHomePath, { replace: true });
     } else if (!isSuperAdmin && shopMemberships.length > 0) {
       navigate('/dashboard', { replace: true });
     }
-  }, [currentUser, isSuperAdmin, shopMemberships, loading, navigate]);
+  }, [
+    currentUser,
+    isSuperAdmin,
+    isSalesManager,
+    isSalesman,
+    isReferralAgent,
+    authorizedRole,
+    authorizedHomePath,
+    shopMemberships,
+    loading,
+    navigate,
+  ]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,7 +148,7 @@ export const LoginPage: React.FC = () => {
               to={`/s/${DEFAULT_SHOP_ID}`}
               className="w-full p-3.5 rounded-xl border border-slate-200 hover:bg-slate-50 flex items-center justify-between text-xs font-semibold text-slate-700"
             >
-              <span>Browse BazaarPK Storefront</span>
+              <span>Browse {BRAND.name} Storefront</span>
               <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
@@ -141,11 +161,8 @@ export const LoginPage: React.FC = () => {
     <div className="min-h-screen bg-[#FAF9F6] flex flex-col justify-center py-12 px-4">
       <div className="max-w-md w-full mx-auto space-y-6">
         <div className="text-center">
-          <Link to="/" className="inline-flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-[#065F46] text-white flex items-center justify-center font-extrabold text-base">
-              B
-            </div>
-            <span className="font-extrabold text-lg text-slate-900">BazaarPK Cloud</span>
+          <Link to="/" className="inline-flex items-center justify-center">
+            <BrandLogo variant="full" tone="dark" size="lg" />
           </Link>
           <h1 className="text-2xl font-extrabold text-slate-900 mt-4">Workspace Sign In</h1>
           <p className="text-xs text-slate-500 mt-1">

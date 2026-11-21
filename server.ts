@@ -134,6 +134,72 @@ async function isAuthorizedSuperAdmin(user: VerifiedFirebaseUser): Promise<boole
   return Boolean(adminSnap && adminSnap.exists() && adminSnap.data()?.active !== false);
 }
 
+interface TrustedSalesMemberDoc {
+  id: string;
+  uid?: string;
+  email: string;
+  fullName: string;
+  role: 'salesman' | 'senior_salesman' | 'sales_manager' | 'referral_agent';
+  accountStatus: string;
+  assignedManagerId?: string;
+  assignedManagerUid?: string;
+  referralCode?: string;
+  referralLink?: string;
+  [key: string]: any;
+}
+
+const ALLOWED_SERVER_SALES_ROLES = ['salesman', 'senior_salesman', 'sales_manager', 'referral_agent'];
+
+async function resolveTrustedSalesMember(user: VerifiedFirebaseUser): Promise<TrustedSalesMemberDoc | null> {
+  const byUid = await getDocs(query(collection(db, 'salesMembers'), where('uid', '==', user.uid))).catch(() => null);
+  if (byUid && !byUid.empty) {
+    const d = byUid.docs[0];
+    const data = d.data() as any;
+    if (ALLOWED_SERVER_SALES_ROLES.includes(data.role)) {
+      return { ...data, id: d.id };
+    }
+  }
+  if (user.email && user.emailVerified) {
+    const byEmail = await getDocs(query(collection(db, 'salesMembers'), where('email', '==', user.email))).catch(() => null);
+    if (byEmail && !byEmail.empty) {
+      const d = byEmail.docs[0];
+      const data = d.data() as any;
+      if (ALLOWED_SERVER_SALES_ROLES.includes(data.role)) {
+        return { ...data, id: d.id };
+      }
+    }
+  }
+  return null;
+}
+
+type TrustedServerRole = 'super_admin' | 'sales_manager' | 'salesman' | 'referral_agent' | 'merchant' | 'customer';
+
+async function resolveTrustedServerRole(user: VerifiedFirebaseUser): Promise<{
+  role: TrustedServerRole;
+  salesMember: TrustedSalesMemberDoc | null;
+}> {
+  if (await isAuthorizedSuperAdmin(user)) {
+    return { role: 'super_admin', salesMember: null };
+  }
+  const member = await resolveTrustedSalesMember(user);
+  if (member && (member.accountStatus === 'active' || member.accountStatus === 'invited')) {
+    if (member.role === 'sales_manager') return { role: 'sales_manager', salesMember: member };
+    if (member.role === 'referral_agent') return { role: 'referral_agent', salesMember: member };
+    if (member.role === 'salesman' || member.role === 'senior_salesman') {
+      return { role: 'salesman', salesMember: member };
+    }
+  }
+  const ownedSnap = await getDocs(query(collection(db, 'shops'), where('ownerId', '==', user.uid))).catch(() => null);
+  if (ownedSnap && !ownedSnap.empty) {
+    return { role: 'merchant', salesMember: null };
+  }
+  const memSnap = await getDocs(collection(db, 'users', user.uid, 'shopMemberships')).catch(() => null);
+  if (memSnap && !memSnap.empty) {
+    return { role: 'merchant', salesMember: null };
+  }
+  return { role: 'customer', salesMember: null };
+}
+
 async function isAuthorizedShopMember(user: VerifiedFirebaseUser, shopId: string): Promise<boolean> {
   if (await isAuthorizedSuperAdmin(user)) return true;
   const [shopSnap, staffSnap] = await Promise.all([
@@ -211,7 +277,7 @@ async function startServer() {
 
     const userQuery = String(req.body?.query || '').trim() || 'Pakistani Products';
     const category = String(req.body?.category || '').trim();
-    const storeName = String(req.body?.storeName || 'BazaarPK').trim();
+    const storeName = String(req.body?.storeName || 'SB Khush').trim();
 
     if (!req.body?.query || typeof req.body.query !== 'string') {
       return res.status(400).json({ error: 'Query parameter is required' });
@@ -225,7 +291,7 @@ async function startServer() {
             `* **Current Pakistani Price Range**: Authentic quality typically ranges from Rs. 2,500 to Rs. 15,000 depending on brand tier and origin.\n` +
             `* **Quality & Authenticity Checklist**: Verify materials, craftsmanship stitching, and local warranty badges.\n` +
             `* **Courier Delivery & Self-Pickup**: Nationwide COD via TCS, Leopards, and Trax, plus zero-fee store pickup where enabled.\n`,
-          sources: [{ title: `${storeName} Storefront`, uri: 'https://bazaarpk.com' }],
+          sources: [{ title: `${storeName} Storefront`, uri: 'https://sbkhush.com' }],
           queries: [`${userQuery} price in Pakistan`, `${userQuery} buying guide Pakistan`],
         });
       }
@@ -275,7 +341,7 @@ Format cleanly in markdown with:
           `* Verify material specs, seller ratings, and Cash on Delivery inspection availability.\n\n` +
           `**Buying Recommendation & Value Verdict**\n` +
           `* Shop verified items directly from ${storeName} with nationwide COD, EasyPaisa, JazzCash, or Self-Pickup convenience.`,
-        sources: [{ title: 'Pakistan Retail Market Guide', uri: 'https://bazaarpk.com' }],
+        sources: [{ title: 'Pakistan Retail Market Guide', uri: 'https://sbkhush.com' }],
         queries: [`${userQuery} price in Pakistan`],
       });
     }
@@ -877,7 +943,7 @@ Format cleanly in markdown with:
           message: isSelfReferral
             ? `Registration matched your own identity and is ineligible for commission.`
             : `${payload.shopName} registered using code ${code}.`,
-          link: '/salesman/referrals',
+          link: salesman.role === 'referral_agent' ? '/referral/referrals' : '/salesman/referrals',
           isRead: false,
           createdAt: now,
         })
@@ -1209,6 +1275,693 @@ Format cleanly in markdown with:
       return res.json({ referralCode: newCode, referralLink: newLink });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Failed to regenerate referral code.' });
+    }
+  });
+
+  // Server-verified role identity lookup (ignores any client-submitted role headers or body fields)
+  app.get('/api/sales/me/role', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    try {
+      const resolved = await resolveTrustedServerRole(verifiedUser);
+      const portalHome =
+        resolved.role === 'super_admin'
+          ? '/super-admin'
+          : resolved.role === 'sales_manager'
+          ? '/sales-manager'
+          : resolved.role === 'salesman'
+          ? '/salesman'
+          : resolved.role === 'referral_agent'
+          ? '/referral'
+          : resolved.role === 'merchant'
+          ? '/dashboard'
+          : '/';
+      return res.json({
+        uid: verifiedUser.uid,
+        email: verifiedUser.email,
+        role: resolved.role,
+        portalHome,
+        salesMember: resolved.salesMember,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to verify role.' });
+    }
+  });
+
+  // Super Admin ONLY: Create or update sales member cleanly (never permits super_admin assignment)
+  app.post('/api/super-admin/sales/members', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    if (!(await isAuthorizedSuperAdmin(verifiedUser))) {
+      return res.status(403).json({ error: 'Forbidden: Super Admin access required to manage sales accounts or roles.' });
+    }
+
+    const normalizePhoneServer = (raw?: unknown): string => {
+      const digits = String(raw || '').replace(/\D/g, '');
+      if (digits.startsWith('92') && digits.length >= 12) return `0${digits.slice(2, 12)}`;
+      if (digits.startsWith('3') && digits.length === 10) return `0${digits}`;
+      return digits;
+    };
+
+    try {
+      const rawMemberId = req.body?.memberId ? sanitizeDocId(req.body.memberId) : '';
+      const requestedRole = String(req.body?.role || 'salesman').trim();
+      if (requestedRole === 'super_admin' || !ALLOWED_SERVER_SALES_ROLES.includes(requestedRole)) {
+        return res.status(403).json({
+          error: 'Forbidden: sales team accounts cannot hold super_admin role. Allowed: salesman, senior_salesman, sales_manager, referral_agent.',
+        });
+      }
+
+      const now = new Date().toISOString();
+
+      // UPDATE EXISTING SALES MEMBER
+      if (rawMemberId) {
+        const memberRef = doc(db, 'salesMembers', rawMemberId);
+        const existingSnap = await getDoc(memberRef);
+        if (!existingSnap.exists()) {
+          return res.status(404).json({ error: 'Sales member not found.' });
+        }
+        const existingData = existingSnap.data();
+        const prevRole = existingData?.role;
+
+        if (req.body?.phone) {
+          const nextNormPhone = normalizePhoneServer(req.body.phone);
+          if (nextNormPhone) {
+            const allSnap = await getDocs(collection(db, 'salesMembers'));
+            const phoneClash = allSnap.docs.find(
+              (d) => d.id !== rawMemberId && normalizePhoneServer(d.data()?.phone) === nextNormPhone
+            );
+            if (phoneClash) {
+              return res.status(409).json({ error: 'Another sales member already uses this phone number.' });
+            }
+          }
+        }
+
+        const patch = stripUndefined({
+          fullName: req.body?.fullName !== undefined ? String(req.body.fullName).trim() : undefined,
+          phone: req.body?.phone !== undefined ? String(req.body.phone).trim() : undefined,
+          city: req.body?.city !== undefined ? String(req.body.city).trim() : undefined,
+          address: req.body?.address !== undefined ? (String(req.body.address).trim() || null) : undefined,
+          role: requestedRole,
+          assignedManagerId: req.body?.assignedManagerId !== undefined ? req.body.assignedManagerId || null : undefined,
+          assignedManagerUid: req.body?.assignedManagerUid !== undefined ? req.body.assignedManagerUid || null : undefined,
+          assignedManagerName: req.body?.assignedManagerName !== undefined ? req.body.assignedManagerName || null : undefined,
+          teamId: req.body?.teamId !== undefined ? req.body.teamId || null : undefined,
+          teamName: req.body?.teamName !== undefined ? req.body.teamName || null : undefined,
+          territory: req.body?.territory !== undefined ? String(req.body.territory).trim() : undefined,
+          industryFocus: req.body?.industryFocus !== undefined ? String(req.body.industryFocus) : undefined,
+          joiningDate: req.body?.joiningDate !== undefined ? String(req.body.joiningDate) : undefined,
+          employmentStatus: req.body?.employmentStatus !== undefined ? String(req.body.employmentStatus) : undefined,
+          monthlyTarget: req.body?.monthlyTarget !== undefined ? Math.max(0, Number(req.body.monthlyTarget) || 0) : undefined,
+          yearlyTarget: req.body?.yearlyTarget !== undefined ? Math.max(0, Number(req.body.yearlyTarget) || 0) : undefined,
+          commissionPlanId: req.body?.commissionPlanId !== undefined ? String(req.body.commissionPlanId) : undefined,
+          commissionPlanName: req.body?.commissionPlanName !== undefined ? String(req.body.commissionPlanName) : undefined,
+          accountStatus: req.body?.accountStatus ? String(req.body.accountStatus) : undefined,
+          payoutDetails: req.body?.payoutDetails !== undefined ? req.body.payoutDetails : undefined,
+          updatedAt: now,
+        });
+        await updateDoc(memberRef, patch);
+
+        if (existingData?.referralCode && (patch.accountStatus !== undefined || patch.fullName !== undefined)) {
+          await setDoc(
+            doc(db, 'salesReferralIndex', String(existingData.referralCode)),
+            {
+              referralCode: existingData.referralCode,
+              salesmanId: rawMemberId,
+              salesmanUid: existingData.uid || null,
+              salesmanName: patch.fullName || existingData.fullName,
+              accountStatus: patch.accountStatus || existingData.accountStatus,
+              qrScanCount: existingData.qrScanCount || 0,
+              updatedAt: now,
+            },
+            { merge: true }
+          ).catch(() => {});
+        }
+
+        const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+        await setDoc(doc(db, 'salesAuditLogs', slogId), {
+          id: slogId,
+          actorUid: verifiedUser.uid,
+          actorEmail: verifiedUser.email,
+          actorRole: 'super_admin',
+          action: 'Updated Sales Member Profile/Role',
+          entityType: 'sales_member',
+          entityId: rawMemberId,
+          previousValue: String(prevRole || ''),
+          newValue: requestedRole,
+          details: `Super Admin updated ${rawMemberId} (${requestedRole})`,
+          createdAt: now,
+        }).catch(() => {});
+
+        return res.json({ ok: true, mode: 'updated', memberId: rawMemberId, role: requestedRole });
+      }
+
+      // CREATE NEW SALES MEMBER
+      const cleanFullName = String(req.body?.fullName || '').trim();
+      const cleanEmail = String(req.body?.email || '').trim().toLowerCase();
+      const cleanPhone = String(req.body?.phone || '').trim();
+      const cleanCity = String(req.body?.city || 'Karachi').trim() || 'Karachi';
+
+      if (!cleanFullName || cleanFullName.length < 2) {
+        return res.status(400).json({ error: 'Full name is required.' });
+      }
+      if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return res.status(400).json({ error: 'A valid email address is required.' });
+      }
+      if (!cleanPhone || normalizePhoneServer(cleanPhone).length < 10) {
+        return res.status(400).json({ error: 'A valid mobile phone number is required.' });
+      }
+
+      const allSnap = await getDocs(collection(db, 'salesMembers'));
+      const existingMembers = allSnap.docs.map((d) => ({ ...(d.data() as any), id: d.id }));
+      if (existingMembers.some((m) => String(m.email || '').trim().toLowerCase() === cleanEmail)) {
+        return res.status(409).json({ error: `A sales account with email ${cleanEmail} already exists.` });
+      }
+      const normalizedIncomingPhone = normalizePhoneServer(cleanPhone);
+      if (existingMembers.some((m) => normalizePhoneServer(m.phone) === normalizedIncomingPhone)) {
+        return res.status(409).json({ error: `A sales account with phone number ${cleanPhone} already exists.` });
+      }
+
+      const settingsSnap = await getDoc(doc(db, 'salesSettings', 'general')).catch(() => null);
+      const portalBaseUrl = String(settingsSnap?.data()?.portalBaseUrl || 'https://sbkhush.com').replace(/\/+$/, '');
+
+      const existingIds = new Set(existingMembers.map((m) => String(m.employeeId || '').toUpperCase()));
+      let seq = existingMembers.length + 1;
+      let employeeId = `SBK-SLS-${String(seq).padStart(3, '0')}`;
+      while (existingIds.has(employeeId) && seq < 99999) {
+        seq++;
+        employeeId = `SBK-SLS-${String(seq).padStart(3, '0')}`;
+      }
+
+      const existingCodes = new Set(existingMembers.map((m) => String(m.referralCode || '').toUpperCase()));
+      const prefixName = cleanFullName.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'REP';
+      let referralCode = `SAL-${prefixName}-${Math.floor(1000 + Math.random() * 9000)}`;
+      for (let i = 0; i < 20 && existingCodes.has(referralCode); i++) {
+        referralCode = `SAL-${prefixName}-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+      const referralLink = `${portalBaseUrl}/r/${encodeURIComponent(referralCode)}`;
+
+      let provisionedUid: string | undefined;
+      let authProvisioned = false;
+      let resetEmailSent = false;
+      let resetEmailWarning: string | undefined;
+
+      if (req.body?.sendPasswordResetInvite && firebaseConfig.apiKey) {
+        try {
+          const signUpRes = await fetch(
+            `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: cleanEmail,
+                password: crypto.randomBytes(20).toString('hex'),
+                displayName: cleanFullName,
+                returnSecureToken: false,
+              }),
+            }
+          );
+          const signUpData = (await signUpRes.json().catch(() => ({}))) as any;
+          if (signUpRes.ok && signUpData?.localId) {
+            provisionedUid = String(signUpData.localId);
+            authProvisioned = true;
+          } else if (signUpData?.error?.message === 'EMAIL_EXISTS') {
+            authProvisioned = true;
+          }
+
+          const resetRes = await fetch(
+            `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                requestType: 'PASSWORD_RESET',
+                email: cleanEmail,
+              }),
+            }
+          );
+          if (resetRes.ok) {
+            resetEmailSent = true;
+          } else {
+            const resetErr = (await resetRes.json().catch(() => ({}))) as any;
+            resetEmailWarning = resetErr?.error?.message || 'Invite email dispatch returned an error.';
+          }
+        } catch (authErr: any) {
+          resetEmailWarning = authErr?.message || 'Could not reach Firebase Auth invite service.';
+        }
+      }
+
+      const id = `sm_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      const memberPayload = stripUndefined({
+        id,
+        uid: provisionedUid,
+        employeeId,
+        fullName: cleanFullName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        city: cleanCity,
+        address: req.body?.address ? String(req.body.address).trim() : undefined,
+        profilePicture: req.body?.profilePicture ? String(req.body.profilePicture).trim() : undefined,
+        role: requestedRole,
+        assignedManagerId: req.body?.assignedManagerId || undefined,
+        assignedManagerUid: req.body?.assignedManagerUid || undefined,
+        assignedManagerName: req.body?.assignedManagerName || undefined,
+        teamId: req.body?.teamId || undefined,
+        teamName: req.body?.teamName || undefined,
+        territory: String(req.body?.territory || cleanCity).trim(),
+        industryFocus: req.body?.industryFocus || 'all',
+        joiningDate: req.body?.joiningDate || now.slice(0, 10),
+        employmentStatus: req.body?.employmentStatus || 'full_time',
+        monthlyTarget: Math.max(0, Number(req.body?.monthlyTarget) || 0),
+        yearlyTarget: Math.max(0, Number(req.body?.yearlyTarget) || 0),
+        commissionPlanId: String(req.body?.commissionPlanId || 'tier-standard'),
+        commissionPlanName: String(req.body?.commissionPlanName || 'Standard Commission'),
+        accountStatus: String(req.body?.accountStatus || 'invited'),
+        referralCode,
+        referralLink,
+        qrScanCount: 0,
+        payoutDetails: req.body?.payoutDetails,
+        inviteStatus: 'pending',
+        invitedAt: now,
+        createdBy: verifiedUser.email || 'Super Admin',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'salesMembers', id), memberPayload);
+      batch.set(doc(db, 'salesReferralIndex', referralCode), {
+        referralCode,
+        salesmanId: id,
+        salesmanUid: provisionedUid || null,
+        salesmanName: cleanFullName,
+        accountStatus: memberPayload.accountStatus,
+        qrScanCount: 0,
+        updatedAt: now,
+      });
+      await batch.commit();
+
+      const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      await setDoc(doc(db, 'salesAuditLogs', slogId), {
+        id: slogId,
+        actorUid: verifiedUser.uid,
+        actorEmail: verifiedUser.email,
+        actorRole: 'super_admin',
+        action: 'Created Salesman Account',
+        entityType: 'sales_member',
+        entityId: id,
+        newValue: requestedRole,
+        details: `Created ${cleanFullName} (${employeeId}, ${requestedRole}) · Referral Code: ${referralCode}`,
+        createdAt: now,
+      }).catch(() => {});
+
+      return res.json({
+        ok: true,
+        mode: 'created',
+        member: memberPayload,
+        authProvisioned,
+        resetEmailSent,
+        resetEmailWarning,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to save sales member.' });
+    }
+  });
+
+  // Sales Manager ONLY (or Super Admin): Assign leads strictly within own assigned team
+  app.post('/api/sales-manager/leads/assign', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const { role } = await resolveTrustedServerRole(verifiedUser);
+    if (role !== 'sales_manager' && role !== 'super_admin') {
+      return res.status(403).json({ error: 'Forbidden: Sales Manager or Super Admin privileges required.' });
+    }
+    try {
+      const leadIds: string[] = Array.isArray(req.body?.leadIds)
+        ? req.body.leadIds.map((id: unknown) => sanitizeDocId(id)).filter(Boolean)
+        : [];
+      const targetSalesmanId = sanitizeDocId(req.body?.targetSalesmanId);
+      if (leadIds.length === 0 || !targetSalesmanId) {
+        return res.status(400).json({ error: 'Valid leadIds and targetSalesmanId are required.' });
+      }
+
+      const targetSnap = await getDoc(doc(db, 'salesMembers', targetSalesmanId));
+      if (!targetSnap.exists()) {
+        return res.status(404).json({ error: 'Target representative not found.' });
+      }
+      const targetRep = targetSnap.data();
+      if (role !== 'super_admin' && targetRep.assignedManagerUid !== verifiedUser.uid) {
+        return res.status(403).json({
+          error: 'Forbidden: Sales Managers can only assign leads to representatives in their own authorized team.',
+        });
+      }
+
+      const now = new Date().toISOString();
+      for (const lid of leadIds) {
+        const leadSnap = await getDoc(doc(db, 'salesLeads', lid));
+        if (!leadSnap.exists()) {
+          return res.status(404).json({ error: `Lead ${lid} not found.` });
+        }
+        const leadData = leadSnap.data();
+        if (role !== 'super_admin' && leadData.assignedManagerUid && leadData.assignedManagerUid !== verifiedUser.uid) {
+          return res.status(403).json({
+            error: `Forbidden: Lead ${lid} belongs to another manager team and cannot be accessed or reassigned.`,
+          });
+        }
+      }
+
+      const batch = writeBatch(db);
+      for (const lid of leadIds) {
+        batch.update(doc(db, 'salesLeads', lid), {
+          assignedSalesmanId: targetSnap.id,
+          assignedSalesmanUid: targetRep.uid || null,
+          assignedSalesmanName: targetRep.fullName,
+          assignedManagerId: targetRep.assignedManagerId || null,
+          assignedManagerUid: targetRep.assignedManagerUid || verifiedUser.uid,
+          status: 'Assigned',
+          updatedAt: now,
+        });
+      }
+      await batch.commit();
+
+      const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      await setDoc(doc(db, 'salesAuditLogs', slogId), {
+        id: slogId,
+        actorUid: verifiedUser.uid,
+        actorEmail: verifiedUser.email,
+        actorRole: role === 'super_admin' ? 'super_admin' : 'sales_manager',
+        action: 'Manager Assigned Team Leads',
+        entityType: 'sales_lead',
+        entityId: targetSnap.id,
+        details: `Assigned ${leadIds.length} lead(s) within authorized team to ${targetRep.fullName}`,
+        createdAt: now,
+      }).catch(() => {});
+
+      return res.json({ ok: true, assignedCount: leadIds.length });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Team lead assignment failed.' });
+    }
+  });
+
+  // Sales Manager ONLY: Recommend performance bonus for team member (pending Super Admin approval)
+  app.post('/api/sales-manager/bonus-recommendations', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const { role, salesMember: managerMember } = await resolveTrustedServerRole(verifiedUser);
+    if (role !== 'sales_manager' || !managerMember) {
+      return res.status(403).json({ error: 'Forbidden: active Sales Manager role required.' });
+    }
+    try {
+      const salesmanId = sanitizeDocId(req.body?.salesmanId);
+      const amount = Number(req.body?.recommendedAmount || 0);
+      const periodKey = String(req.body?.periodKey || new Date().toISOString().slice(0, 7)).trim();
+      const reason = String(req.body?.reason || '').trim();
+      if (!salesmanId || !Number.isFinite(amount) || amount <= 0 || reason.length < 5) {
+        return res.status(400).json({ error: 'Valid team rep, positive bonus amount, and justification are required.' });
+      }
+      if (req.body?.status && req.body.status !== 'pending') {
+        return res.status(403).json({ error: 'Forbidden: managers cannot self-approve bonuses; Super Admin approval is required.' });
+      }
+
+      const targetSnap = await getDoc(doc(db, 'salesMembers', salesmanId));
+      if (!targetSnap.exists()) return res.status(404).json({ error: 'Representative not found.' });
+      const targetRep = targetSnap.data();
+      if (targetRep.assignedManagerUid !== verifiedUser.uid || targetRep.uid === verifiedUser.uid) {
+        return res.status(403).json({ error: 'Forbidden: can only recommend bonuses for reps assigned to your own team.' });
+      }
+
+      const now = new Date().toISOString();
+      const recId = `bon_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      const payload = stripUndefined({
+        id: recId,
+        managerId: managerMember.id,
+        managerUid: verifiedUser.uid,
+        managerName: managerMember.fullName,
+        salesmanId: targetSnap.id,
+        salesmanUid: targetRep.uid || undefined,
+        salesmanName: targetRep.fullName,
+        recommendedAmount: Math.round(amount),
+        periodKey,
+        reason,
+        status: 'pending',
+        createdAt: now,
+        updatedAt: now,
+      });
+      await setDoc(doc(db, 'salesBonusRecommendations', recId), payload);
+
+      const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      await setDoc(doc(db, 'salesAuditLogs', slogId), {
+        id: slogId,
+        actorUid: verifiedUser.uid,
+        actorEmail: verifiedUser.email,
+        actorRole: 'sales_manager',
+        action: 'Recommended Team Bonus',
+        entityType: 'bonus_recommendation',
+        entityId: recId,
+        details: `Recommended Rs. ${Math.round(amount)} bonus for ${targetRep.fullName} (${periodKey}) — pending Super Admin approval`,
+        createdAt: now,
+      }).catch(() => {});
+
+      return res.status(201).json({ recommendation: payload });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to submit bonus recommendation.' });
+    }
+  });
+
+  // Super Admin ONLY: Approve or reject manager bonus recommendation
+  app.post('/api/super-admin/sales/bonus-recommendations/decision', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser || !(await isAuthorizedSuperAdmin(verifiedUser))) {
+      return res.status(403).json({ error: 'Forbidden: Super Admin authentication required.' });
+    }
+    try {
+      const recId = sanitizeDocId(req.body?.recId);
+      const decision = String(req.body?.decision || '');
+      const reason = String(req.body?.reason || '').trim();
+      if (!recId || !['approved', 'rejected'].includes(decision)) {
+        return res.status(400).json({ error: 'Valid recId and decision (approved/rejected) required.' });
+      }
+
+      const now = new Date().toISOString();
+      await runTransaction(db, async (tx) => {
+        const ref = doc(db, 'salesBonusRecommendations', recId);
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('Recommendation not found.');
+        const cur = snap.data();
+        if (cur.status !== 'pending') {
+          throw new Error(`Recommendation already ${cur.status}.`);
+        }
+        const patch: Record<string, any> = {
+          status: decision,
+          reviewedBy: verifiedUser.email,
+          reviewedAt: now,
+          updatedAt: now,
+        };
+        if (decision === 'rejected') {
+          patch.rejectionReason = reason || 'Declined by Super Admin.';
+        } else {
+          const ledgerId = `comm_bon_${recId}`;
+          patch.commissionLedgerId = ledgerId;
+          tx.set(doc(db, 'commissionLedger', ledgerId), stripUndefined({
+            id: ledgerId,
+            salesmanId: cur.salesmanId,
+            salesmanUid: cur.salesmanUid,
+            salesmanName: cur.salesmanName,
+            shopId: `bonus_${cur.periodKey}`,
+            shopName: `Performance Bonus (${cur.periodKey})`,
+            paymentId: recId,
+            planId: 'performance_bonus',
+            planName: `Bonus (${cur.managerName})`,
+            billingCycle: 'monthly',
+            paymentAmount: 0,
+            commissionRatePct: 0,
+            flatBonusAmount: cur.recommendedAmount,
+            commissionAmount: cur.recommendedAmount,
+            commissionType: 'target_bonus',
+            status: 'approved',
+            approvedBy: verifiedUser.email,
+            approvedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          }));
+        }
+        tx.update(ref, patch);
+      });
+
+      const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      await setDoc(doc(db, 'salesAuditLogs', slogId), {
+        id: slogId,
+        actorUid: verifiedUser.uid,
+        actorEmail: verifiedUser.email,
+        actorRole: 'super_admin',
+        action: `Bonus Recommendation ${decision}`,
+        entityType: 'bonus_recommendation',
+        entityId: recId,
+        details: `${decision.toUpperCase()} bonus recommendation ${recId}`,
+        createdAt: now,
+      }).catch(() => {});
+
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || 'Bonus decision failed.' });
+    }
+  });
+
+  // Salesman / Manager ONLY: Submit own authorized business expense (always forced pending; zero self-approval)
+  app.post('/api/salesman/expenses', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const { role, salesMember } = await resolveTrustedServerRole(verifiedUser);
+    if ((role !== 'salesman' && role !== 'sales_manager') || !salesMember) {
+      return res.status(403).json({ error: 'Forbidden: active sales representative account required.' });
+    }
+    try {
+      if (req.body?.status && req.body.status !== 'pending') {
+        return res.status(403).json({ error: 'Forbidden: salesmen cannot self-approve business expenses.' });
+      }
+      if (req.body?.salesmanUid && req.body.salesmanUid !== verifiedUser.uid) {
+        return res.status(403).json({ error: 'Forbidden: cannot submit expense under another representative UID.' });
+      }
+      const amount = Number(req.body?.amount || 0);
+      const description = String(req.body?.description || '').trim();
+      const category = String(req.body?.category || 'travel');
+      if (!Number.isFinite(amount) || amount <= 0 || !description) {
+        return res.status(400).json({ error: 'Positive amount and description are required.' });
+      }
+
+      const now = new Date().toISOString();
+      const expId = `exp_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      const payload = stripUndefined({
+        id: expId,
+        salesmanId: salesMember.id,
+        salesmanUid: verifiedUser.uid,
+        salesmanName: salesMember.fullName,
+        managerUid: salesMember.assignedManagerUid || undefined,
+        category,
+        amount: Math.round(amount),
+        expenseDate: String(req.body?.expenseDate || now.slice(0, 10)),
+        description,
+        receiptUrl: req.body?.receiptUrl ? String(req.body.receiptUrl) : undefined,
+        status: 'pending',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await setDoc(doc(db, 'salesExpenses', expId), payload);
+      return res.status(201).json({ expense: payload });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to submit expense.' });
+    }
+  });
+
+  // Super Admin ONLY: Approve or reject submitted business expenses
+  app.post('/api/super-admin/sales/expenses/decision', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser || !(await isAuthorizedSuperAdmin(verifiedUser))) {
+      return res.status(403).json({ error: 'Forbidden: Super Admin authentication required.' });
+    }
+    try {
+      const expenseId = sanitizeDocId(req.body?.expenseId);
+      const decision = String(req.body?.decision || '');
+      const reason = String(req.body?.reason || '').trim();
+      if (!expenseId || !['approved', 'rejected'].includes(decision)) {
+        return res.status(400).json({ error: 'Valid expenseId and decision required.' });
+      }
+      const now = new Date().toISOString();
+      await runTransaction(db, async (tx) => {
+        const ref = doc(db, 'salesExpenses', expenseId);
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('Expense not found.');
+        if (snap.data()?.status !== 'pending') {
+          throw new Error(`Expense already ${snap.data()?.status}.`);
+        }
+        tx.update(ref, stripUndefined({
+          status: decision,
+          rejectionReason: decision === 'rejected' ? reason || 'Rejected by Super Admin.' : undefined,
+          reviewedBy: verifiedUser.email,
+          reviewedAt: now,
+          updatedAt: now,
+        }));
+      });
+      const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      await setDoc(doc(db, 'salesAuditLogs', slogId), {
+        id: slogId,
+        actorUid: verifiedUser.uid,
+        actorEmail: verifiedUser.email,
+        actorRole: 'super_admin',
+        action: `Expense ${decision}`,
+        entityType: 'sales_expense',
+        entityId: expenseId,
+        details: `${decision.toUpperCase()} expense ${expenseId}`,
+        createdAt: now,
+      }).catch(() => {});
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || 'Expense decision failed.' });
+    }
+  });
+
+  // Role-scoped portal summary API (zero cross-role or cross-user data leakage)
+  app.get('/api/sales/portal/summary', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const { role, salesMember } = await resolveTrustedServerRole(verifiedUser);
+    if (!['super_admin', 'sales_manager', 'salesman', 'referral_agent'].includes(role)) {
+      return res.status(403).json({ error: 'Forbidden: Shop owners and customers cannot access sales portal APIs.' });
+    }
+    try {
+      if (role === 'referral_agent' && salesMember) {
+        const [attrs, comms] = await Promise.all([
+          getDocs(query(collection(db, 'referralAttributions'), where('salesmanUid', '==', verifiedUser.uid))),
+          getDocs(query(collection(db, 'commissionLedger'), where('salesmanUid', '==', verifiedUser.uid))),
+        ]);
+        return res.json({
+          role: 'referral_agent',
+          referrals: attrs.docs.map((d) => d.data()),
+          rewards: comms.docs.map((d) => d.data()).filter((c: any) => c.status === 'approved' || c.status === 'paid'),
+        });
+      }
+      if (role === 'salesman' && salesMember) {
+        const [leads, refs, comms, exps] = await Promise.all([
+          getDocs(query(collection(db, 'salesLeads'), where('assignedSalesmanUid', '==', verifiedUser.uid))),
+          getDocs(query(collection(db, 'referralAttributions'), where('salesmanUid', '==', verifiedUser.uid))),
+          getDocs(query(collection(db, 'commissionLedger'), where('salesmanUid', '==', verifiedUser.uid))),
+          getDocs(query(collection(db, 'salesExpenses'), where('salesmanUid', '==', verifiedUser.uid))),
+        ]);
+        return res.json({
+          role: 'salesman',
+          leads: leads.docs.map((d) => d.data()),
+          referrals: refs.docs.map((d) => d.data()),
+          commissions: comms.docs.map((d) => d.data()),
+          expenses: exps.docs.map((d) => d.data()),
+        });
+      }
+      if (role === 'sales_manager' && salesMember) {
+        const [teamMembers, teamLeads] = await Promise.all([
+          getDocs(query(collection(db, 'salesMembers'), where('assignedManagerUid', '==', verifiedUser.uid))),
+          getDocs(query(collection(db, 'salesLeads'), where('assignedManagerUid', '==', verifiedUser.uid))),
+        ]);
+        return res.json({
+          role: 'sales_manager',
+          teamMembers: teamMembers.docs.map((d) => d.data()),
+          teamLeads: teamLeads.docs.map((d) => d.data()),
+        });
+      }
+      return res.json({ role: 'super_admin' });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to load scoped summary.' });
     }
   });
 

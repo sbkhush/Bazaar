@@ -1,6 +1,6 @@
 import { BillingCycle, BusinessType } from './index';
 
-export type SalesMemberRole = 'salesman' | 'senior_salesman' | 'sales_manager';
+export type SalesMemberRole = 'salesman' | 'senior_salesman' | 'sales_manager' | 'referral_agent';
 export type SalesAccountStatus = 'active' | 'inactive' | 'suspended' | 'invited';
 export type SalesEmploymentStatus = 'full_time' | 'part_time' | 'contract' | 'probation';
 
@@ -303,7 +303,7 @@ export interface SalesAuditLog {
   id: string;
   actorUid: string;
   actorEmail: string;
-  actorRole: 'super_admin' | 'sales_manager' | 'salesman' | 'system';
+  actorRole: 'super_admin' | 'sales_manager' | 'salesman' | 'referral_agent' | 'system';
   action: string;
   entityType:
     | 'sales_member'
@@ -315,12 +315,71 @@ export interface SalesAuditLog {
     | 'commission'
     | 'payout'
     | 'qr_code'
-    | 'sales_settings';
+    | 'sales_settings'
+    | 'sales_expense'
+    | 'bonus_recommendation'
+    | 'sales_material';
   entityId: string;
   details: string;
   previousValue?: string;
   newValue?: string;
   createdAt: string;
+}
+
+export type SalesExpenseStatus = 'pending' | 'approved' | 'rejected';
+
+export interface SalesExpense {
+  id: string;
+  salesmanId: string;
+  salesmanUid: string;
+  salesmanName: string;
+  managerUid?: string;
+  category: 'travel' | 'fuel' | 'meals' | 'internet_calls' | 'client_demo' | 'other';
+  amount: number;
+  expenseDate: string;
+  description: string;
+  receiptUrl?: string;
+  status: SalesExpenseStatus;
+  rejectionReason?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export type BonusRecommendationStatus = 'pending' | 'approved' | 'rejected';
+
+export interface SalesBonusRecommendation {
+  id: string;
+  managerId: string;
+  managerUid: string;
+  managerName: string;
+  salesmanId: string;
+  salesmanUid?: string;
+  salesmanName: string;
+  recommendedAmount: number;
+  periodKey: string;
+  reason: string;
+  status: BonusRecommendationStatus;
+  commissionLedgerId?: string;
+  rejectionReason?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SalesMaterial {
+  id: string;
+  title: string;
+  category: 'pitch_deck' | 'brochure' | 'pricing_sheet' | 'whatsapp_script' | 'demo_video';
+  description: string;
+  fileUrl: string;
+  audience: 'all_sales' | 'salesmen_only' | 'managers_only' | 'referral_agents';
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface SalesSettings {

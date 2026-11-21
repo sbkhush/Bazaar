@@ -21,7 +21,7 @@ function clampText(text: string, maxLen: number): string {
 
 export function resolveCanonicalUrl(explicitPath?: string): string {
   if (typeof window === 'undefined') {
-    return explicitPath ? `https://bazaarpk.com${explicitPath}` : 'https://bazaarpk.com';
+    return explicitPath ? `https://sbkhush.com${explicitPath}` : 'https://sbkhush.com';
   }
   const base = window.location.origin;
   const path = explicitPath || window.location.pathname;
@@ -53,7 +53,7 @@ export function buildShopSeoTags(params: {
     canonicalUrl = resolveCanonicalUrl(),
   } = params;
 
-  const storeName = (shop?.name || settings?.siteName || 'BazaarPK Store').trim();
+  const storeName = (shop?.name || settings?.siteName || 'SB Khush Store').trim();
   const city = (shop?.city || settings?.city || 'Pakistan').trim();
   const storeLogo = shop?.logoUrl || settings?.logoUrl || '';
   const storeOgImage = settings?.ogImageUrl || shop?.ogImageUrl || storeLogo || '';
@@ -164,10 +164,10 @@ export function buildPlatformSeoTags(
     canonicalDomain?: string;
   } | null
 ): GeneratedSeoTags {
-  const siteName = (platformSettings?.platformName || 'BazaarPK Cloud').trim();
+  const siteName = (platformSettings?.platformName || 'SB Khush').trim();
   const title =
     (platformSettings?.seoTitle || '').trim() ||
-    `${siteName} – Smart Business Management & Online Store SaaS`;
+    `${siteName} — Smart Business Management & Online Store SaaS`;
   const description =
     (platformSettings?.seoDescription || '').trim() ||
     'Manage products, stock inventory, POS billing, Khata credit ledger, and your own online storefront across Pakistan with COD, EasyPaisa, JazzCash & Self-Pickup.';

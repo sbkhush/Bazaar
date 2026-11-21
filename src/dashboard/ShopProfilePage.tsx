@@ -83,7 +83,7 @@ export const ShopProfilePage: React.FC = () => {
       });
       setTicketSubject('');
       setTicketMessage('');
-      setTicketNotice('Support ticket sent to BazaarPK Cloud Platform Administration.');
+      setTicketNotice('Support ticket sent to SB Khush Platform Administration.');
       await loadData();
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to submit support ticket.');

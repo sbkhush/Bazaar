@@ -298,7 +298,7 @@ export const SalesReportsPage: React.FC = () => {
         </div>
         <button
           type="button"
-          onClick={() => downloadCsvFile(`bazaarpk-${reportType}-report`, reportData.headers, reportData.rows)}
+          onClick={() => downloadCsvFile(`sbkhush-${reportType}-report`, reportData.headers, reportData.rows)}
           className="px-4 py-2 rounded-xl bg-[#065F46] hover:bg-emerald-900 text-white text-xs font-bold inline-flex items-center gap-1.5 self-start sm:self-auto"
         >
           <Download className="w-3.5 h-3.5" /> Export CSV ({reportData.rows.length})

@@ -18,6 +18,7 @@ import { motion, useReducedMotion } from 'motion/react';
 import generalStoreImg from '../../assets/images/solution_general_store_1795085193366.jpg';
 import cosmeticsStoreImg from '../../assets/images/solution_cosmetics_store_1795085193246.jpg';
 import clothingStoreImg from '../../assets/images/solution_clothing_store_1795085192837.jpg';
+import { SafeImage } from '../../components/common/SafeImage';
 import { Tilt3DCard } from './Tilt3DCard';
 
 const CORE_BENEFITS = [
@@ -147,12 +148,12 @@ const FEATURE_CARDS = [
     visual: (
       <div className="rounded-xl border border-white/10 bg-[#070B19]/90 p-3 space-y-2 text-[11px]">
         <div className="flex items-center justify-between text-slate-200">
-          <span className="font-semibold">Tariq Mahmood</span>
-          <span className="font-bold text-amber-300 tabular-nums">Balance: Rs. 3,400</span>
+          <span className="font-semibold">Customer Khata Ledger</span>
+          <span className="font-bold text-amber-300">Credit Tracking</span>
         </div>
         <div className="flex items-center justify-between text-[10px] text-slate-400">
-          <span>Payment Received</span>
-          <span className="text-emerald-400 font-semibold tabular-nums">+ Rs. 2,000 settled</span>
+          <span>Partial &amp; Full Settlements</span>
+          <span className="text-emerald-400 font-semibold">Auto Updated</span>
         </div>
       </div>
     ),
@@ -166,12 +167,12 @@ const FEATURE_CARDS = [
     visual: (
       <div className="rounded-xl border border-white/10 bg-[#070B19]/90 p-3 space-y-2 text-[11px]">
         <div className="flex items-center justify-between text-slate-300">
-          <span>Gross Revenue</span>
-          <span className="font-bold text-white tabular-nums">Rs. 412,000</span>
+          <span>Gross Sales &amp; COGS</span>
+          <span className="font-bold text-white">Auto-Calculated</span>
         </div>
         <div className="flex items-center justify-between text-slate-300">
-          <span>Net Profit</span>
-          <span className="font-bold text-emerald-400 tabular-nums">Rs. 94,650</span>
+          <span>Expenses &amp; Net Profit</span>
+          <span className="font-bold text-emerald-400">PKR Ledger</span>
         </div>
       </div>
     ),
@@ -349,7 +350,7 @@ export const FeaturesAndSolutionsSection: React.FC = () => {
               Designed Around Real Pakistani Retail Categories
             </h2>
             <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
-              Choose your business type during registration and BazaarPK pre-configures default
+              Choose your business type during registration and SB Khush pre-configures default
               categories, retail measurement units, and matching storefront flows.
             </p>
           </motion.div>
@@ -366,7 +367,7 @@ export const FeaturesAndSolutionsSection: React.FC = () => {
               >
                 <div>
                   <div className="relative aspect-[4/3] overflow-hidden bg-slate-900">
-                    <img
+                    <SafeImage
                       src={sol.image}
                       alt={sol.imageAlt}
                       loading="lazy"
@@ -400,7 +401,7 @@ export const FeaturesAndSolutionsSection: React.FC = () => {
                     to={`/register?type=${sol.id}`}
                     className="w-full py-3 px-4 rounded-xl bg-slate-950 hover:bg-indigo-600 text-white text-xs font-bold transition flex items-center justify-center gap-2"
                   >
-                    Explore BazaarPK
+                    Explore SB Khush
                     <ArrowRight className="w-3.5 h-3.5" />
                   </Link>
                 </div>

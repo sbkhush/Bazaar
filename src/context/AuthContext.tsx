@@ -32,6 +32,11 @@ import {
 import { SUPER_ADMIN_EMAIL } from '../data/seedData';
 import { stripUndefined } from '../services/platformService';
 import { linkSalesMemberOnLogin } from '../services/salesService';
+import {
+  AuthorizedPortalRole,
+  getAuthorizedHomePath,
+  resolveAuthorizedPortalRole,
+} from '../services/roleGuard';
 
 interface AuthContextType {
   currentUser: FirebaseUser | null;
@@ -43,6 +48,9 @@ interface AuthContextType {
   salesMember: SalesMember | null;
   isSalesman: boolean;
   isSalesManager: boolean;
+  isReferralAgent: boolean;
+  authorizedRole: AuthorizedPortalRole;
+  authorizedHomePath: string;
   refreshSalesMember: () => Promise<SalesMember | null>;
   shopMemberships: ShopMembership[];
   activeShopId: string | null;
@@ -356,10 +364,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isBlocked = Boolean(userProfile?.isBlocked);
   const isSuperAdmin = !isBlocked && isSuperAdminVerified;
-  const isSalesman = Boolean(
-    !isBlocked && salesMember && (salesMember.accountStatus === 'active' || salesMember.accountStatus === 'invited')
+  const hasActiveSalesAccount = Boolean(
+    !isBlocked &&
+      salesMember &&
+      (salesMember.accountStatus === 'active' || salesMember.accountStatus === 'invited')
   );
-  const isSalesManager = Boolean(isSalesman && salesMember?.role === 'sales_manager');
+  // Strict role separation: managers use /sales-manager, salesmen use /salesman, referral agents use /referral
+  const isSalesManager = Boolean(hasActiveSalesAccount && salesMember?.role === 'sales_manager');
+  const isReferralAgent = Boolean(hasActiveSalesAccount && salesMember?.role === 'referral_agent');
+  const isSalesman = Boolean(
+    hasActiveSalesAccount &&
+      (salesMember?.role === 'salesman' || salesMember?.role === 'senior_salesman')
+  );
+  const authorizedRole = resolveAuthorizedPortalRole({
+    isSuperAdmin,
+    isBlocked,
+    salesMember,
+    shopMemberships,
+  });
+  const authorizedHomePath = getAuthorizedHomePath(authorizedRole);
   const isAdmin = !isBlocked && (isSuperAdmin || shopMemberships.length > 0);
 
   return (
@@ -374,6 +397,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         salesMember,
         isSalesman,
         isSalesManager,
+        isReferralAgent,
+        authorizedRole,
+        authorizedHomePath,
         refreshSalesMember,
         shopMemberships,
         activeShopId,

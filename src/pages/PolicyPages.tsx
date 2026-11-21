@@ -4,6 +4,7 @@ import { useTenant } from '../context/TenantContext';
 import { getShopPageContent } from '../services/tenantService';
 import { ShopPageContent } from '../types';
 import { DynamicSeoHead } from '../components/common/DynamicSeoHead';
+import { SafeImage } from '../components/common/SafeImage';
 
 const CustomCMSBody: React.FC<{ pageKey: ShopPageContent['key']; fallback: React.ReactNode; titleFallback: string }> = ({
   pageKey,
@@ -42,7 +43,7 @@ const CustomCMSBody: React.FC<{ pageKey: ShopPageContent['key']; fallback: React
         <div className="max-w-4xl mx-auto px-4 py-12 space-y-6">
           <h1 className="text-3xl font-black text-slate-900">{cmsPage.title || titleFallback}</h1>
           {cmsPage.imageUrl && (
-            <img
+            <SafeImage
               src={cmsPage.imageUrl}
               alt={cmsPage.title || titleFallback}
               className="w-full max-h-72 object-cover rounded-3xl border border-slate-200 shadow-xs"
@@ -92,29 +93,37 @@ export const AboutPage: React.FC = () => {
             <p>
               We make shopping convenient with nationwide Cash on Delivery (COD), verified EasyPaisa and JazzCash transfers, bank IBFT, and a free Rs. 0 Self-Pickup counter at our outlet.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-slate-100 text-xs">
-              <div className="flex items-start gap-2">
-                <MapPin className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold text-slate-900 block">Location</span>
-                  <span>{settings.address}</span>
-                </div>
+            {(settings.address || settings.contactPhone || settings.contactEmail) && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-slate-100 text-xs">
+                {settings.address && (
+                  <div className="flex items-start gap-2">
+                    <MapPin className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-slate-900 block">Location</span>
+                      <span>{settings.address}</span>
+                    </div>
+                  </div>
+                )}
+                {settings.contactPhone && (
+                  <div className="flex items-start gap-2">
+                    <Phone className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-slate-900 block">Phone / WhatsApp</span>
+                      <span>{settings.contactPhone}</span>
+                    </div>
+                  </div>
+                )}
+                {settings.contactEmail && (
+                  <div className="flex items-start gap-2">
+                    <Mail className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-slate-900 block">Email</span>
+                      <span className="break-all">{settings.contactEmail}</span>
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="flex items-start gap-2">
-                <Phone className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold text-slate-900 block">Phone / WhatsApp</span>
-                  <span>{settings.contactPhone}</span>
-                </div>
-              </div>
-              <div className="flex items-start gap-2">
-                <Mail className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold text-slate-900 block">Email</span>
-                  <span className="break-all">{settings.contactEmail}</span>
-                </div>
-              </div>
-            </div>
+            )}
             {settings.selfPickupDetails?.enabled !== false && (
               <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-start gap-3 text-xs">
                 <Store className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
@@ -231,7 +240,9 @@ export const ReturnPolicyPage: React.FC = () => {
             </ul>
             <h3 className="font-bold text-sm text-slate-900">How to Initiate a Return</h3>
             <p>
-              Message our WhatsApp desk ({settings.contactPhone}) or email {settings.contactEmail} with your Order Number and photos of the parcel.
+              {settings.contactPhone || settings.contactEmail
+                ? `Reach out via ${[settings.contactPhone && `WhatsApp desk (${settings.contactPhone})`, settings.contactEmail].filter(Boolean).join(' or ')} with your Order Number and photos of the parcel.`
+                : 'Contact our customer support team using the Contact Helpdesk page with your Order Number and photos of the parcel.'}
             </p>
           </div>
         </div>

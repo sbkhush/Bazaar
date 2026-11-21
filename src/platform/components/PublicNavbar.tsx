@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Menu, X } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { useAuth } from '../../context/AuthContext';
 import { PlatformSettings } from '../../types';
+import { BRAND } from '../../config/brand';
+import { BrandLogo } from '../../components/common/BrandLogo';
+import { SafeImage } from '../../components/common/SafeImage';
 
 interface NavAnchor {
   id: string;
@@ -22,11 +24,10 @@ const NAV_ANCHORS: NavAnchor[] = [
 export const PublicNavbar: React.FC<{ platformSettings?: PlatformSettings | null }> = ({
   platformSettings,
 }) => {
-  const { currentUser, shopMemberships } = useAuth();
   const prefersReducedMotion = useReducedMotion();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const brandName = (platformSettings?.platformName || 'BazaarPK').trim();
+  const brandName = (platformSettings?.platformName || BRAND.name).trim();
   const brandLogoUrl = platformSettings?.logoUrl || '';
 
   useEffect(() => {
@@ -66,8 +67,6 @@ export const PublicNavbar: React.FC<{ platformSettings?: PlatformSettings | null
     }
   };
 
-  const hasMerchantShop = Boolean(currentUser && shopMemberships.length > 0);
-
   return (
     <>
       <header
@@ -90,17 +89,13 @@ export const PublicNavbar: React.FC<{ platformSettings?: PlatformSettings | null
             className="flex items-center gap-2.5 group shrink-0"
           >
             {brandLogoUrl ? (
-              <img
+              <SafeImage
                 src={brandLogoUrl}
                 alt={brandName}
                 className="w-9 h-9 rounded-xl object-cover border border-white/20 shadow-md shadow-indigo-500/25 shrink-0"
               />
             ) : (
-              <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 via-violet-600 to-cyan-500 p-[1px] shadow-md shadow-indigo-500/25">
-                <span className="w-full h-full rounded-[11px] bg-[#0B1124] flex items-center justify-center text-white font-extrabold text-base tracking-tight">
-                  {brandName.charAt(0).toUpperCase()}
-                </span>
-              </span>
+              <BrandLogo variant="icon" tone="light" size="md" />
             )}
             <span className="font-extrabold text-lg tracking-tight text-white">
               {brandName}
@@ -123,49 +118,13 @@ export const PublicNavbar: React.FC<{ platformSettings?: PlatformSettings | null
 
           {/* Desktop & Tablet Actions */}
           <div className="flex items-center gap-2.5 shrink-0">
-            {currentUser ? (
-              hasMerchantShop ? (
-                <>
-                  <Link
-                    to="/register"
-                    className="hidden sm:inline-flex px-3.5 py-2 text-xs font-semibold text-slate-300 hover:text-white transition-colors"
-                  >
-                    New Store
-                  </Link>
-                  <Link
-                    to="/dashboard"
-                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-400 hover:to-violet-500 text-white text-xs font-bold shadow-lg shadow-indigo-500/25 transition flex items-center gap-1.5"
-                  >
-                    Dashboard
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </Link>
-                </>
-              ) : (
-                <Link
-                  to="/register"
-                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-400 hover:to-violet-500 text-white text-xs font-bold shadow-lg shadow-indigo-500/25 transition flex items-center gap-1.5"
-                >
-                  Start Free
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </Link>
-              )
-            ) : (
-              <>
-                <Link
-                  to="/login"
-                  className="hidden sm:inline-flex px-3.5 py-2 text-xs font-semibold text-slate-200 hover:text-white transition-colors"
-                >
-                  Login
-                </Link>
-                <Link
-                  to="/register"
-                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-400 hover:to-violet-500 text-white text-xs font-bold shadow-lg shadow-indigo-500/25 transition flex items-center gap-1.5"
-                >
-                  Start Free
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </Link>
-              </>
-            )}
+            <Link
+              to="/register"
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-400 hover:to-violet-500 text-white text-xs font-bold shadow-lg shadow-indigo-500/25 transition flex items-center gap-1.5"
+            >
+              Start Free
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
 
             {/* Mobile Drawer Trigger (>=44px tap target) */}
             <button
@@ -229,42 +188,13 @@ export const PublicNavbar: React.FC<{ platformSettings?: PlatformSettings | null
               </div>
 
               <div className="pt-6 border-t border-white/10 space-y-3">
-                {currentUser ? (
-                  hasMerchantShop ? (
-                    <Link
-                      to="/dashboard"
-                      onClick={() => setMobileOpen(false)}
-                      className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 text-white text-sm font-bold flex items-center justify-center gap-2"
-                    >
-                      Open Dashboard <ArrowRight className="w-4 h-4" />
-                    </Link>
-                  ) : (
-                    <Link
-                      to="/register"
-                      onClick={() => setMobileOpen(false)}
-                      className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 text-white text-sm font-bold flex items-center justify-center gap-2"
-                    >
-                      Start Free <ArrowRight className="w-4 h-4" />
-                    </Link>
-                  )
-                ) : (
-                  <>
-                    <Link
-                      to="/register"
-                      onClick={() => setMobileOpen(false)}
-                      className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 text-white text-sm font-bold flex items-center justify-center gap-2"
-                    >
-                      Start Free <ArrowRight className="w-4 h-4" />
-                    </Link>
-                    <Link
-                      to="/login"
-                      onClick={() => setMobileOpen(false)}
-                      className="w-full py-3 px-4 rounded-xl border border-white/15 bg-white/5 text-white text-sm font-semibold flex items-center justify-center"
-                    >
-                      Login
-                    </Link>
-                  </>
-                )}
+                <Link
+                  to="/register"
+                  onClick={() => setMobileOpen(false)}
+                  className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 text-white text-sm font-bold flex items-center justify-center gap-2"
+                >
+                  Start Free <ArrowRight className="w-4 h-4" />
+                </Link>
               </div>
             </motion.aside>
           </div>

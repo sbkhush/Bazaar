@@ -179,7 +179,26 @@ export function sanitizeShopSlug(input: string): string {
 }
 
 export function isValidShopSlug(slug: string): boolean {
-  return /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$/.test(slug) && !['admin', 'super-admin', 'dashboard', 'login', 'register', 'api', 's'].includes(slug);
+  return (
+    /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$/.test(slug) &&
+    ![
+      'admin',
+      'super-admin',
+      'dashboard',
+      'login',
+      'merchant',
+      'register',
+      'api',
+      's',
+      'shop',
+      'privacy-policy',
+      'terms-and-conditions',
+      'salesman',
+      'sales-manager',
+      'referral',
+      'r',
+    ].includes(slug)
+  );
 }
 
 export function isValidPakistaniPhone(phone: string): boolean {
@@ -212,40 +231,40 @@ export function getFulfillmentLabel(method?: FulfillmentMethod | string): string
 }
 
 export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
-  platformName: 'BazaarPK Cloud',
-  tagline: 'Multi-Tenant General Store Commerce OS for Pakistan',
+  platformName: 'SB Khush',
+  tagline: 'Multi-Tenant Retail & Online Storefront Cloud',
   logoUrl: '',
-  websiteUrl: '',
+  websiteUrl: 'https://sbkhush.com',
   announcement: '',
-  supportEmail: 'hasanaamir815@gmail.com',
-  supportPhone: '+92 300 1234567',
-  whatsappNumber: '+923001234567',
-  seoTitle: 'BazaarPK Cloud – Smart Business Management & Online Store SaaS',
+  supportEmail: 'support@sbkhush.com',
+  supportPhone: '+92 300 0000000',
+  whatsappNumber: '+923000000000',
+  seoTitle: 'SB Khush — Smart Business Management & Online Store SaaS',
   seoDescription:
     'Manage products, stock inventory, POS billing, Khata credit ledger, and your own online storefront across Pakistan with COD, EasyPaisa, JazzCash & Self-Pickup.',
   ogImageUrl: '',
-  canonicalDomain: '',
+  canonicalDomain: 'https://sbkhush.com',
   currency: 'PKR',
   currencySymbol: 'Rs.',
   socialLinks: {},
   easypaisaDetails: {
     enabled: true,
-    accountTitle: 'BazaarPK Cloud SaaS',
-    accountNumber: '0345 1234567',
-    instructions: 'Send subscription fee to the EasyPaisa wallet above and enter your 11-digit TID + screenshot.',
+    accountTitle: 'SB Khush',
+    accountNumber: '',
+    instructions: 'Send subscription fee to the configured EasyPaisa wallet and enter your 11-digit TID + receipt screenshot.',
   },
   jazzcashDetails: {
     enabled: true,
-    accountTitle: 'BazaarPK Cloud SaaS',
-    accountNumber: '0300 1234567',
+    accountTitle: 'SB Khush',
+    accountNumber: '',
     instructions: 'Transfer via JazzCash App or *786# and upload your payment receipt screenshot.',
   },
   bankDetails: {
     enabled: true,
     bankName: 'Meezan Bank Limited',
-    accountTitle: 'BazaarPK Cloud Technologies',
-    accountNumber: '01020102938475',
-    iban: 'PK45MEZN0001020102938475',
+    accountTitle: 'SB Khush Commerce Technologies',
+    accountNumber: '',
+    iban: '',
   },
   gracePeriodDays: 5,
 };
@@ -255,7 +274,7 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     id: 'free-starter',
     name: 'Free Plan',
     slug: 'free-starter',
-    description: 'Launch a live online storefront with 1 active product, order receiving, and BazaarPK subdomain — free permanently.',
+    description: 'Launch a live online storefront with 1 active product, order receiving, and SB Khush store URL — free permanently.',
     monthlyPrice: 0,
     yearlyPrice: 0,
     durationDays: 36500,
@@ -382,18 +401,18 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
 ];
 
 export const INITIAL_SETTINGS: StoreSettings = {
-  siteName: 'BazaarPK',
+  siteName: 'SB Khush Store',
   logoUrl: '',
   websiteUrl: '',
   primaryColor: '#065f46',
   accentColor: '#d97706',
-  announcement: '🇵🇰 Free Delivery across Pakistan above Rs. 3,500! COD, EasyPaisa & JazzCash accepted.',
-  contactPhone: '+92 300 1234567',
-  whatsappNumber: '+923001234567',
-  contactEmail: 'support@bazaarpk.com',
-  address: 'Shop 42, Block 5, Clifton, Karachi, Pakistan',
+  announcement: 'Welcome to our online store — Cash on Delivery, EasyPaisa, JazzCash & Store Pickup available.',
+  contactPhone: '',
+  whatsappNumber: '',
+  contactEmail: 'support@sbkhush.com',
+  address: 'Karachi, Pakistan',
   city: 'Karachi',
-  businessHours: 'Mon – Sat: 10:00 AM – 10:00 PM · Sun: 2:00 PM – 9:00 PM',
+  businessHours: 'Mon – Sat: 10:00 AM – 10:00 PM',
   seoTitle: '',
   seoDescription: '',
   ogImageUrl: '',
@@ -403,34 +422,34 @@ export const INITIAL_SETTINGS: StoreSettings = {
   currency: 'PKR',
   currencySymbol: 'Rs.',
   aboutUs:
-    'Welcome to our store! We curate quality essentials, artisan craftsmanship, and everyday goods delivered swiftly across Pakistan with Cash on Delivery, EasyPaisa, JazzCash, and convenient Self-Pickup.',
+    'Welcome to our store! Browse authentic everyday products with transparent pricing, nationwide delivery across Pakistan, and convenient payment options.',
   bankDetails: {
-    enabled: true,
-    bankName: 'Meezan Bank Limited',
-    accountTitle: 'BazaarPK Retail Solutions',
-    accountNumber: '01020102938475',
-    iban: 'PK45MEZN0001020102938475',
+    enabled: false,
+    bankName: '',
+    accountTitle: '',
+    accountNumber: '',
+    iban: '',
   },
   easypaisaDetails: {
-    enabled: true,
-    accountTitle: 'BazaarPK Retail Solutions',
-    accountNumber: '0345 1234567',
+    enabled: false,
+    accountTitle: '',
+    accountNumber: '',
     instructions: 'Open EasyPaisa App -> Send Money -> EasyPaisa Transfer, enter the account number above and paste your 11-digit TID below.',
   },
   jazzcashDetails: {
-    enabled: true,
-    accountTitle: 'BazaarPK Retail Solutions',
-    accountNumber: '0300 1234567',
+    enabled: false,
+    accountTitle: '',
+    accountNumber: '',
     instructions: 'Open JazzCash App or dial *786# -> Send Money -> JazzCash Account, send total amount and enter your TID below.',
   },
   selfPickupDetails: {
-    enabled: true,
-    title: 'BazaarPK Flagship Outlet (Clifton, Karachi)',
-    address: 'Shop 42, Ground Floor, Emerald Arcade, Block 5, Clifton, Karachi',
+    enabled: false,
+    title: 'Main Store Pickup Counter',
+    address: '',
     city: 'Karachi',
-    timings: 'Mon – Sat: 11:00 AM – 9:00 PM (Sun: 2:00 PM – 8:00 PM)',
-    contactPhone: '+92 300 1234567',
-    instructions: 'Bring your Order Number (PK-XXXXXX) and registered mobile number when collecting your parcel. Zero shipping fee!',
+    timings: 'Mon – Sat: 11:00 AM – 9:00 PM',
+    contactPhone: '',
+    instructions: 'Bring your Order Number and registered mobile number when collecting your parcel.',
   },
   socialLinks: {},
 };

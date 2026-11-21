@@ -9,7 +9,11 @@ export async function compressPaymentProofImage(
   const maxDimension = options.maxDimension ?? 960;
   const maxLength = options.maxLength ?? 220_000;
 
-  if (!file.type.startsWith('image/')) {
+  const mime = String(file.type || '').toLowerCase();
+  const ext = String(file.name || '').toLowerCase().split('.').pop() || '';
+  const isImageByExt = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext);
+
+  if (!mime.startsWith('image/') && !(mime === '' && isImageByExt)) {
     throw new Error('Please upload a valid image file (JPG, PNG, or WebP).');
   }
 

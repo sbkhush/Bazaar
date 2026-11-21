@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { NavLink, Outlet, Link, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Target,
@@ -10,13 +10,13 @@ import {
   ClipboardList,
   QrCode,
   Bell,
-  UsersRound,
+  Receipt,
+  BookOpen,
   LogOut,
   Menu,
   X,
   Briefcase,
   Loader2,
-  ShieldAlert,
   CheckCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -28,18 +28,18 @@ import {
 import { SalesNotification } from '../types';
 
 export const SalesmanLayout: React.FC = () => {
-  const { currentUser, salesMember, isSalesman, isSalesManager, loading, logout } = useAuth();
+  const { currentUser, salesMember, isSalesman, authorizedHomePath, loading, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<SalesNotification[]>([]);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!currentUser?.uid || !salesMember?.id) return;
+    if (!currentUser?.uid || !salesMember?.id || !isSalesman) return;
     getSalesNotifications(salesMember.id, currentUser.uid)
       .then(setNotifications)
       .catch(() => setNotifications([]));
-  }, [currentUser?.uid, salesMember?.id]);
+  }, [currentUser?.uid, salesMember?.id, isSalesman]);
 
   if (loading) {
     return (
@@ -49,36 +49,14 @@ export const SalesmanLayout: React.FC = () => {
     );
   }
 
-  if (!currentUser || !isSalesman || !salesMember) {
-    return (
-      <div className="min-h-screen bg-[#FAF9F6] flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-4">
-          <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center mx-auto">
-            <ShieldAlert className="w-6 h-6" />
-          </div>
-          <h1 className="text-xl font-extrabold text-slate-900">Salesman Portal Access Required</h1>
-          <p className="text-xs text-slate-600 leading-relaxed">
-            {currentUser && salesMember
-              ? `Your salesman profile (${salesMember.employeeId}) is currently ${salesMember.accountStatus}.`
-              : 'Sign in with an active salesman account provisioned by BazaarPK Super Admin.'}
-          </p>
-          <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
-            <Link
-              to="/salesman/login"
-              className="flex-1 py-2.5 bg-[#065F46] text-white rounded-xl text-xs font-bold hover:bg-emerald-900 transition"
-            >
-              Salesman Sign In
-            </Link>
-            <Link
-              to="/"
-              className="flex-1 py-2.5 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-50 transition"
-            >
-              Platform Home
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
+  // Strict route guard: unauthenticated -> /salesman/login
+  if (!currentUser) {
+    return <Navigate to="/salesman/login" replace />;
+  }
+
+  // Strict route guard: any role other than active salesman/senior_salesman -> redirect away
+  if (!isSalesman || !salesMember) {
+    return <Navigate to={authorizedHomePath} replace />;
   }
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
@@ -90,10 +68,11 @@ export const SalesmanLayout: React.FC = () => {
     { to: '/salesman/targets', label: 'Targets', icon: Award },
     { to: '/salesman/commissions', label: 'Commissions', icon: Coins },
     { to: '/salesman/payouts', label: 'Payouts', icon: Wallet },
+    { to: '/salesman/expenses', label: 'Expenses', icon: Receipt },
+    { to: '/salesman/materials', label: 'Sales Materials', icon: BookOpen },
     { to: '/salesman/activities', label: 'Activity Logs', icon: ClipboardList },
     { to: '/salesman/qr', label: 'QR & Referral Link', icon: QrCode },
     { to: '/salesman/notifications', label: 'Notifications', icon: Bell, badge: unreadCount },
-    ...(isSalesManager ? [{ to: '/salesman/team', label: 'My Sales Team', icon: UsersRound }] : []),
   ];
 
   const handleSignOut = async () => {
@@ -131,7 +110,7 @@ export const SalesmanLayout: React.FC = () => {
               <Briefcase className="w-4 h-4" />
             </div>
             <div>
-              <p className="text-sm font-extrabold text-white leading-none">BazaarPK Sales</p>
+              <p className="text-sm font-extrabold text-white leading-none">SB Khush Sales</p>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">
                 {salesMember.employeeId}
               </p>

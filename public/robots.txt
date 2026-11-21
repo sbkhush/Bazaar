@@ -1,0 +1,15 @@
+User-agent: *
+Allow: /
+Allow: /privacy-policy
+Allow: /terms-and-conditions
+Allow: /s/
+Allow: /shop/
+Disallow: /super-admin
+Disallow: /dashboard
+Disallow: /admin
+Disallow: /salesman
+Disallow: /sales-manager
+Disallow: /referral
+Disallow: /api/
+
+Sitemap: https://sbkhush.com/sitemap.xml

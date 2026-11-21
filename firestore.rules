@@ -35,9 +35,11 @@ service cloud.firestore {
         slug.size() <= 60 &&
         slug.matches('^[a-z0-9\\-]+$') &&
         !(slug in [
-          'admin', 'super-admin', 'dashboard', 'login', 'register', 'api',
+          'admin', 'super-admin', 'dashboard', 'login', 'merchant', 'register', 'api',
           's', 'shop', 'cart', 'checkout', 'account', 'tracking',
-          'platform', 'pricing', 'about', 'faq', 'terms', 'privacy', 'contact'
+          'platform', 'pricing', 'about', 'faq', 'terms', 'privacy',
+          'privacy-policy', 'terms-and-conditions', 'contact',
+          'salesman', 'sales-manager', 'referral', 'r'
         ]);
     }
 
@@ -47,6 +49,25 @@ service cloud.firestore {
 
     function existing() {
       return resource.data;
+    }
+
+    function isAllowedSalesRole(role) {
+      return role in ['salesman', 'senior_salesman', 'sales_manager', 'referral_agent'];
+    }
+
+    function hasSalesClaimRole(roles) {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        (request.auth.token.sales_role in roles) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in roles)
+      );
+    }
+
+    function isManagerOfSalesMember(memberId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/salesMembers/$(memberId)) &&
+        get(/databases/$(database)/documents/salesMembers/$(memberId)).data.assignedManagerUid == request.auth.uid;
     }
 
     function isShopOwner(shopId) {
@@ -456,7 +477,10 @@ service cloud.firestore {
       // Shop Pages (About, FAQ, Return Policy, Terms, Privacy)
       match /pages/{pageKey} {
         allow read: if true;
-        allow create, update, delete: if isValidId(pageKey) && hasShopPermission(shopId, 'appearance');
+        allow create, update, delete: if isValidId(pageKey) && (
+          hasShopPermission(shopId, 'appearance') ||
+          hasShopPermission(shopId, 'settings')
+        );
       }
 
       // Shop Coupons (only active/lookup public or tenant staff)
@@ -666,11 +690,12 @@ service cloud.firestore {
     }
 
     // ====================================================
-    // SALESMAN PORTAL, CRM LEADS, REFERRALS, COMMISSIONS & PAYOUTS
+    // SALES PORTALS (SUPER ADMIN, SALES MANAGER, SALESMAN, REFERRAL AGENT RBAC)
     // ====================================================
 
     match /salesSettings/{docId} {
-      allow read: if isSignedIn();
+      // Shop owners, customers, and referral agents cannot read internal commission tier formulas
+      allow read: if isSuperAdmin() || hasSalesClaimRole(['sales_manager', 'salesman', 'senior_salesman']);
       allow write: if isValidId(docId) && isSuperAdmin();
     }
 
@@ -702,14 +727,17 @@ service cloud.firestore {
           (request.auth.token.email_verified == true && resource.data.email == request.auth.token.email)
         )
       );
-      allow create, delete: if isValidId(memberId) && isSuperAdmin();
+      // Strictly never allow super_admin role in salesMembers
+      allow create: if isValidId(memberId) && isSuperAdmin() && isAllowedSalesRole(incoming().role);
+      allow delete: if isValidId(memberId) && isSuperAdmin();
       allow update: if isValidId(memberId) && (
-        isSuperAdmin() || (
+        (isSuperAdmin() && (!('role' in incoming()) || isAllowedSalesRole(incoming().role))) || (
           isSignedIn() &&
           (resource.data.uid == request.auth.uid ||
             (request.auth.token.email_verified == true && resource.data.email == request.auth.token.email)) &&
           incoming().uid == request.auth.uid &&
           incoming().role == existing().role &&
+          isAllowedSalesRole(incoming().role) &&
           incoming().diff(existing()).affectedKeys().hasOnly([
             'uid', 'inviteStatus', 'acceptedAt', 'accountStatus',
             'lastLoginAt', 'lastActivityAt', 'updatedAt', 'payoutDetails'
@@ -722,9 +750,11 @@ service cloud.firestore {
     match /salesTeams/{teamId} {
       allow get: if isValidId(teamId) && (
         isSuperAdmin() ||
-        (isSignedIn() && resource.data.managerUid == request.auth.uid)
+        (isSignedIn() && resource.data.managerUid == request.auth.uid && hasSalesClaimRole(['sales_manager']))
       );
-      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.managerUid == request.auth.uid);
+      allow list: if isSuperAdmin() || (
+        isSignedIn() && resource.data.managerUid == request.auth.uid && hasSalesClaimRole(['sales_manager'])
+      );
       allow write: if isValidId(teamId) && isSuperAdmin();
     }
 
@@ -746,14 +776,23 @@ service cloud.firestore {
       allow create: if isValidId(leadId) && (
         isSuperAdmin() || (
           isSignedIn() &&
-          incoming().assignedSalesmanUid == request.auth.uid
+          incoming().assignedSalesmanUid == request.auth.uid &&
+          hasSalesClaimRole(['salesman', 'senior_salesman', 'sales_manager'])
         )
       );
       allow update: if isValidId(leadId) && (
         isSuperAdmin() || (
           isSignedIn() &&
           existing().assignedSalesmanUid == request.auth.uid &&
-          incoming().assignedSalesmanUid == existing().assignedSalesmanUid
+          incoming().assignedSalesmanUid == existing().assignedSalesmanUid &&
+          incoming().assignedSalesmanId == existing().assignedSalesmanId &&
+          incoming().assignedManagerUid == existing().assignedManagerUid
+        ) || (
+          isSignedIn() &&
+          existing().assignedManagerUid == request.auth.uid &&
+          incoming().assignedManagerUid == existing().assignedManagerUid &&
+          incoming().assignedSalesmanId is string &&
+          isManagerOfSalesMember(incoming().assignedSalesmanId)
         )
       );
       allow delete: if isValidId(leadId) && isSuperAdmin();
@@ -761,20 +800,42 @@ service cloud.firestore {
 
     match /salesActivities/{activityId} {
       allow get: if isValidId(activityId) && (
-        isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid)
+        isSuperAdmin() ||
+        (isSignedIn() && (
+          resource.data.salesmanUid == request.auth.uid ||
+          isManagerOfSalesMember(resource.data.salesmanId)
+        ))
       );
-      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid);
+      allow list: if isSuperAdmin() || (
+        isSignedIn() && (
+          resource.data.salesmanUid == request.auth.uid ||
+          isManagerOfSalesMember(resource.data.salesmanId)
+        )
+      );
       allow create: if isValidId(activityId) && (
-        isSuperAdmin() || (isSignedIn() && incoming().salesmanUid == request.auth.uid)
+        isSuperAdmin() || (
+          isSignedIn() &&
+          incoming().salesmanUid == request.auth.uid &&
+          hasSalesClaimRole(['salesman', 'senior_salesman', 'sales_manager'])
+        )
       );
       allow update, delete: if isValidId(activityId) && isSuperAdmin();
     }
 
     match /salesTargets/{targetId} {
       allow get: if isValidId(targetId) && (
-        isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid)
+        isSuperAdmin() ||
+        (isSignedIn() && (
+          resource.data.salesmanUid == request.auth.uid ||
+          isManagerOfSalesMember(resource.data.salesmanId)
+        ))
       );
-      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid);
+      allow list: if isSuperAdmin() || (
+        isSignedIn() && (
+          resource.data.salesmanUid == request.auth.uid ||
+          isManagerOfSalesMember(resource.data.salesmanId)
+        )
+      );
       allow write: if isValidId(targetId) && isSuperAdmin();
     }
 
@@ -814,12 +875,60 @@ service cloud.firestore {
       allow create, update, delete: if isValidId(payoutId) && isSuperAdmin();
     }
 
+    // Authorized business expenses: salesmen submit own as pending only; NEVER self-approve
+    match /salesExpenses/{expenseId} {
+      allow get, list: if isValidId(expenseId) && (
+        isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid)
+      );
+      allow create: if isValidId(expenseId) && (
+        isSuperAdmin() || (
+          isSignedIn() &&
+          incoming().salesmanUid == request.auth.uid &&
+          incoming().status == 'pending' &&
+          incoming().amount is number && incoming().amount > 0 &&
+          hasSalesClaimRole(['salesman', 'senior_salesman', 'sales_manager'])
+        )
+      );
+      allow update, delete: if isValidId(expenseId) && isSuperAdmin();
+    }
+
+    // Team bonus recommendations: Sales Manager submits ONLY for own team member as pending; Super Admin approves
+    match /salesBonusRecommendations/{recId} {
+      allow get, list: if isValidId(recId) && (
+        isSuperAdmin() || (isSignedIn() && resource.data.managerUid == request.auth.uid)
+      );
+      allow create: if isValidId(recId) && (
+        isSuperAdmin() || (
+          isSignedIn() &&
+          incoming().managerUid == request.auth.uid &&
+          incoming().status == 'pending' &&
+          incoming().recommendedAmount is number && incoming().recommendedAmount > 0 &&
+          isManagerOfSalesMember(incoming().salesmanId) &&
+          hasSalesClaimRole(['sales_manager'])
+        )
+      );
+      allow update, delete: if isValidId(recId) && isSuperAdmin();
+    }
+
+    // Approved sales collateral: readable by active sales members & referral agents; Super Admin write only
+    match /salesMaterials/{materialId} {
+      allow get, list: if isSuperAdmin() || hasSalesClaimRole(['salesman', 'senior_salesman', 'sales_manager', 'referral_agent']);
+      allow create, update, delete: if isValidId(materialId) && isSuperAdmin();
+    }
+
     match /salesNotifications/{notifId} {
       allow get: if isValidId(notifId) && (
         isSuperAdmin() || (isSignedIn() && resource.data.recipientUid == request.auth.uid)
       );
       allow list: if isSuperAdmin() || (isSignedIn() && resource.data.recipientUid == request.auth.uid);
-      allow create: if isValidId(notifId) && (isSuperAdmin() || isSignedIn());
+      allow create: if isValidId(notifId) && (
+        isSuperAdmin() || (
+          isSignedIn() && (
+            incoming().recipientUid == request.auth.uid ||
+            isManagerOfSalesMember(incoming().recipientSalesmanId)
+          )
+        )
+      );
       allow update: if isValidId(notifId) && (
         isSuperAdmin() || (
           isSignedIn() &&

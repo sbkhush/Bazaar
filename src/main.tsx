@@ -4,6 +4,7 @@ import './index.css';
 
 declare global {
   interface Window {
+    __SBKHUSH_BOOTED__?: boolean;
     __BAZAARPK_BOOTED__?: boolean;
   }
 }
@@ -13,6 +14,7 @@ const rootEl = document.getElementById('root');
 if (rootEl) {
   try {
     createRoot(rootEl).render(<App />);
+    window.__SBKHUSH_BOOTED__ = true;
     window.__BAZAARPK_BOOTED__ = true;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

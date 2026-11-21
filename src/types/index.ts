@@ -6,7 +6,8 @@ export type UserRole =
   | 'admin'
   | 'super_admin'
   | 'salesman'
-  | 'sales_manager';
+  | 'sales_manager'
+  | 'referral_agent';
 
 export * from './sales';
 
@@ -279,6 +280,9 @@ export interface PlatformSettings {
     iban: string;
   };
   gracePeriodDays?: number;
+  privacyPolicyContent?: string;
+  termsContent?: string;
+  legalUpdatedAt?: string;
   updatedAt?: string;
 }
 

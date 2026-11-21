@@ -1,19 +1,50 @@
 import React, { useEffect, useState } from 'react';
-import { Save, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Save, CheckCircle2, AlertCircle, FileText, ExternalLink, Sparkles } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
-import { updateShopSettings } from '../services/tenantService';
+import {
+  updateShopSettings,
+  getShopPageContent,
+  saveShopPageContent,
+} from '../services/tenantService';
 import { StoreSettings } from '../types';
+import { BRAND, buildShopLegalStarterTemplates } from '../config/brand';
 
 export const ShopSettingsPage: React.FC = () => {
-  const { shopId, settings, refreshDashboard, isReadOnly } = useDashboard();
+  const { shopId, shop, settings, refreshDashboard, isReadOnly } = useDashboard();
   const [form, setForm] = useState<StoreSettings>(settings);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Store-specific legal policies
+  const [privacyPolicyText, setPrivacyPolicyText] = useState('');
+  const [termsText, setTermsText] = useState('');
+  const [savingLegal, setSavingLegal] = useState(false);
+  const [legalNotice, setLegalNotice] = useState<string | null>(null);
+  const [templateConfirmTarget, setTemplateConfirmTarget] = useState<'privacy' | 'terms' | null>(null);
+
   useEffect(() => {
     setForm(settings);
   }, [settings]);
+
+  useEffect(() => {
+    if (!shopId) return;
+    let active = true;
+    Promise.all([
+      getShopPageContent(shopId, 'privacy'),
+      getShopPageContent(shopId, 'terms'),
+    ])
+      .then(([priv, terms]) => {
+        if (!active) return;
+        setPrivacyPolicyText(priv?.content || '');
+        setTermsText(terms?.content || '');
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [shopId]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,6 +76,62 @@ export const ShopSettingsPage: React.FC = () => {
       setErrorMsg(err?.message || 'Could not save store settings. Please try again.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const applyStarterTemplate = (target: 'privacy' | 'terms') => {
+    const slug = shop?.slug || shopId;
+    const starter = buildShopLegalStarterTemplates({
+      shopName: shop?.name || form.siteName || 'My Store',
+      city: form.city || shop?.city,
+      contactEmail: form.contactEmail,
+      contactPhone: form.contactPhone,
+      storeUrl: `${BRAND.primaryUrl}/s/${slug}`,
+    });
+    if (target === 'privacy') {
+      setPrivacyPolicyText(starter.privacyContent);
+    } else {
+      setTermsText(starter.termsContent);
+    }
+    setTemplateConfirmTarget(null);
+  };
+
+  const requestStarterTemplate = (target: 'privacy' | 'terms') => {
+    const current = target === 'privacy' ? privacyPolicyText : termsText;
+    if (current.trim().length > 0) {
+      setTemplateConfirmTarget(target);
+    } else {
+      applyStarterTemplate(target);
+    }
+  };
+
+  const handleSaveLegalPages = async () => {
+    if (isReadOnly || !shopId) return;
+    setSavingLegal(true);
+    setLegalNotice(null);
+    setErrorMsg(null);
+    try {
+      const storeTitle = shop?.name || form.siteName || 'Our Store';
+      const now = new Date().toISOString();
+      await Promise.all([
+        saveShopPageContent(shopId, {
+          key: 'privacy',
+          title: `Privacy Policy — ${storeTitle}`,
+          content: privacyPolicyText.trim(),
+          updatedAt: now,
+        }),
+        saveShopPageContent(shopId, {
+          key: 'terms',
+          title: `Terms & Conditions — ${storeTitle}`,
+          content: termsText.trim(),
+          updatedAt: now,
+        }),
+      ]);
+      setLegalNotice('Store Privacy Policy and Terms & Conditions saved to your storefront.');
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not save store legal pages.');
+    } finally {
+      setSavingLegal(false);
     }
   };
 
@@ -386,6 +473,137 @@ export const ShopSettingsPage: React.FC = () => {
           />
         </div>
       </div>
+
+      {/* Store-Specific Legal Policies (/s/:shopSlug/privacy-policy & /terms-and-conditions) */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-[#065F46]" />
+              Store Privacy Policy &amp; Terms &amp; Conditions
+            </h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Published exclusively for shoppers visiting your storefront (separate from {BRAND.name} platform policies).
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              to={`/s/${shop?.slug || shopId}/privacy-policy`}
+              target="_blank"
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-[11px] font-semibold inline-flex items-center gap-1"
+            >
+              Preview Privacy <ExternalLink className="w-3 h-3" />
+            </Link>
+            <Link
+              to={`/s/${shop?.slug || shopId}/terms-and-conditions`}
+              target="_blank"
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-[11px] font-semibold inline-flex items-center gap-1"
+            >
+              Preview Terms <ExternalLink className="w-3 h-3" />
+            </Link>
+            {!isReadOnly && (
+              <button
+                type="button"
+                disabled={savingLegal}
+                onClick={handleSaveLegalPages}
+                className="px-3.5 py-1.5 rounded-lg bg-[#065F46] hover:bg-emerald-900 disabled:opacity-60 text-white text-[11px] font-bold inline-flex items-center gap-1.5"
+              >
+                <Save className="w-3.5 h-3.5" />
+                {savingLegal ? 'Saving Policies...' : 'Save Legal Policies'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {legalNotice && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl flex items-center gap-2 font-semibold">
+            <CheckCircle2 className="w-4 h-4 shrink-0" /> {legalNotice}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="font-semibold text-slate-700">
+                Store Privacy Policy (<code className="font-mono text-[11px]">/s/{shop?.slug || shopId}/privacy-policy</code>)
+              </label>
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => requestStarterTemplate('privacy')}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[#065F46] hover:underline"
+                >
+                  <Sparkles className="w-3 h-3" /> Load Starter Template
+                </button>
+              )}
+            </div>
+            <textarea
+              rows={8}
+              value={privacyPolicyText}
+              onChange={(e) => setPrivacyPolicyText(e.target.value)}
+              placeholder="Write your store's customer privacy policy or click 'Load Starter Template'..."
+              className="w-full px-3 py-2 border border-slate-200 rounded-xl leading-relaxed"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="font-semibold text-slate-700">
+                Store Terms &amp; Conditions (<code className="font-mono text-[11px]">/s/{shop?.slug || shopId}/terms-and-conditions</code>)
+              </label>
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => requestStarterTemplate('terms')}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[#065F46] hover:underline"
+                >
+                  <Sparkles className="w-3 h-3" /> Load Starter Template
+                </button>
+              )}
+            </div>
+            <textarea
+              rows={8}
+              value={termsText}
+              onChange={(e) => setTermsText(e.target.value)}
+              placeholder="Write your store's purchase, shipping & return terms or click 'Load Starter Template'..."
+              className="w-full px-3 py-2 border border-slate-200 rounded-xl leading-relaxed"
+            />
+          </div>
+        </div>
+
+        <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200/80 rounded-xl p-3">
+          Starter templates are general operational drafts for Pakistani eCommerce stores (not formal legal advice). Review and tailor them to match your store&apos;s refund, courier, and payment terms.
+        </p>
+      </div>
+
+      {templateConfirmTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-4">
+            <h3 className="text-base font-extrabold text-slate-900">
+              Replace Existing {templateConfirmTarget === 'privacy' ? 'Privacy Policy' : 'Terms & Conditions'}?
+            </h3>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Loading the starter template will overwrite your current draft in this editor box. Your published storefront won&apos;t change until you click <strong>Save Legal Policies</strong>.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setTemplateConfirmTarget(null)}
+                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => applyStarterTemplate(templateConfirmTarget)}
+                className="px-4 py-2 bg-[#065F46] hover:bg-emerald-900 text-white rounded-lg text-xs font-bold"
+              >
+                Replace Draft
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </form>
   );
 };

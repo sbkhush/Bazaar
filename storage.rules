@@ -116,6 +116,26 @@ service firebase.storage {
       allow delete: if isSuperAdmin();
     }
 
+    // Sales team claim helper (never grants shop or Super Admin storage access)
+    function isActiveSalesClaim() {
+      return isSignedIn() && (
+        request.auth.token.sales_role in ['salesman', 'senior_salesman', 'sales_manager', 'referral_agent']
+      );
+    }
+
+    // Sales Approved Collateral Materials (Super Admin write only; active sales & referral roles read only)
+    match /sales/materials/{allPaths=**} {
+      allow read: if isSuperAdmin() || isActiveSalesClaim();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    // Sales Expense Receipts (Own upload & read only; Super Admin delete/review)
+    match /sales/expenses/{userId}/{expenseId}/{fileName} {
+      allow read: if isSuperAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isValidImageUpload();
+      allow delete: if isSuperAdmin();
+    }
+
     // User Profile Avatars
     match /users/{userId}/profile/{fileName} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());

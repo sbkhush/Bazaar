@@ -30,9 +30,12 @@ import {
   SalesAnalyticsFilter,
   SalesAnalyticsSummary,
   SalesAuditLog,
+  SalesBonusRecommendation,
+  SalesExpense,
   SalesLead,
   SalesLeadSource,
   SalesLeadStatus,
+  SalesMaterial,
   SalesMember,
   SalesMemberRole,
   SalesNotification,
@@ -44,6 +47,7 @@ import {
   Shop,
 } from '../types';
 import { parseCsvRows } from '../utils/csvUtils';
+import { isAllowedSalesRole } from './roleGuard';
 
 export const DEFAULT_COMMISSION_PLANS: CommissionRuleTier[] = [
   {
@@ -142,11 +146,11 @@ export function generateEmployeeId(existingMembers: Pick<SalesMember, 'employeeI
   const existingSet = new Set(existingMembers.map((m) => String(m.employeeId || '').toUpperCase()));
   let seq = existingMembers.length + 1;
   while (seq < 99999) {
-    const candidate = `BPK-SLS-${String(seq).padStart(3, '0')}`;
+    const candidate = `SBK-SLS-${String(seq).padStart(3, '0')}`;
     if (!existingSet.has(candidate)) return candidate;
     seq++;
   }
-  return `BPK-SLS-${Date.now().toString().slice(-5)}`;
+  return `SBK-SLS-${Date.now().toString().slice(-5)}`;
 }
 
 export function generateUniqueReferralCode(fullName: string, existingCodes: string[] = []): string {
@@ -171,6 +175,16 @@ export function buildReferralLink(code: string, baseUrl = 'https://sbkhush.com')
 export function buildSalesmanPortalLoginUrl(baseUrl = 'https://sbkhush.com'): string {
   const cleanBase = baseUrl.replace(/\/+$/, '') || 'https://sbkhush.com';
   return `${cleanBase}/salesman/login`;
+}
+
+export function buildSalesManagerPortalLoginUrl(baseUrl = 'https://sbkhush.com'): string {
+  const cleanBase = baseUrl.replace(/\/+$/, '') || 'https://sbkhush.com';
+  return `${cleanBase}/sales-manager/login`;
+}
+
+export function buildReferralPortalLoginUrl(baseUrl = 'https://sbkhush.com'): string {
+  const cleanBase = baseUrl.replace(/\/+$/, '') || 'https://sbkhush.com';
+  return `${cleanBase}/referral/login`;
 }
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
@@ -469,15 +483,41 @@ export async function createSalesMember(input: {
   accountStatus: SalesAccountStatus;
   payoutDetails?: SalesMember['payoutDetails'];
   sendPasswordResetInvite?: boolean;
-}): Promise<SalesMember> {
+}): Promise<SalesMember & { _resetEmailSent?: boolean; _resetEmailWarning?: string }> {
+  if (!isAllowedSalesRole(input.role)) {
+    throw new Error('Security Policy Violation: sales team accounts cannot hold super_admin or invalid roles.');
+  }
   const cleanEmail = input.email.trim().toLowerCase();
   if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
     throw new Error('A valid corporate or personal email address is required.');
+  }
+  const cleanPhone = input.phone.trim();
+  const normalizedPhone = normalizePhoneForMatch(cleanPhone);
+  if (!cleanPhone || normalizedPhone.length < 10) {
+    throw new Error('A valid mobile phone number is required.');
+  }
+
+  // Prefer server-side provisioning API (handles Auth invite + duplicate guards + audit log without disturbing current session)
+  const apiRes = await trySalesApi<{
+    ok: boolean;
+    member?: SalesMember;
+    resetEmailSent?: boolean;
+    resetEmailWarning?: string;
+  }>('/api/super-admin/sales/members', 'POST', input);
+  if (apiRes?.member) {
+    return {
+      ...apiRes.member,
+      _resetEmailSent: apiRes.resetEmailSent,
+      _resetEmailWarning: apiRes.resetEmailWarning,
+    };
   }
 
   const existing = await getAllSalesMembers();
   if (existing.some((m) => m.email.toLowerCase() === cleanEmail)) {
     throw new Error(`A salesman account with email ${cleanEmail} already exists.`);
+  }
+  if (existing.some((m) => normalizePhoneForMatch(m.phone) === normalizedPhone)) {
+    throw new Error(`A salesman account with phone number ${cleanPhone} already exists.`);
   }
 
   const settings = await getSalesSettings();
@@ -495,7 +535,7 @@ export async function createSalesMember(input: {
     employeeId,
     fullName: input.fullName.trim(),
     email: cleanEmail,
-    phone: input.phone.trim(),
+    phone: cleanPhone,
     city: input.city.trim(),
     address: input.address?.trim() || undefined,
     profilePicture: input.profilePicture?.trim() || undefined,
@@ -546,18 +586,47 @@ export async function createSalesMember(input: {
       details: `Created ${member.fullName} (${member.employeeId}, ${member.role}) · Referral Code: ${member.referralCode}`,
     });
 
+    let resetEmailSent = false;
+    let resetEmailWarning: string | undefined;
     if (input.sendPasswordResetInvite) {
-      await sendPasswordResetEmail(auth, cleanEmail).catch(() => {});
+      try {
+        await sendPasswordResetEmail(auth, cleanEmail);
+        resetEmailSent = true;
+      } catch (resetErr: any) {
+        resetEmailWarning = resetErr?.message || 'Use the mail icon later or Google Sign-In after user setup.';
+      }
     }
 
-    return member;
+    return {
+      ...member,
+      _resetEmailSent: resetEmailSent,
+      _resetEmailWarning: resetEmailWarning,
+    };
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `salesMembers/${id}`);
   }
 }
 
 export async function updateSalesMember(memberId: string, patch: Partial<SalesMember>): Promise<void> {
+  if (patch.role !== undefined && !isAllowedSalesRole(patch.role)) {
+    throw new Error('Security Policy Violation: sales team accounts can never be assigned super_admin role.');
+  }
+
+  const apiRes = await trySalesApi<{ ok: boolean }>('/api/super-admin/sales/members', 'POST', {
+    memberId,
+    ...patch,
+  });
+  if (apiRes?.ok) return;
+
   try {
+    if (patch.phone) {
+      const normalized = normalizePhoneForMatch(patch.phone);
+      const existing = await getAllSalesMembers();
+      if (existing.some((m) => m.id !== memberId && normalizePhoneForMatch(m.phone) === normalized)) {
+        throw new Error(`Another sales member already uses phone number ${patch.phone}.`);
+      }
+    }
+
     const now = new Date().toISOString();
     const cleanPatch = stripUndef({
       ...patch,
@@ -1252,6 +1321,8 @@ export async function trackQrScan(referralCode: string, source: 'qr_scan' | 'ref
   if (!cleanCode) return null;
   try {
     try {
+      localStorage.setItem('sbkhush_ref_code', cleanCode);
+      localStorage.setItem('sbkhush_ref_source', source);
       localStorage.setItem('bazaarpk_ref_code', cleanCode);
       localStorage.setItem('bazaarpk_ref_source', source);
     } catch {}
@@ -2058,4 +2129,351 @@ export function computeSalesDashboardAnalytics(
     targetVsAchievement,
     industryBreakdown,
   };
+}
+
+// ====================================================
+// SALES MANAGER SCOPED TEAM OPERATIONS & BONUS RECOMMENDATIONS
+// ====================================================
+
+export async function assignLeadWithinManagerTeam(params: {
+  leadIds: string[];
+  targetSalesman: SalesMember;
+  managerUid: string;
+}): Promise<void> {
+  if (!params.targetSalesman.assignedManagerUid || params.targetSalesman.assignedManagerUid !== params.managerUid) {
+    throw new Error('Forbidden: target representative does not belong to your authorized sales team.');
+  }
+
+  const apiRes = await trySalesApi<{ ok: boolean }>('/api/sales-manager/leads/assign', 'POST', {
+    leadIds: params.leadIds,
+    targetSalesmanId: params.targetSalesman.id,
+  }).catch((e) => {
+    throw e;
+  });
+  if (apiRes) return;
+
+  const now = new Date().toISOString();
+  const batch = writeBatch(db);
+  for (const lid of params.leadIds) {
+    batch.update(doc(db, 'salesLeads', lid), {
+      assignedSalesmanId: params.targetSalesman.id,
+      assignedSalesmanUid: params.targetSalesman.uid || null,
+      assignedSalesmanName: params.targetSalesman.fullName,
+      assignedManagerId: params.targetSalesman.assignedManagerId || null,
+      assignedManagerUid: params.managerUid,
+      status: 'Assigned',
+      updatedAt: now,
+    });
+  }
+  await batch.commit();
+}
+
+export async function getSalesActivitiesForTeam(teamMemberUids: string[]): Promise<SalesActivity[]> {
+  if (teamMemberUids.length === 0) return [];
+  const list: SalesActivity[] = [];
+  for (const uid of teamMemberUids) {
+    const acts = await getSalesActivitiesBySalesman(uid, uid).catch(() => []);
+    list.push(...acts);
+  }
+  return list.sort((a, b) => new Date(b.activityDateTime).getTime() - new Date(a.activityDateTime).getTime());
+}
+
+export async function getSalesTargetsForTeam(teamMembers: SalesMember[]): Promise<SalesTarget[]> {
+  const list: SalesTarget[] = [];
+  for (const m of teamMembers) {
+    const targets = await getSalesTargetsForMember(m.id, m.uid).catch(() => []);
+    list.push(...targets);
+  }
+  return list.sort((a, b) => b.periodKey.localeCompare(a.periodKey));
+}
+
+export async function submitBonusRecommendation(input: {
+  managerId: string;
+  managerUid: string;
+  managerName: string;
+  targetRep: SalesMember;
+  recommendedAmount: number;
+  periodKey: string;
+  reason: string;
+}): Promise<SalesBonusRecommendation> {
+  if (input.targetRep.assignedManagerUid !== input.managerUid || input.targetRep.uid === input.managerUid) {
+    throw new Error('Forbidden: bonus recommendations are strictly restricted to your assigned team members.');
+  }
+
+  const apiRes = await trySalesApi<{ recommendation: SalesBonusRecommendation }>(
+    '/api/sales-manager/bonus-recommendations',
+    'POST',
+    {
+      salesmanId: input.targetRep.id,
+      recommendedAmount: input.recommendedAmount,
+      periodKey: input.periodKey,
+      reason: input.reason,
+      status: 'pending',
+    }
+  ).catch((e) => {
+    throw e;
+  });
+  if (apiRes?.recommendation) return apiRes.recommendation;
+
+  const id = `bon_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const now = new Date().toISOString();
+  const payload = stripUndef<SalesBonusRecommendation>({
+    id,
+    managerId: input.managerId,
+    managerUid: input.managerUid,
+    managerName: input.managerName,
+    salesmanId: input.targetRep.id,
+    salesmanUid: input.targetRep.uid,
+    salesmanName: input.targetRep.fullName,
+    recommendedAmount: Math.round(Number(input.recommendedAmount) || 0),
+    periodKey: input.periodKey,
+    reason: input.reason.trim(),
+    status: 'pending',
+    createdAt: now,
+    updatedAt: now,
+  });
+  await setDoc(doc(db, 'salesBonusRecommendations', id), payload);
+  await logSalesAudit({
+    action: 'Recommended Team Bonus',
+    entityType: 'bonus_recommendation',
+    entityId: id,
+    actorRole: 'sales_manager',
+    details: `Recommended Rs. ${payload.recommendedAmount} bonus for ${payload.salesmanName} (${payload.periodKey})`,
+  });
+  return payload;
+}
+
+export async function getBonusRecommendationsForManager(managerUid: string): Promise<SalesBonusRecommendation[]> {
+  try {
+    const q = query(collection(db, 'salesBonusRecommendations'), where('managerUid', '==', managerUid));
+    const snap = await getDocs(q);
+    return snap.docs
+      .map((d) => ({ ...(d.data() as SalesBonusRecommendation), id: d.id }))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function getAllBonusRecommendations(): Promise<SalesBonusRecommendation[]> {
+  try {
+    const snap = await getDocs(collection(db, 'salesBonusRecommendations'));
+    return snap.docs
+      .map((d) => ({ ...(d.data() as SalesBonusRecommendation), id: d.id }))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function decideBonusRecommendation(params: {
+  recId: string;
+  decision: 'approved' | 'rejected';
+  reason?: string;
+}): Promise<void> {
+  const apiRes = await trySalesApi<{ ok: boolean }>(
+    '/api/super-admin/sales/bonus-recommendations/decision',
+    'POST',
+    params
+  ).catch((e) => {
+    throw e;
+  });
+  if (apiRes) return;
+
+  const reviewer = auth.currentUser?.email || 'Super Admin';
+  const now = new Date().toISOString();
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'salesBonusRecommendations', params.recId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Recommendation not found.');
+    const cur = snap.data() as SalesBonusRecommendation;
+    if (cur.status !== 'pending') throw new Error(`Already ${cur.status}.`);
+    const patch: Record<string, any> = {
+      status: params.decision,
+      reviewedBy: reviewer,
+      reviewedAt: now,
+      updatedAt: now,
+    };
+    if (params.decision === 'rejected') {
+      patch.rejectionReason = params.reason || 'Declined by Super Admin.';
+    } else {
+      const ledgerId = `comm_bon_${params.recId}`;
+      patch.commissionLedgerId = ledgerId;
+      tx.set(doc(db, 'commissionLedger', ledgerId), stripUndef({
+        id: ledgerId,
+        salesmanId: cur.salesmanId,
+        salesmanUid: cur.salesmanUid,
+        salesmanName: cur.salesmanName,
+        shopId: `bonus_${cur.periodKey}`,
+        shopName: `Performance Bonus (${cur.periodKey})`,
+        paymentId: params.recId,
+        planId: 'performance_bonus',
+        planName: `Bonus (${cur.managerName})`,
+        billingCycle: 'monthly',
+        paymentAmount: 0,
+        commissionRatePct: 0,
+        flatBonusAmount: cur.recommendedAmount,
+        commissionAmount: cur.recommendedAmount,
+        commissionType: 'target_bonus',
+        status: 'approved',
+        approvedBy: reviewer,
+        approvedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }));
+    }
+    tx.update(ref, patch);
+  });
+}
+
+// ====================================================
+// SALESMAN BUSINESS EXPENSES (STRICTLY PENDING ON SUBMIT)
+// ====================================================
+
+export async function submitSalesExpense(input: {
+  salesmanId: string;
+  salesmanUid: string;
+  salesmanName: string;
+  managerUid?: string;
+  category: SalesExpense['category'];
+  amount: number;
+  expenseDate: string;
+  description: string;
+  receiptUrl?: string;
+}): Promise<SalesExpense> {
+  const apiRes = await trySalesApi<{ expense: SalesExpense }>('/api/salesman/expenses', 'POST', {
+    ...input,
+    status: 'pending',
+  }).catch((e) => {
+    throw e;
+  });
+  if (apiRes?.expense) return apiRes.expense;
+
+  const id = `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const now = new Date().toISOString();
+  const payload = stripUndef<SalesExpense>({
+    id,
+    salesmanId: input.salesmanId,
+    salesmanUid: input.salesmanUid,
+    salesmanName: input.salesmanName,
+    managerUid: input.managerUid,
+    category: input.category,
+    amount: Math.round(Number(input.amount) || 0),
+    expenseDate: input.expenseDate || now.slice(0, 10),
+    description: input.description.trim(),
+    receiptUrl: input.receiptUrl,
+    status: 'pending',
+    createdAt: now,
+    updatedAt: now,
+  });
+  await setDoc(doc(db, 'salesExpenses', id), payload);
+  return payload;
+}
+
+export async function getSalesExpensesForMember(salesmanUid: string): Promise<SalesExpense[]> {
+  try {
+    const q = query(collection(db, 'salesExpenses'), where('salesmanUid', '==', salesmanUid));
+    const snap = await getDocs(q);
+    return snap.docs
+      .map((d) => ({ ...(d.data() as SalesExpense), id: d.id }))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function getAllSalesExpenses(): Promise<SalesExpense[]> {
+  try {
+    const snap = await getDocs(collection(db, 'salesExpenses'));
+    return snap.docs
+      .map((d) => ({ ...(d.data() as SalesExpense), id: d.id }))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function decideSalesExpense(params: {
+  expenseId: string;
+  decision: 'approved' | 'rejected';
+  reason?: string;
+}): Promise<void> {
+  const apiRes = await trySalesApi<{ ok: boolean }>('/api/super-admin/sales/expenses/decision', 'POST', params).catch(
+    (e) => {
+      throw e;
+    }
+  );
+  if (apiRes) return;
+
+  const reviewer = auth.currentUser?.email || 'Super Admin';
+  const now = new Date().toISOString();
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'salesExpenses', params.expenseId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Expense not found.');
+    if (snap.data()?.status !== 'pending') throw new Error(`Expense already ${snap.data()?.status}.`);
+    tx.update(
+      ref,
+      stripUndef({
+        status: params.decision,
+        rejectionReason: params.decision === 'rejected' ? params.reason || 'Declined by Super Admin.' : undefined,
+        reviewedBy: reviewer,
+        reviewedAt: now,
+        updatedAt: now,
+      })
+    );
+  });
+}
+
+// ====================================================
+// APPROVED SALES MATERIALS & REFERRAL AGENT REWARDS
+// ====================================================
+
+export async function getApprovedSalesMaterials(): Promise<SalesMaterial[]> {
+  try {
+    const snap = await getDocs(collection(db, 'salesMaterials'));
+    return snap.docs
+      .map((d) => ({ ...(d.data() as SalesMaterial), id: d.id }))
+      .filter((m) => m.isActive !== false)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export async function saveSalesMaterial(
+  input: Omit<SalesMaterial, 'id' | 'createdAt' | 'createdBy'> & { id?: string }
+): Promise<SalesMaterial> {
+  const id = input.id || `mat_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+  const now = new Date().toISOString();
+  const payload = stripUndef<SalesMaterial>({
+    ...input,
+    id,
+    createdBy: auth.currentUser?.email || 'Super Admin',
+    createdAt: now,
+    updatedAt: now,
+  });
+  await setDoc(doc(db, 'salesMaterials', id), payload, { merge: true });
+  await logSalesAudit({
+    action: input.id ? 'Updated Sales Material' : 'Published Sales Material',
+    entityType: 'sales_material',
+    entityId: id,
+    details: `${payload.title} (${payload.category})`,
+  });
+  return payload;
+}
+
+export async function deleteSalesMaterial(materialId: string): Promise<void> {
+  await deleteDoc(doc(db, 'salesMaterials', materialId));
+  await logSalesAudit({
+    action: 'Deleted Sales Material',
+    entityType: 'sales_material',
+    entityId: materialId,
+    details: `Removed sales material ${materialId}`,
+  });
+}
+
+export async function getReferralRewardsForAgent(salesmanId: string, uid?: string): Promise<CommissionLedgerEntry[]> {
+  const all = await getCommissionsForSalesman(salesmanId, uid);
+  return all.filter((c) => c.status === 'approved' || c.status === 'paid');
 }

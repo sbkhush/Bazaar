@@ -1,20 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Coins, Check, XCircle, RotateCcw, RefreshCw, Loader2 } from 'lucide-react';
 import {
+  decideBonusRecommendation,
+  decideSalesExpense,
+  getAllBonusRecommendations,
   getAllCommissionLedger,
+  getAllSalesExpenses,
   syncCommissionForApprovedPayment,
   updateCommissionDecision,
 } from '../../services/salesService';
 import { getAllPlatformPayments } from '../../services/platformService';
 import { formatPKR } from '../../data/seedData';
 import { useToast } from '../../components/common/Toast';
-import { CommissionLedgerEntry } from '../../types';
+import { CommissionLedgerEntry, SalesBonusRecommendation, SalesExpense } from '../../types';
 
 export const SalesCommissionsPage: React.FC = () => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [entries, setEntries] = useState<CommissionLedgerEntry[]>([]);
+  const [bonusRecs, setBonusRecs] = useState<SalesBonusRecommendation[]>([]);
+  const [expenses, setExpenses] = useState<SalesExpense[]>([]);
   const [statusFilter, setStatusFilter] = useState('all');
 
   const [reasonModal, setReasonModal] = useState<{
@@ -26,8 +32,14 @@ export const SalesCommissionsPage: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const list = await getAllCommissionLedger().catch(() => []);
+      const [list, recs, exps] = await Promise.all([
+        getAllCommissionLedger().catch(() => []),
+        getAllBonusRecommendations().catch(() => []),
+        getAllSalesExpenses().catch(() => []),
+      ]);
       setEntries(list);
+      setBonusRecs(recs);
+      setExpenses(exps);
     } finally {
       setLoading(false);
     }
@@ -226,6 +238,135 @@ export const SalesCommissionsPage: React.FC = () => {
             </table>
           </div>
         )}
+      </div>
+
+      {/* MANAGER BONUS RECOMMENDATIONS & SALES EXPENSE CLAIMS (SUPER ADMIN ONLY APPROVALS) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-xs">
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100">
+            <h2 className="text-sm font-extrabold text-slate-900">
+              Manager Bonus Recommendations ({bonusRecs.length})
+            </h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Approving adds a target bonus entry into the commission ledger.
+            </p>
+          </div>
+          <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+            {bonusRecs.length === 0 ? (
+              <p className="p-6 text-center text-slate-500">No bonus recommendations submitted.</p>
+            ) : (
+              bonusRecs.map((r) => (
+                <div key={r.id} className="p-4 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-bold text-slate-900">
+                      {r.salesmanName} · {formatPKR(r.recommendedAmount)}
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      By {r.managerName} ({r.periodKey}) · {r.reason}
+                    </p>
+                  </div>
+                  {r.status === 'pending' ? (
+                    <div className="flex gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          decideBonusRecommendation({ recId: r.id, decision: 'approved' })
+                            .then(() => {
+                              showToast('Bonus recommendation approved.', 'success');
+                              loadData();
+                            })
+                            .catch((e) => showToast(e.message, 'error'))
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-[#065F46] text-white font-bold"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          decideBonusRecommendation({ recId: r.id, decision: 'rejected' })
+                            .then(() => {
+                              showToast('Bonus recommendation rejected.', 'success');
+                              loadData();
+                            })
+                            .catch((e) => showToast(e.message, 'error'))
+                        }
+                        className="px-2.5 py-1 rounded-lg border border-rose-200 text-rose-700 font-semibold"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="capitalize font-bold text-slate-600">{r.status}</span>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100">
+            <h2 className="text-sm font-extrabold text-slate-900">
+              Sales Expense Claims ({expenses.length})
+            </h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Reps cannot self-approve expenses; Super Admin verification required.
+            </p>
+          </div>
+          <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+            {expenses.length === 0 ? (
+              <p className="p-6 text-center text-slate-500">No expense claims submitted.</p>
+            ) : (
+              expenses.map((ex) => (
+                <div key={ex.id} className="p-4 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-bold text-slate-900">
+                      {ex.salesmanName} · {formatPKR(ex.amount)} ({ex.category.replace('_', ' ')})
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      {ex.expenseDate} · {ex.description}
+                    </p>
+                  </div>
+                  {ex.status === 'pending' ? (
+                    <div className="flex gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          decideSalesExpense({ expenseId: ex.id, decision: 'approved' })
+                            .then(() => {
+                              showToast('Expense approved.', 'success');
+                              loadData();
+                            })
+                            .catch((e) => showToast(e.message, 'error'))
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-[#065F46] text-white font-bold"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          decideSalesExpense({ expenseId: ex.id, decision: 'rejected' })
+                            .then(() => {
+                              showToast('Expense rejected.', 'success');
+                              loadData();
+                            })
+                            .catch((e) => showToast(e.message, 'error'))
+                        }
+                        className="px-2.5 py-1 rounded-lg border border-rose-200 text-rose-700 font-semibold"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="capitalize font-bold text-slate-600">{ex.status}</span>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
 
       {reasonModal && (

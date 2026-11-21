@@ -353,7 +353,7 @@ describe('Dynamic SEO Tag Generator & Stage 1 Retail Helpers', () => {
     const prodSeo = buildShopSeoTags({
       shop: shopPublic,
       product: sampleProduct,
-      canonicalUrl: 'https://bazaarpk.com/s/lahore-mart/product/p1',
+      canonicalUrl: 'https://sbkhush.com/s/lahore-mart/product/p1',
     });
     expect(prodSeo.ogType).toBe('product');
     expect(prodSeo.title).toContain('Basmati Rice 5kg');
@@ -362,9 +362,9 @@ describe('Dynamic SEO Tag Generator & Stage 1 Retail Helpers', () => {
     expect(prodSeo.jsonLd['@type']).toBe('Product');
     expect(prodSeo.jsonLd.offers.priceCurrency).toBe('PKR');
 
-    const platformSeo = buildPlatformSeoTags('https://bazaarpk.com/');
+    const platformSeo = buildPlatformSeoTags('https://sbkhush.com/');
     expect(platformSeo.jsonLd['@type']).toBe('WebApplication');
-    expect(platformSeo.title).toContain('BazaarPK Cloud');
+    expect(platformSeo.title).toContain('SB Khush');
   });
 
   it('enforces Free Plan 1-active-product limit excluding archived products', () => {
@@ -969,4 +969,134 @@ describe('Super Admin Sales Management & Individual Salesman Portal', () => {
     expect(appSrc).toContain('sales/payouts');
   });
 });
+
+describe('SB Khush Production Transformation, Public Separation, Demo Audit & Mobile Upload Validation', () => {
+  it('configures SB Khush official domain and branding constants cleanly', async () => {
+    const { BRAND } = await import('../src/config/brand');
+    expect(BRAND.name).toBe('SB Khush');
+    expect(BRAND.primaryUrl).toBe('https://sbkhush.com');
+    expect(BRAND.secondaryUrl).toBe('https://www.sbkhush.com');
+    expect(BRAND.salesEmployeePrefix).toBe('SBK-SLS-');
+  });
+
+  it('removes Login and Dashboard buttons from public homepage navbar and footer while separating legal routes', () => {
+    const navbarSrc = fs.readFileSync(
+      path.join(WORKSPACE_ROOT, 'src/platform/components/PublicNavbar.tsx'),
+      'utf-8'
+    );
+    const showcaseSrc = fs.readFileSync(
+      path.join(WORKSPACE_ROOT, 'src/platform/components/ShowcaseAndPricingSection.tsx'),
+      'utf-8'
+    );
+    const appSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/App.tsx'), 'utf-8');
+
+    expect(navbarSrc).not.toContain('to="/login"');
+    expect(navbarSrc).not.toContain('to="/dashboard"');
+    expect(showcaseSrc).not.toContain('to="/login"');
+    expect(showcaseSrc).not.toContain('to="/dashboard"');
+    expect(showcaseSrc).toContain('to="/privacy-policy"');
+    expect(showcaseSrc).toContain('to="/terms-and-conditions"');
+
+    expect(appSrc).toContain('/merchant/login');
+    expect(appSrc).toContain('/privacy-policy');
+    expect(appSrc).toContain('/terms-and-conditions');
+    expect(appSrc).toContain('/shop/:shopSlug');
+  });
+
+  it('classifies demo vs real stores safely without auto-flagging active real merchants', async () => {
+    const { buildDemoDataAuditReport } = await import('../src/utils/demoDataAudit');
+
+    const realShop: Shop = {
+      id: 'karachi-mart',
+      slug: 'karachi-mart',
+      name: 'Karachi Fresh Goods',
+      ownerId: 'uid_real',
+      ownerName: 'Faisal Ahmed',
+      ownerEmail: 'faisal@karachifresh.pk',
+      ownerPhone: '03009876543',
+      city: 'Karachi',
+      address: 'Clifton Block 5',
+      status: 'active',
+      subscription: {
+        planId: 'business',
+        planName: 'Business',
+        status: 'active',
+        billingCycle: 'monthly',
+        pricePaid: 1499,
+        startDate: '2026-01-01T00:00:00.000Z',
+        expiryDate: '2027-01-01T00:00:00.000Z',
+      },
+      usage: { productsCount: 18, ordersCount: 42, storageBytes: 0, staffCount: 2 },
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const noisyActiveShop: Shop = {
+      ...realShop,
+      id: 'demo-shop',
+      slug: 'demo-shop',
+      name: 'Demo Active Business',
+    };
+
+    const testPlaceholderShop: Shop = {
+      ...realShop,
+      id: 'qa-shop-1',
+      slug: 'test-shop',
+      name: 'QA Test Store',
+      ownerEmail: 'qa@test.com',
+      ownerPhone: '03000000000',
+      subscription: {
+        ...realShop.subscription,
+        planId: 'free-starter',
+        planName: 'Free',
+        status: 'trial',
+        pricePaid: 0,
+      },
+      usage: { productsCount: 0, ordersCount: 0, storageBytes: 0, staffCount: 0 },
+    };
+
+    const report = buildDemoDataAuditReport({
+      shops: [realShop, noisyActiveShop, testPlaceholderShop],
+    });
+
+    expect(report.totals.real).toBe(1);
+    expect(report.totals.uncertain).toBe(1);
+    expect(report.totals.demo + report.totals.test).toBe(1);
+    expect(report.items.find((i) => i.id === 'karachi-mart')?.classification).toBe('real');
+    expect(report.items.find((i) => i.id === 'demo-shop')?.classification).toBe('uncertain');
+  });
+
+  it('validates mobile image uploads with empty MIME type fallback and enforces size/type caps', async () => {
+    const { validateImageFile } = await import('../src/services/storageService');
+
+    const mobileCameraPhoto = {
+      name: 'IMG_20261120.jpg',
+      type: '',
+      size: 1024 * 500,
+    } as File;
+    expect(() => validateImageFile(mobileCameraPhoto)).not.toThrow();
+
+    const oversizedPhoto = {
+      name: 'huge.png',
+      type: 'image/png',
+      size: 6 * 1024 * 1024,
+    } as File;
+    expect(() => validateImageFile(oversizedPhoto)).toThrow(/5 MB/);
+
+    const badMime = {
+      name: 'script.exe',
+      type: 'application/x-msdownload',
+      size: 1024,
+    } as File;
+    expect(() => validateImageFile(badMime)).toThrow(/Invalid image format/);
+  });
+
+  it('supports shop settings legal pages in firestore.rules and reserves SB Khush platform slugs', () => {
+    const firestoreRules = fs.readFileSync(path.join(WORKSPACE_ROOT, 'firestore.rules'), 'utf-8');
+    expect(firestoreRules).toContain("hasShopPermission(shopId, 'settings')");
+    expect(firestoreRules).toContain("'merchant'");
+    expect(firestoreRules).toContain("'privacy-policy'");
+    expect(firestoreRules).toContain("'terms-and-conditions'");
+  });
+});
+
 

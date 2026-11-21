@@ -52,6 +52,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
   const [modalOpen, setModalOpen] = useState(defaultCreateOpen);
   const [editingMember, setEditingMember] = useState<SalesMember | null>(null);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Form states
   const [fullName, setFullName] = useState('');
@@ -128,6 +129,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
     setAccountNumber('');
     setBankName('');
     setSendResetInvite(true);
+    setFormError(null);
     setModalOpen(true);
   };
 
@@ -154,13 +156,17 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
     setAccountNumber(m.payoutDetails?.accountNumber || '');
     setBankName(m.payoutDetails?.bankName || '');
     setSendResetInvite(false);
+    setFormError(null);
     setModalOpen(true);
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
     if (!fullName.trim() || !email.trim() || !phone.trim()) {
-      showToast('Full name, email, and mobile number are required.', 'error');
+      const msg = 'Full name, email, and mobile number are required.';
+      setFormError(msg);
+      showToast(msg, 'error');
       return;
     }
 
@@ -205,7 +211,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
         });
         showToast('Salesman profile updated.', 'success');
       } else {
-        await createSalesMember({
+        const created = await createSalesMember({
           fullName,
           email,
           phone,
@@ -229,18 +235,24 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
           payoutDetails,
           sendPasswordResetInvite: sendResetInvite,
         });
-        showToast(
-          sendResetInvite
-            ? 'Salesman created & Firebase Auth setup/reset email triggered.'
-            : 'Salesman profile created with unique Employee ID & Referral Code.',
-          'success'
-        );
+        if (sendResetInvite) {
+          showToast(
+            created._resetEmailSent
+              ? `Salesman created (${created.employeeId}) & Firebase Auth invite/reset email sent.`
+              : `Salesman created (${created.employeeId}). Note: ${created._resetEmailWarning || 'Send portal invite via Mail icon if needed.'}`,
+            created._resetEmailSent ? 'success' : 'info'
+          );
+        } else {
+          showToast(`Salesman profile created (${created.employeeId}) with Referral Code ${created.referralCode}.`, 'success');
+        }
       }
 
       setModalOpen(false);
       await loadData();
     } catch (err: any) {
-      showToast(err?.message || 'Failed to save salesman.', 'error');
+      const msg = err?.message || 'Failed to save salesman.';
+      setFormError(msg);
+      showToast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -285,7 +297,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
 
   const exportCsv = () => {
     downloadCsvFile(
-      `bazaarpk-salesmen-${new Date().toISOString().slice(0, 10)}.csv`,
+      `sbkhush-salesmen-${new Date().toISOString().slice(0, 10)}.csv`,
       ['Employee ID', 'Name', 'Email', 'Phone', 'Role', 'City', 'Territory', 'Manager', 'Referral Code', 'Status', 'Monthly Target', 'Commission Plan'],
       filtered.map((m) => [
         m.employeeId,
@@ -361,6 +373,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
           <option value="salesman">Salesman</option>
           <option value="senior_salesman">Senior Salesman</option>
           <option value="sales_manager">Sales Manager</option>
+          <option value="referral_agent">Referral Agent</option>
         </select>
         <select
           value={statusFilter}
@@ -563,6 +576,11 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
             </div>
 
             <form onSubmit={handleSave} className="space-y-4 text-xs">
+              {formError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold">
+                  {formError}
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Full Name *</label>
@@ -608,6 +626,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
                     <option value="salesman">Salesman</option>
                     <option value="senior_salesman">Senior Salesman</option>
                     <option value="sales_manager">Sales Manager</option>
+                    <option value="referral_agent">Referral Agent</option>
                   </select>
                 </div>
                 <div>

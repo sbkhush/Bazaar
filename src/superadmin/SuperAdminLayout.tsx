@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NavLink, Outlet, Link, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Store,
@@ -9,7 +9,6 @@ import {
   LogOut,
   Menu,
   X,
-  ShieldAlert,
   ExternalLink,
   Loader2,
   LifeBuoy,
@@ -34,9 +33,11 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { BrandLogo } from '../components/common/BrandLogo';
+import { BRAND } from '../config/brand';
 
 export const SuperAdminLayout: React.FC = () => {
-  const { currentUser, isSuperAdmin, loading, logout } = useAuth();
+  const { currentUser, isSuperAdmin, authorizedHomePath, loading, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [salesOpen, setSalesOpen] = useState(true);
   const navigate = useNavigate();
@@ -49,35 +50,14 @@ export const SuperAdminLayout: React.FC = () => {
     );
   }
 
-  if (!currentUser || !isSuperAdmin) {
-    return (
-      <div className="min-h-screen bg-[#FAF9F6] flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-4">
-          <div className="w-12 h-12 rounded-xl bg-red-50 text-red-600 flex items-center justify-center mx-auto">
-            <ShieldAlert className="w-6 h-6" />
-          </div>
-          <h1 className="text-xl font-extrabold text-slate-900">Super Admin Access Required</h1>
-          <p className="text-xs text-slate-600 leading-relaxed">
-            This portal is restricted to verified platform administrators. Sign in with an
-            authorized Super Admin identity to continue.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
-            <Link
-              to="/login"
-              className="flex-1 py-2.5 bg-[#065F46] text-white rounded-xl text-xs font-bold hover:bg-emerald-900 transition"
-            >
-              Sign In
-            </Link>
-            <Link
-              to="/"
-              className="flex-1 py-2.5 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-50 transition"
-            >
-              Platform Home
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
+  // Strict route guard: unauthenticated -> /login
+  if (!currentUser) {
+    return <Navigate to="/login" replace />;
+  }
+
+  // Strict route guard: any non-Super Admin (salesman, sales_manager, referral_agent, shop_owner, customer) -> redirect away immediately
+  if (!isSuperAdmin) {
+    return <Navigate to={authorizedHomePath} replace />;
   }
 
   const navItems = [
@@ -132,11 +112,9 @@ export const SuperAdminLayout: React.FC = () => {
       >
         <div className="h-16 px-5 border-b border-slate-800 flex items-center justify-between">
           <Link to="/super-admin" className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-[#065F46] text-white flex items-center justify-center font-extrabold text-sm">
-              S
-            </div>
+            <BrandLogo variant="icon" tone="light" size="sm" />
             <div>
-              <p className="text-sm font-extrabold text-white leading-none">BazaarPK Cloud</p>
+              <p className="text-sm font-extrabold text-white leading-none">{BRAND.name}</p>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">
                 Super Admin
               </p>

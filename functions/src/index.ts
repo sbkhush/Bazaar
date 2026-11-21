@@ -29,7 +29,9 @@ async function assertSuperAdmin(uid?: string, email?: string, emailVerified?: bo
   throw new HttpsError('permission-denied', 'Super Admin privileges required.');
 }
 
-async function rebuildCustomClaimsForUser(uid: string): Promise<{ super_admin: boolean; shops: Record<string, string> }> {
+async function rebuildCustomClaimsForUser(
+  uid: string
+): Promise<{ super_admin: boolean; shops: Record<string, string>; sales_role: string | null }> {
   const userRecord = await auth.getUser(uid);
   const adminSnap = await db.collection('platform_admins').doc(uid).get();
   const isSuper =
@@ -45,13 +47,28 @@ async function rebuildCustomClaimsForUser(uid: string): Promise<{ super_admin: b
     }
   });
 
+  // Never allow super_admin role to originate from salesMembers
+  let salesRole: string | null = null;
+  const salesSnap = await db.collection('salesMembers').where('uid', '==', uid).limit(1).get();
+  if (!salesSnap.empty) {
+    const sData = salesSnap.docs[0].data();
+    if (
+      sData &&
+      ['active', 'invited'].includes(sData.accountStatus) &&
+      ['salesman', 'senior_salesman', 'sales_manager', 'referral_agent'].includes(sData.role)
+    ) {
+      salesRole = sData.role;
+    }
+  }
+
   await auth.setCustomUserClaims(uid, {
     ...(userRecord.customClaims || {}),
     super_admin: isSuper,
     shops,
+    sales_role: salesRole,
   });
 
-  return { super_admin: isSuper, shops };
+  return { super_admin: isSuper, shops, sales_role: salesRole };
 }
 
 /**
@@ -70,6 +87,24 @@ export const onShopStaffWritten = onDocumentWritten(
       await rebuildCustomClaimsForUser(staffUid);
     } catch (err) {
       console.error('Failed syncing custom claims for staff:', staffUid, err);
+    }
+  }
+);
+
+export const onSalesMemberWritten = onDocumentWritten(
+  {
+    document: 'salesMembers/{memberId}',
+    database: FIRESTORE_DB_ID,
+  },
+  async (event) => {
+    const afterUid = event.data?.after.data()?.uid as string | undefined;
+    const beforeUid = event.data?.before.data()?.uid as string | undefined;
+    const targetUid = afterUid || beforeUid;
+    if (!targetUid) return;
+    try {
+      await rebuildCustomClaimsForUser(targetUid);
+    } catch (err) {
+      console.error('Failed syncing sales_role custom claims for member:', targetUid, err);
     }
   }
 );

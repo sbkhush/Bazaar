@@ -3,6 +3,7 @@ import { DEFAULT_SHOP_ID, sanitizeShopSlug } from '../data/seedData';
 export const KNOWN_APP_ROOTS = [
   'register',
   'login',
+  'merchant',
   'super-admin',
   'dashboard',
   's',
@@ -19,13 +20,19 @@ export const KNOWN_APP_ROOTS = [
   'return-policy',
   'terms',
   'privacy',
+  'privacy-policy',
+  'terms-and-conditions',
+  'salesman',
+  'sales-manager',
+  'referral',
+  'r',
   'admin',
 ];
 
 const CUSTOM_DOMAIN_MAP: Record<string, string> = {};
 
 /**
- * Resolves a tenant slug from custom domains or subdomains (`*.bazaarpk.pk`, custom domains)
+ * Resolves a tenant slug from custom domains or subdomains (`*.sbkhush.com`, legacy `*.bazaarpk.pk`)
  * while ignoring local development, Firebase, AI Studio, and GitHub Pages hostnames.
  */
 export function resolveTenantFromHostname(hostname?: string): string | null {
@@ -49,9 +56,9 @@ export function resolveTenantFromHostname(hostname?: string): string | null {
     return null;
   }
 
-  // Subdomain multi-tenancy foundation: e.g. <shopSlug>.bazaarpk.pk
-  if (host.endsWith('.bazaarpk.pk')) {
-    const sub = host.replace(/\.bazaarpk\.pk$/, '');
+  // Subdomain multi-tenancy foundation: e.g. <shopSlug>.sbkhush.com (or legacy *.bazaarpk.pk)
+  if (host.endsWith('.sbkhush.com') || host.endsWith('.bazaarpk.pk')) {
+    const sub = host.replace(/\.(sbkhush\.com|bazaarpk\.pk)$/, '');
     if (sub && sub !== 'www' && sub !== 'app' && !KNOWN_APP_ROOTS.includes(sub)) {
       return sanitizeShopSlug(sub);
     }

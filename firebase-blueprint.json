@@ -179,7 +179,7 @@
         "email": { "type": "string" },
         "displayName": { "type": "string" },
         "phoneNumber": { "type": "string" },
-        "role": { "type": "string", "enum": ["customer", "shop_owner", "shop_admin", "shop_staff", "super_admin"] },
+        "role": { "type": "string", "enum": ["customer", "shop_owner", "shop_admin", "shop_staff", "sales_manager", "salesman", "referral_agent", "super_admin"] },
         "isBlocked": { "type": "boolean" },
         "addresses": { "type": "array" },
         "createdAt": { "type": "string" }
@@ -247,7 +247,7 @@
         "email": { "type": "string" },
         "phone": { "type": "string" },
         "city": { "type": "string" },
-        "role": { "type": "string", "enum": ["salesman", "senior_salesman", "sales_manager"] },
+        "role": { "type": "string", "enum": ["salesman", "senior_salesman", "sales_manager", "referral_agent"] },
         "accountStatus": { "type": "string", "enum": ["active", "inactive", "suspended", "invited"] },
         "referralCode": { "type": "string" },
         "commissionPlanId": { "type": "string" }
@@ -300,6 +300,48 @@
         "status": { "type": "string", "enum": ["processed", "reversed"] }
       },
       "required": ["id", "payoutNumber", "salesmanId", "totalAmount", "method", "transactionReference"]
+    },
+    "SalesExpense": {
+      "title": "Sales Business Expense",
+      "description": "Authorized business expense submitted by field rep; Super Admin approves/rejects",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "salesmanId": { "type": "string" },
+        "salesmanUid": { "type": "string" },
+        "category": { "type": "string", "enum": ["travel", "client_meeting", "marketing", "telecom", "other"] },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] }
+      },
+      "required": ["id", "salesmanId", "salesmanUid", "category", "amount", "status"]
+    },
+    "SalesBonusRecommendation": {
+      "title": "Team Bonus Recommendation",
+      "description": "Manager bonus recommendation for own team rep; requires Super Admin approval",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "managerUid": { "type": "string" },
+        "salesmanId": { "type": "string" },
+        "recommendedAmount": { "type": "number" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] }
+      },
+      "required": ["id", "managerUid", "salesmanId", "recommendedAmount", "reason", "status"]
+    },
+    "SalesMaterial": {
+      "title": "Approved Sales Material",
+      "description": "Collateral published by Super Admin for active field sales representatives",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string", "enum": ["brochure", "pitch_deck", "pricing_sheet", "script"] },
+        "description": { "type": "string" },
+        "isApproved": { "type": "boolean" }
+      },
+      "required": ["id", "title", "category", "isApproved"]
     }
   },
   "firestore": {
@@ -474,6 +516,18 @@
     },
     "/salesAuditLogs/{logId}": {
       "description": "Immutable financial & operational audit trail for all sales actions"
+    },
+    "/salesExpenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/SalesExpense" },
+      "description": "Authorized sales expense claims awaiting Super Admin review"
+    },
+    "/salesBonusRecommendations/{recId}": {
+      "schema": { "$ref": "#/entities/SalesBonusRecommendation" },
+      "description": "Team performance bonus recommendations created by Sales Managers for Super Admin approval"
+    },
+    "/salesMaterials/{materialId}": {
+      "schema": { "$ref": "#/entities/SalesMaterial" },
+      "description": "Approved sales collateral managed by Super Admin"
     }
   }
 }

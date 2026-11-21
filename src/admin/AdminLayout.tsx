@@ -23,6 +23,8 @@ import {
 import { useAuth, SUPER_ADMIN_EMAIL } from '../context/AuthContext';
 import { seedInitialDatabase } from '../services/storeService';
 import { useToast } from '../components/common/Toast';
+import { BrandLogo } from '../components/common/BrandLogo';
+import { BRAND } from '../config/brand';
 
 export const AdminLayout: React.FC = () => {
   const {
@@ -240,10 +242,8 @@ export const AdminLayout: React.FC = () => {
       {/* Mobile Top Navbar */}
       <div className="lg:hidden bg-slate-950 text-white p-3.5 flex items-center justify-between border-b border-slate-800 sticky top-0 z-30 print:hidden">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center font-bold text-white text-sm">
-            B
-          </div>
-          <span className="font-bold text-sm sm:text-base">BazaarPK Admin</span>
+          <BrandLogo variant="icon" tone="light" size="sm" />
+          <span className="font-bold text-sm sm:text-base">{BRAND.name} Admin</span>
         </div>
         <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -271,12 +271,10 @@ export const AdminLayout: React.FC = () => {
         <div>
           <div className="p-5 sm:p-6 border-b border-slate-800/80 flex items-center justify-between">
             <Link to="/admin" className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white font-black text-lg shadow-md">
-                B
-              </div>
+              <BrandLogo variant="icon" tone="light" size="md" />
               <div>
                 <span className="font-extrabold text-base text-white block leading-tight">
-                  Bazaar<span className="text-emerald-400">PK</span>
+                  SB <span className="text-emerald-400">Khush</span>
                 </span>
                 <span className="text-[10px] text-emerald-400 font-semibold uppercase tracking-widest">
                   Admin Dashboard

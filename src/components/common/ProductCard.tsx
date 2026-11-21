@@ -7,6 +7,7 @@ import { useCart } from '../../context/CartContext';
 import { useWishlist } from '../../context/WishlistContext';
 import { useTenant } from '../../context/TenantContext';
 import { useToast } from './Toast';
+import { SafeImage } from './SafeImage';
 
 interface ProductCardProps {
   product: Product;
@@ -60,11 +61,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onQuickView }
       {/* Image container */}
       <div className="relative aspect-square w-full overflow-hidden bg-slate-50">
         <Link to={productUrl} className="block w-full h-full">
-          <img
+          <SafeImage
             src={product.images[0] || FALLBACK_PRODUCT_IMAGE}
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src = FALLBACK_PRODUCT_IMAGE;
-            }}
+            fallbackSrc={FALLBACK_PRODUCT_IMAGE}
+            fallbackText={product.title}
             alt={product.title}
             className={`w-full h-full object-cover object-center transition-transform duration-500 group-hover:scale-105 ${
               product.images[1] && isHovered ? 'opacity-0' : 'opacity-100'
@@ -72,11 +72,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onQuickView }
             loading="lazy"
           />
           {product.images[1] && (
-            <img
+            <SafeImage
               src={product.images[1]}
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).src = FALLBACK_PRODUCT_IMAGE;
-              }}
+              fallbackSrc={FALLBACK_PRODUCT_IMAGE}
               alt={product.title}
               className={`absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-500 ${
                 isHovered ? 'opacity-100 scale-105' : 'opacity-0'

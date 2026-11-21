@@ -25,6 +25,8 @@ import { getShopCategories, subscribeToShopNewsletter } from '../../services/ten
 import { Category } from '../../types';
 import { DEFAULT_SHOP_ID, INITIAL_CATEGORIES } from '../../data/seedData';
 import { getConfiguredSocialLinks, SocialPlatformKey } from '../../utils/socialLinks';
+import { SafeImage } from './SafeImage';
+import { BRAND } from '../../config/brand';
 
 function renderSocialIcon(platform: SocialPlatformKey) {
   switch (platform) {
@@ -147,7 +149,7 @@ export const Footer: React.FC = () => {
           <div className="sm:col-span-2 space-y-4">
             <div className="flex items-center gap-2.5">
               {settings.logoUrl ? (
-                <img
+                <SafeImage
                   src={settings.logoUrl}
                   alt={settings.siteName}
                   className="w-9 h-9 rounded-xl object-cover border border-slate-700 shrink-0"
@@ -157,13 +159,13 @@ export const Footer: React.FC = () => {
                   className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-extrabold text-lg shrink-0"
                   style={{ backgroundColor: brandColor }}
                 >
-                  {(settings.siteName || 'B')[0].toUpperCase()}
+                  {(settings.siteName || 'S')[0].toUpperCase()}
                 </div>
               )}
               <span className="text-2xl font-black text-white">
-                {settings.siteName === 'BazaarPK' ? (
+                {settings.siteName === 'SB Khush' ? (
                   <>
-                    Bazaar<span className="text-emerald-400">PK</span>
+                    SB <span className="text-emerald-400">Khush</span>
                   </>
                 ) : (
                   settings.siteName
@@ -175,18 +177,24 @@ export const Footer: React.FC = () => {
             </p>
 
             <div className="space-y-2 text-xs text-slate-300">
-              <div className="flex items-start gap-2.5">
-                <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <span>{settings.address}</span>
-              </div>
-              <div className="flex items-center gap-2.5">
-                <Phone className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>{settings.contactPhone}</span>
-              </div>
-              <div className="flex items-center gap-2.5">
-                <Mail className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>{settings.contactEmail}</span>
-              </div>
+              {settings.address && (
+                <div className="flex items-start gap-2.5">
+                  <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <span>{settings.address}</span>
+                </div>
+              )}
+              {settings.contactPhone && (
+                <div className="flex items-center gap-2.5">
+                  <Phone className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{settings.contactPhone}</span>
+                </div>
+              )}
+              {settings.contactEmail && (
+                <div className="flex items-center gap-2.5">
+                  <Mail className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{settings.contactEmail}</span>
+                </div>
+              )}
               {settings.websiteUrl && (
                 <div className="flex items-center gap-2.5">
                   <Globe className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -251,12 +259,12 @@ export const Footer: React.FC = () => {
                 </Link>
               </li>
               <li>
-                <Link to={`${storeBasePath}/terms`} className="hover:text-emerald-400 transition">
-                  Terms of Service
+                <Link to={`${storeBasePath}/terms-and-conditions`} className="hover:text-emerald-400 transition">
+                  Terms &amp; Conditions
                 </Link>
               </li>
               <li>
-                <Link to={`${storeBasePath}/privacy`} className="hover:text-emerald-400 transition">
+                <Link to={`${storeBasePath}/privacy-policy`} className="hover:text-emerald-400 transition">
                   Privacy Policy
                 </Link>
               </li>
@@ -353,7 +361,7 @@ export const Footer: React.FC = () => {
           to="/"
           className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-emerald-400 transition"
         >
-          <span>Powered by BazaarPK Cloud SaaS</span>
+          <span>Powered by {BRAND.name}</span>
           <ExternalLink className="w-3 h-3" />
         </Link>
       </div>

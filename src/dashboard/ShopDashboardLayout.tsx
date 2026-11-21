@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink, Outlet, Link, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Package,
@@ -36,7 +36,16 @@ import { StaffPermission, NotificationItem, PlanFeatures } from '../types';
 import { getShopNotifications, markNotificationRead } from '../services/tenantService';
 
 const DashboardShell: React.FC = () => {
-  const { currentUser, loading: authLoading, shopMemberships, setActiveShopId, isSuperAdmin, logout } = useAuth();
+  const {
+    currentUser,
+    loading: authLoading,
+    shopMemberships,
+    setActiveShopId,
+    isSuperAdmin,
+    authorizedRole,
+    authorizedHomePath,
+    logout,
+  } = useAuth();
   const {
     shopId,
     shop,
@@ -91,6 +100,9 @@ const DashboardShell: React.FC = () => {
   }
 
   if (!shop && shopMemberships.length === 0 && !isSuperAdmin) {
+    if (['sales_manager', 'salesman', 'referral_agent'].includes(authorizedRole)) {
+      return <Navigate to={authorizedHomePath} replace />;
+    }
     return (
       <div className="min-h-screen bg-[#FAF9F6] flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-4">

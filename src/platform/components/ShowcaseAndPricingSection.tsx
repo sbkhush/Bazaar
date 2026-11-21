@@ -30,6 +30,9 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { PlatformSettings, ShopPublic, SubscriptionPlan } from '../../types';
 import { DEFAULT_SHOP_ID, formatPKR } from '../../data/seedData';
+import { BRAND } from '../../config/brand';
+import { BrandLogo } from '../../components/common/BrandLogo';
+import { SafeImage } from '../../components/common/SafeImage';
 import { Tilt3DCard } from './Tilt3DCard';
 import { getConfiguredSocialLinks, SocialPlatformKey } from '../../utils/socialLinks';
 
@@ -86,45 +89,45 @@ const DASHBOARD_TABS = [
     id: 'overview',
     label: 'Sales Overview',
     stats: [
-      { label: 'Total Sales (Sample)', value: 'Rs. 248,900', note: 'Online + Counter POS' },
-      { label: 'Total Orders', value: '142', note: 'Delivered & Counter' },
-      { label: 'Active Products', value: '86', note: 'Across 4 Categories' },
-      { label: 'Low Stock Alerts', value: '5 Items', note: 'Needs Reorder' },
+      { label: 'Sales Channels', value: 'Online + POS', note: 'Unified Order Ledger' },
+      { label: 'Payment Verification', value: 'PKR Native', note: 'COD, EasyPaisa & JazzCash' },
+      { label: 'Product Catalog', value: 'Custom SKUs', note: 'Units, Barcodes & Variants' },
+      { label: 'Stock Monitoring', value: 'Auto Alerts', note: 'Low-Stock Notifications' },
     ],
     transactions: [
-      { ref: 'PK-490211', channel: 'Online Store · EasyPaisa', status: 'Confirmed', amount: 'Rs. 3,450' },
-      { ref: 'INV-1094', channel: 'Counter POS · Cash', status: 'Completed', amount: 'Rs. 1,820' },
-      { ref: 'PK-490209', channel: 'Self-Pickup · COD', status: 'Ready', amount: 'Rs. 2,150' },
+      { ref: 'ORD-FLOW', channel: 'Online Store · EasyPaisa Proof', status: 'Verification Queue', amount: 'Synced' },
+      { ref: 'POS-BILL', channel: 'Counter POS · Cash Receipt', status: 'Thermal Print', amount: 'Instant' },
+      { ref: 'PICKUP', channel: 'Self-Pickup · Counter Hold', status: 'Ready Status', amount: 'Trackable' },
     ],
   },
   {
     id: 'inventory',
     label: 'Inventory & Stock',
     stats: [
-      { label: 'Stock Units', value: '1,284', note: 'Tracked SKUs' },
-      { label: 'Cost Valuation', value: 'Rs. 612,000', note: 'Purchase Basis' },
-      { label: 'Retail Valuation', value: 'Rs. 845,000', note: 'Selling Value' },
-      { label: 'Recent Restocks', value: '12 Bills', note: 'Supplier Purchases' },
+      { label: 'Stock Movements', value: 'Auto Deduct', note: 'Synced on Orders & POS' },
+      { label: 'Cost Accounting', value: 'Cost Price', note: 'Purchase Basis Tracking' },
+      { label: 'Selling Catalog', value: 'Live Margin', note: 'PKR Retail Pricing' },
+      { label: 'Supplier Restocks', value: 'Purchase Bills', note: 'Batch & Vendor Logs' },
     ],
     transactions: [
-      { ref: 'STK-912', channel: 'Super Basmati Rice 5KG', status: '+40 Bags', amount: 'Rs. 78,000' },
-      { ref: 'STK-911', channel: 'Cooking Oil Pouch 1L', status: '-6 Sold', amount: 'Rs. 3,180' },
-      { ref: 'STK-910', channel: 'Hydrating Face Serum', status: '+24 Pcs', amount: 'Rs. 19,200' },
+      { ref: 'RESTOCK', channel: 'Supplier Purchase Entry', status: 'Stock Increased', amount: 'Logged' },
+      { ref: 'DEDUCT', channel: 'Online & Counter Checkout', status: 'Auto Adjusted', amount: 'Live' },
+      { ref: 'ALERT', channel: 'Reorder Threshold Monitor', status: 'Below Minimum', amount: 'Flagged' },
     ],
   },
   {
     id: 'profit',
     label: 'Profit & Reports',
     stats: [
-      { label: 'Gross Revenue', value: 'Rs. 248,900', note: 'Completed Sales' },
-      { label: 'COGS Deducted', value: 'Rs. 176,400', note: 'Cost of Goods' },
-      { label: 'Store Expenses', value: 'Rs. 18,500', note: 'Rent & Utilities' },
-      { label: 'Net Profit', value: 'Rs. 54,000', note: 'After Expenses' },
+      { label: 'Gross Revenue', value: 'Real-Time', note: 'Completed Orders & POS' },
+      { label: 'COGS Deducted', value: 'Per Item', note: 'Purchase Cost Tracking' },
+      { label: 'Store Expenses', value: 'Categorized', note: 'Rent, Utilities & Logistics' },
+      { label: 'Net Profit', value: 'Clear Margin', note: 'After COGS & Expenses' },
     ],
     transactions: [
-      { ref: 'RPT-MAR', channel: 'Online Store Net Margin', status: '24.6%', amount: 'Rs. 31,200' },
-      { ref: 'RPT-POS', channel: 'POS Counter Net Margin', status: '21.8%', amount: 'Rs. 22,800' },
-      { ref: 'EXP-04', channel: 'Packaging & Utilities', status: 'Recorded', amount: '- Rs. 18,500' },
+      { ref: 'RPT-WEB', channel: 'Online Storefront Breakdown', status: 'Margin Report', amount: 'Exportable' },
+      { ref: 'RPT-POS', channel: 'Counter POS Daily Closing', status: 'Cash & Wallet', amount: 'Audited' },
+      { ref: 'EXP-LOG', channel: 'Packaging & Store Expenses', status: 'Monthly Ledger', amount: 'Tracked' },
     ],
   },
 ];
@@ -170,8 +173,8 @@ const WHY_POINTS = [
 
 const FAQ_ITEMS = [
   {
-    q: 'What is BazaarPK?',
-    a: 'BazaarPK is a multi-tenant retail management and eCommerce SaaS platform built for Pakistani businesses. It combines a branded online storefront (/s/your-shop), counter POS billing, inventory tracking, customer Khata ledger, and profit reports in one workspace.',
+    q: 'What is SB Khush?',
+    a: 'SB Khush is a multi-tenant retail management and eCommerce SaaS platform built for Pakistani businesses. It combines a branded online storefront (/s/your-shop), counter POS billing, inventory tracking, customer Khata ledger, and profit reports in one workspace.',
   },
   {
     q: 'Is there a free plan?',
@@ -195,7 +198,7 @@ const FAQ_ITEMS = [
   },
   {
     q: 'Is my business data separate and secure?',
-    a: 'Yes. BazaarPK isolates each shop inside its own tenant scope under Firebase Authentication and strict Firestore and Cloud Storage security rules, keeping your inventory, orders, payment proofs, and customer records private to your store.',
+    a: 'Yes. SB Khush isolates each shop inside its own tenant scope under Firebase Authentication and strict Firestore and Cloud Storage security rules, keeping your inventory, orders, payment proofs, and customer records private to your store.',
   },
   {
     q: 'How do I get started?',
@@ -213,7 +216,7 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
   const [sampleCartIds, setSampleCartIds] = useState<string[]>(['s1']);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [openFaqIdx, setOpenFaqIdx] = useState<number | null>(0);
-  const platformName = (platformSettings?.platformName || 'BazaarPK').trim();
+  const platformName = (platformSettings?.platformName || BRAND.name).trim();
   const platformSocials = getConfiguredSocialLinks(platformSettings?.socialLinks);
 
   const activeTab = DASHBOARD_TABS.find((t) => t.id === activeTabId) || DASHBOARD_TABS[0];
@@ -349,10 +352,10 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                   </div>
                   <div className="min-w-0">
                     <p className="text-xs font-bold text-white truncate">
-                      Shop Admin Workspace · Al-Madina General Store
+                      Shop Admin Workspace · Sample Retail Store
                     </p>
                     <p className="text-[11px] text-slate-400 truncate">
-                      Illustrative Sample Preview — {activeTab.label}
+                      Illustrative Capability Preview — {activeTab.label}
                     </p>
                   </div>
                 </div>
@@ -541,10 +544,10 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs font-extrabold text-slate-900 truncate">
-                          Sadaf Retail Mart (Interactive Preview)
+                          Sample General Store (Interactive Preview)
                         </p>
                         <p className="text-[10px] font-mono text-slate-500 truncate">
-                          /s/sadaf-mart
+                          /s/your-store
                         </p>
                       </div>
                     </div>
@@ -618,7 +621,7 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
               <div>
                 <h3 className="text-lg sm:text-xl font-extrabold text-slate-950 tracking-tight">
-                  Live Storefronts Powered by BazaarPK
+                  Live Storefronts Powered by {platformName}
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-500">
                   Explore active stores running live on this multi-tenant platform.
@@ -639,12 +642,10 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                   className="p-4 rounded-xl border border-slate-200 hover:border-indigo-400 bg-slate-50 hover:bg-white transition flex items-center justify-between gap-3"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
-                      B
-                    </div>
+                    <BrandLogo variant="icon" size="md" />
                     <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-900 truncate">BazaarPK Flagship</p>
-                      <p className="text-xs text-slate-500 truncate">/s/bazaarpk · Karachi</p>
+                      <p className="text-sm font-bold text-slate-900 truncate">{platformName} Flagship</p>
+                      <p className="text-xs text-slate-500 truncate">/s/{DEFAULT_SHOP_ID} · Karachi</p>
                     </div>
                   </div>
                   <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
@@ -659,7 +660,7 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     {s.logoUrl ? (
-                      <img
+                      <SafeImage
                         src={s.logoUrl}
                         alt={s.name}
                         className="w-10 h-10 rounded-lg object-cover border border-slate-200 shrink-0"
@@ -903,7 +904,7 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
         </div>
       </section>
 
-      {/* Section 11 & 12: Why BazaarPK & Built for Pakistani Businesses */}
+      {/* Section 11 & 12: Why SB Khush & Built for Pakistani Businesses */}
       <section className="bg-white text-slate-900 py-20 sm:py-24 border-b border-slate-200/80">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
           <div className="max-w-2xl space-y-3">
@@ -1008,7 +1009,7 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
             Ready to Take Your Business Online?
           </h2>
           <p className="text-sm sm:text-base lg:text-lg text-slate-300 max-w-2xl mx-auto leading-relaxed">
-            Start managing your products, inventory, sales, and online orders with BazaarPK.
+            Start managing your products, inventory, sales, and online orders with {platformName}.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3.5 pt-2">
             <Link
@@ -1019,17 +1020,11 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
               <ArrowRight className="w-4 h-4" />
             </Link>
             <Link
-              to="/login"
-              className="px-6 py-3.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white text-sm font-semibold transition"
-            >
-              Login
-            </Link>
-            <Link
               to={`/s/${DEFAULT_SHOP_ID}`}
-              className="px-6 py-3.5 rounded-xl border border-white/10 text-slate-300 hover:text-white text-sm font-semibold transition flex items-center gap-1.5"
+              className="px-6 py-3.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white text-sm font-semibold transition flex items-center gap-1.5"
             >
               <Store className="w-4 h-4 text-cyan-300" />
-              Explore Demo Store
+              Explore Flagship Store
             </Link>
           </div>
         </div>
@@ -1042,15 +1037,13 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
             <div className="md:col-span-5 space-y-4">
               <div className="flex items-center gap-2.5">
                 {platformSettings?.logoUrl ? (
-                  <img
+                  <SafeImage
                     src={platformSettings.logoUrl}
                     alt={platformName}
                     className="w-8 h-8 rounded-lg object-cover border border-white/15 shrink-0"
                   />
                 ) : (
-                  <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-white font-extrabold text-sm flex items-center justify-center">
-                    {platformName.charAt(0).toUpperCase()}
-                  </span>
+                  <BrandLogo variant="icon" tone="light" size="sm" />
                 )}
                 <span className="font-extrabold text-base text-white tracking-tight">{platformName}</span>
               </div>
@@ -1132,7 +1125,7 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
 
             <div className="md:col-span-4 space-y-3">
               <p className="text-xs font-bold uppercase tracking-wider text-white">
-                Merchant Access &amp; Store Demo
+                Product &amp; Legal
               </p>
               <ul className="space-y-2 text-xs sm:text-sm">
                 <li>
@@ -1141,13 +1134,8 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                   </Link>
                 </li>
                 <li>
-                  <Link to="/login" className="hover:text-white transition">
-                    Merchant Login
-                  </Link>
-                </li>
-                <li>
                   <Link to={`/s/${DEFAULT_SHOP_ID}`} className="hover:text-white transition">
-                    Flagship Demo Storefront
+                    Flagship Storefront
                   </Link>
                 </li>
                 {platformSettings?.websiteUrl && (
@@ -1163,12 +1151,12 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                   </li>
                 )}
                 <li>
-                  <Link to={`/s/${DEFAULT_SHOP_ID}/privacy`} className="hover:text-white transition">
+                  <Link to="/privacy-policy" className="hover:text-white transition">
                     Privacy Policy
                   </Link>
                 </li>
                 <li>
-                  <Link to={`/s/${DEFAULT_SHOP_ID}/terms`} className="hover:text-white transition">
+                  <Link to="/terms-and-conditions" className="hover:text-white transition">
                     Terms &amp; Conditions
                   </Link>
                 </li>

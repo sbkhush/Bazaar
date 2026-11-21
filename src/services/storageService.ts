@@ -50,10 +50,17 @@ export interface StorageHealthReport {
 }
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+const ALLOWED_IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
 
 export function validateImageFile(file: File): void {
-  if (!ALLOWED_IMAGE_TYPES.includes(file.type.toLowerCase())) {
+  const mime = String(file.type || '').toLowerCase().trim();
+  const ext = String(file.name || '').toLowerCase().split('.').pop() || '';
+  const hasValidMime = ALLOWED_IMAGE_TYPES.includes(mime);
+  const hasValidExt = ALLOWED_IMAGE_EXTS.includes(ext);
+
+  // Mobile gallery/camera pickers sometimes return empty file.type on valid image filenames
+  if (!hasValidMime && !(mime === '' && hasValidExt)) {
     throw new Error('Invalid image format. Please upload JPG, PNG, WebP, or GIF.');
   }
   if (file.size <= 0) {
@@ -114,8 +121,8 @@ export function mapFirebaseStorageError(err: any): string {
 }
 
 /**
- * Compresses an image client-side into a Blob (WebP/JPEG) before uploading
- * so mobile shoppers and store admins enjoy fast uploads and conserve storage quota.
+ * Compresses an image client-side into a Blob (WebP with automatic JPEG fallback for iOS/older WebViews)
+ * before uploading so mobile shoppers and store admins enjoy fast uploads and conserve storage quota.
  */
 async function compressImageToBlob(
   file: File,
@@ -127,29 +134,39 @@ async function compressImageToBlob(
     return { blob: file, originalBytes, compressedBytes: file.size, savedPercent: 0 };
   }
 
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Failed to read image file.'));
-    reader.readAsDataURL(file);
-  });
+  const objectUrl = typeof URL !== 'undefined' && URL.createObjectURL ? URL.createObjectURL(file) : '';
+  let img: HTMLImageElement | null = null;
+  try {
+    const srcUrl =
+      objectUrl ||
+      (await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Failed to read image file.'));
+        reader.readAsDataURL(file);
+      }));
 
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Could not decode selected image.'));
-    image.src = dataUrl;
-  });
+    img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('Could not decode selected image.'));
+      image.src = srcUrl;
+    });
+  } finally {
+    if (objectUrl && URL.revokeObjectURL) {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
 
-  let width = img.naturalWidth || img.width;
-  let height = img.naturalHeight || img.height;
+  let width = img.naturalWidth || img.width || 1200;
+  let height = img.naturalHeight || img.height || 1200;
 
   if (width > maxDimension || height > maxDimension) {
     if (width >= height) {
-      height = Math.round((height * maxDimension) / width);
+      height = Math.max(1, Math.round((height * maxDimension) / width));
       width = maxDimension;
     } else {
-      width = Math.round((width * maxDimension) / height);
+      width = Math.max(1, Math.round((width * maxDimension) / height));
       height = maxDimension;
     }
   }
@@ -164,15 +181,17 @@ async function compressImageToBlob(
 
   ctx.drawImage(img, 0, 0, width, height);
 
-  const blob = await new Promise<Blob>((resolve) => {
-    canvas.toBlob(
-      (b) => {
-        resolve(b || file);
-      },
-      'image/webp',
-      quality
-    );
+  const webpBlob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((b) => resolve(b), 'image/webp', quality);
   });
+
+  // Fallback to JPEG when WebP encoder returns null or non-webp (older iOS Safari / WebViews)
+  const blob =
+    webpBlob && webpBlob.type === 'image/webp'
+      ? webpBlob
+      : (await new Promise<Blob | null>((resolve) => {
+          canvas.toBlob((b) => resolve(b), 'image/jpeg', quality);
+        })) || file;
 
   const compressedBytes = blob.size;
   const savedPercent =

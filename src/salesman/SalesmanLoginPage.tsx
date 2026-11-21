@@ -17,6 +17,8 @@ export const SalesmanLoginPage: React.FC = () => {
     currentUser,
     loading,
     isSalesman,
+    authorizedRole,
+    authorizedHomePath,
     salesMember,
     loginWithEmail,
     loginWithGoogle,
@@ -33,10 +35,13 @@ export const SalesmanLoginPage: React.FC = () => {
   const [infoMsg, setInfoMsg] = useState('');
 
   useEffect(() => {
-    if (!loading && currentUser && isSalesman && salesMember) {
+    if (loading || !currentUser) return;
+    if (isSalesman && salesMember) {
       navigate('/salesman', { replace: true });
+    } else if (authorizedRole !== 'customer' && authorizedHomePath !== '/salesman') {
+      navigate(authorizedHomePath, { replace: true });
     }
-  }, [loading, currentUser, isSalesman, salesMember, navigate]);
+  }, [loading, currentUser, isSalesman, authorizedRole, authorizedHomePath, salesMember, navigate]);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,7 +52,9 @@ export const SalesmanLoginPage: React.FC = () => {
       await loginWithEmail(email.trim(), password);
       const sm = await refreshSalesMember();
       if (sm && (sm.accountStatus === 'active' || sm.accountStatus === 'invited')) {
-        navigate('/salesman', { replace: true });
+        if (sm.role === 'sales_manager') navigate('/sales-manager', { replace: true });
+        else if (sm.role === 'referral_agent') navigate('/referral', { replace: true });
+        else navigate('/salesman', { replace: true });
       }
     } catch (err: any) {
       setError(err?.message || 'Invalid credentials or unable to sign in.');
@@ -64,7 +71,9 @@ export const SalesmanLoginPage: React.FC = () => {
       await loginWithGoogle();
       const sm = await refreshSalesMember();
       if (sm && (sm.accountStatus === 'active' || sm.accountStatus === 'invited')) {
-        navigate('/salesman', { replace: true });
+        if (sm.role === 'sales_manager') navigate('/sales-manager', { replace: true });
+        else if (sm.role === 'referral_agent') navigate('/referral', { replace: true });
+        else navigate('/salesman', { replace: true });
       }
     } catch (err: any) {
       setError(err?.message || 'Google sign-in failed.');
@@ -111,7 +120,7 @@ export const SalesmanLoginPage: React.FC = () => {
             </div>
             <div>
               <p className="text-[11px] uppercase tracking-wider font-bold text-emerald-200">
-                BazaarPK Cloud · Field Force
+                SB Khush · Field Force
               </p>
               <h1 className="text-xl font-extrabold leading-tight">Salesman Portal</h1>
             </div>
@@ -250,7 +259,7 @@ export const SalesmanLoginPage: React.FC = () => {
               >
                 First-time setup / Forgot password?
               </button>
-              <Link to="/login" className="text-slate-500 hover:text-slate-800">
+              <Link to="/merchant/login" className="text-slate-500 hover:text-slate-800">
                 Merchant Login
               </Link>
             </div>

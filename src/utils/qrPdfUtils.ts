@@ -19,7 +19,7 @@ export async function downloadSalesmanQrPng(member: Pick<SalesMember, 'fullName'
   const dataUrl = await generateQrDataUrl(member.referralLink, 768);
   const link = document.createElement('a');
   link.href = dataUrl;
-  link.download = `bazaarpk-qr-${member.referralCode.toLowerCase()}.png`;
+  link.download = `sbkhush-qr-${member.referralCode.toLowerCase()}.png`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -36,7 +36,7 @@ export async function downloadSalesmanQrPdf(member: Pick<SalesMember, 'fullName'
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
-  doc.text('BazaarPK Cloud', 14, 17);
+  doc.text('SB Khush', 14, 17);
   doc.setFontSize(9.5);
   doc.setFont('helvetica', 'normal');
   doc.text('OFFICIAL MERCHANT ONBOARDING & REFERRAL CARD', 14, 25);
@@ -81,7 +81,7 @@ export async function downloadSalesmanQrPdf(member: Pick<SalesMember, 'fullName'
   doc.setTextColor(100, 116, 139);
   doc.text(member.referralLink, 74, 198, { align: 'center', maxWidth: 124 });
 
-  doc.save(`bazaarpk-qr-card-${member.referralCode.toLowerCase()}.pdf`);
+  doc.save(`sbkhush-qr-card-${member.referralCode.toLowerCase()}.pdf`);
 }
 
 export function downloadPayoutStatementPdf(payout: CommissionPayout): void {
@@ -92,7 +92,7 @@ export function downloadPayoutStatementPdf(payout: CommissionPayout): void {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(17);
   doc.setFont('helvetica', 'bold');
-  doc.text('BazaarPK Cloud — Sales Commission Payout Statement', 14, 16);
+  doc.text('SB Khush — Sales Commission Payout Statement', 14, 16);
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.text(`Statement #: ${payout.payoutNumber}   |   Processed: ${new Date(payout.processedAt).toLocaleString()}`, 14, 24);

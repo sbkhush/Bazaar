@@ -26,6 +26,8 @@ import {
 } from '../services/platformService';
 import { getReferralCodeOwner } from '../services/salesService';
 import { ImageUploader } from '../components/common/ImageUploader';
+import { BrandLogo } from '../components/common/BrandLogo';
+import { BRAND } from '../config/brand';
 
 export const RegisterShopPage: React.FC = () => {
   const { currentUser, loginWithGoogle, registerWithEmail, refreshMemberships, setActiveShopId } = useAuth();
@@ -68,7 +70,7 @@ export const RegisterShopPage: React.FC = () => {
     const paramRef = searchParams.get('ref');
     if (paramRef) return paramRef.trim().toUpperCase();
     try {
-      return localStorage.getItem('bazaarpk_ref_code') || '';
+      return localStorage.getItem('sbkhush_ref_code') || localStorage.getItem('bazaarpk_ref_code') || '';
     } catch {
       return '';
     }
@@ -177,7 +179,8 @@ export const RegisterShopPage: React.FC = () => {
 
       let referralSource: 'referral_link' | 'qr_scan' | 'manual_assisted' | 'code_entry' = 'code_entry';
       try {
-        const storedSource = localStorage.getItem('bazaarpk_ref_source');
+        const storedSource =
+          localStorage.getItem('sbkhush_ref_source') || localStorage.getItem('bazaarpk_ref_source');
         if (storedSource === 'qr_scan' || storedSource === 'referral_link') {
           referralSource = storedSource;
         } else if (leadId) {
@@ -212,6 +215,8 @@ export const RegisterShopPage: React.FC = () => {
       });
 
       try {
+        localStorage.removeItem('sbkhush_ref_code');
+        localStorage.removeItem('sbkhush_ref_source');
         localStorage.removeItem('bazaarpk_ref_code');
         localStorage.removeItem('bazaarpk_ref_source');
       } catch {}
@@ -230,13 +235,10 @@ export const RegisterShopPage: React.FC = () => {
     <div className="min-h-screen bg-[#FAF9F6] py-10 px-4 sm:px-6">
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-8">
-          <Link to="/" className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-[#065F46] text-white flex items-center justify-center font-extrabold text-sm">
-              B
-            </div>
-            <span className="font-extrabold text-base text-slate-900">BazaarPK Cloud</span>
+          <Link to="/" className="flex items-center">
+            <BrandLogo variant="full" tone="dark" size="md" />
           </Link>
-          <Link to="/login" className="text-xs font-semibold text-slate-600 hover:text-slate-900">
+          <Link to="/merchant/login" className="text-xs font-semibold text-slate-600 hover:text-slate-900">
             Already have a store? <span className="text-[#065F46] font-bold">Sign In</span>
           </Link>
         </div>
@@ -442,7 +444,7 @@ export const RegisterShopPage: React.FC = () => {
                       type="text"
                       value={referralCode}
                       onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                      placeholder="e.g. SAL-AHMA-1024"
+                      placeholder={`e.g. ${BRAND.salesEmployeePrefix}1024`}
                       className="sm:w-72 px-3 py-2.5 border border-slate-200 rounded-xl text-xs font-mono uppercase focus:ring-2 focus:ring-[#065F46] focus:outline-none"
                     />
                     {referralOwnerName && (
