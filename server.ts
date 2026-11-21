@@ -9,16 +9,22 @@ import firebaseConfig from './firebase-applet-config.json';
 import { db } from './src/firebase/config';
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
+  increment,
   query,
+  runTransaction,
   setDoc,
+  setLogLevel,
+  updateDoc,
   where,
   writeBatch,
 } from 'firebase/firestore';
 
 dotenv.config();
+setLogLevel('error');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -703,6 +709,506 @@ Format cleanly in markdown with:
     } catch (err: any) {
       console.error('Error tracking order:', err);
       return res.status(500).json({ error: err.message || 'Tracking failed' });
+    }
+  });
+
+  // ====================================================
+  // SALESMAN PORTAL & COMMISSION ENGINE API ROUTES
+  // ====================================================
+
+  const normalizePhoneDigits = (raw?: string): string => {
+    const digits = String(raw || '').replace(/[^0-9]/g, '');
+    if (!digits) return '';
+    if (digits.startsWith('92') && digits.length >= 12) return `0${digits.slice(2, 12)}`;
+    if (digits.startsWith('3') && digits.length === 10) return `0${digits}`;
+    return digits;
+  };
+
+  // Public rate-limited QR scan & referral click tracker
+  app.post('/api/sales/qr/track', async (req, res) => {
+    const clientIp = req.ip || 'unknown';
+    if (!checkRateLimit(clientIp, 'sales-qr-track', 60, 60_000)) {
+      return res.status(429).json({ error: 'Too many referral scan requests.' });
+    }
+    try {
+      const code = String(req.body?.referralCode || '').trim().toUpperCase();
+      const source = req.body?.source === 'referral_link' ? 'referral_link' : 'qr_scan';
+      if (!code || !/^[A-Z0-9-]{4,40}$/.test(code)) {
+        return res.status(400).json({ error: 'Valid referralCode is required.' });
+      }
+
+      const idxRef = doc(db, 'salesReferralIndex', code);
+      const idxSnap = await getDoc(idxRef);
+      let owner: any = idxSnap.exists() ? idxSnap.data() : null;
+
+      if (!owner) {
+        const mSnap = await getDocs(query(collection(db, 'salesMembers'), where('referralCode', '==', code)));
+        if (!mSnap.empty) {
+          const m = mSnap.docs[0].data();
+          owner = {
+            referralCode: code,
+            salesmanId: mSnap.docs[0].id,
+            salesmanUid: m.uid || null,
+            salesmanName: m.fullName,
+            accountStatus: m.accountStatus,
+            qrScanCount: m.qrScanCount || 0,
+          };
+        }
+      }
+
+      if (!owner || owner.accountStatus !== 'active') {
+        return res.json({ ok: false, owner: null });
+      }
+
+      const now = new Date().toISOString();
+      const evtId = `qr_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'salesQrEvents', evtId), {
+        id: evtId,
+        salesmanId: owner.salesmanId,
+        referralCode: code,
+        source,
+        createdAt: now,
+      });
+      batch.set(
+        idxRef,
+        { ...owner, qrScanCount: increment(1), updatedAt: now },
+        { merge: true }
+      );
+      batch.update(doc(db, 'salesMembers', owner.salesmanId), {
+        qrScanCount: increment(1),
+        updatedAt: now,
+      });
+      await batch.commit().catch(() => {});
+
+      return res.json({ ok: true, owner });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Could not track QR scan.' });
+    }
+  });
+
+  // Authenticated referral attribution with anti-self-referral & duplicate shop protection
+  app.post('/api/sales/referrals/record', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser) {
+      return res.status(401).json({ error: 'Authentication required to record referral attribution.' });
+    }
+    try {
+      const code = String(req.body?.referralCode || '').trim().toUpperCase();
+      const shopId = sanitizeShopId(req.body?.shopId);
+      const ownerId = String(req.body?.ownerId || '').trim();
+      const isSuper = await isAuthorizedSuperAdmin(verifiedUser);
+      if (!isSuper && verifiedUser.uid !== ownerId) {
+        return res.status(403).json({ error: 'Forbidden: owner identity mismatch.' });
+      }
+
+      const mSnap = await getDocs(query(collection(db, 'salesMembers'), where('referralCode', '==', code)));
+      if (mSnap.empty) {
+        return res.json({ ok: false, attribution: null });
+      }
+      const memberDoc = mSnap.docs[0];
+      const salesman = memberDoc.data();
+      if (salesman.accountStatus !== 'active') {
+        return res.json({ ok: false, attribution: null });
+      }
+
+      const attrRef = doc(db, 'referralAttributions', shopId);
+      const existingSnap = await getDoc(attrRef);
+      if (existingSnap.exists()) {
+        return res.json({ ok: true, attribution: existingSnap.data() });
+      }
+
+      const settingsSnap = await getDoc(doc(db, 'salesSettings', 'general'));
+      const preventSelf = settingsSnap.exists() ? settingsSnap.data()?.preventSelfReferral !== false : true;
+      const ownerEmail = String(req.body?.ownerEmail || verifiedUser.email || '').trim().toLowerCase();
+      const ownerPhone = String(req.body?.ownerPhone || '').trim();
+
+      const isSelfReferral =
+        preventSelf &&
+        (Boolean(salesman.uid && salesman.uid === ownerId) ||
+          String(salesman.email || '').toLowerCase() === ownerEmail ||
+          (ownerPhone && normalizePhoneDigits(salesman.phone) === normalizePhoneDigits(ownerPhone)));
+
+      const now = new Date().toISOString();
+      const payload = stripUndefined({
+        id: shopId,
+        referralCode: code,
+        salesmanId: memberDoc.id,
+        salesmanUid: salesman.uid,
+        salesmanName: salesman.fullName,
+        shopId,
+        shopSlug: String(req.body?.shopSlug || shopId),
+        shopName: String(req.body?.shopName || shopId),
+        ownerId,
+        ownerEmail,
+        ownerPhone: ownerPhone || undefined,
+        city: req.body?.city ? String(req.body.city) : undefined,
+        industry: req.body?.industry ? String(req.body.industry) : undefined,
+        leadId: req.body?.leadId ? String(req.body.leadId) : undefined,
+        source: String(req.body?.source || 'referral_link'),
+        attributionStatus: isSelfReferral ? 'rejected_self_referral' : 'registered',
+        totalRevenueGenerated: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await setDoc(attrRef, payload);
+
+      if (payload.leadId && !isSelfReferral) {
+        await updateDoc(doc(db, 'salesLeads', payload.leadId), {
+          status: 'Converted',
+          convertedShopId: shopId,
+          convertedShopSlug: payload.shopSlug,
+          updatedAt: now,
+        }).catch(() => {});
+      }
+
+      const notifId = `sntf_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      await setDoc(
+        doc(db, 'salesNotifications', notifId),
+        stripUndefined({
+          id: notifId,
+          recipientSalesmanId: memberDoc.id,
+          recipientUid: salesman.uid,
+          type: isSelfReferral ? 'commission_rejected' : 'shop_registered',
+          title: isSelfReferral
+            ? `Self-Referral Blocked: ${payload.shopName}`
+            : `Referred Shop Registered: ${payload.shopName}`,
+          message: isSelfReferral
+            ? `Registration matched your own identity and is ineligible for commission.`
+            : `${payload.shopName} registered using code ${code}.`,
+          link: '/salesman/referrals',
+          isRead: false,
+          createdAt: now,
+        })
+      ).catch(() => {});
+
+      const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      await setDoc(
+        doc(db, 'salesAuditLogs', slogId),
+        {
+          id: slogId,
+          actorUid: verifiedUser.uid,
+          actorEmail: verifiedUser.email,
+          actorRole: isSuper ? 'super_admin' : 'system',
+          action: isSelfReferral ? 'Blocked Self-Referral' : 'Recorded Referral Attribution',
+          entityType: 'referral',
+          entityId: shopId,
+          details: `${payload.shopName} -> ${salesman.fullName} (${code}) · ${payload.attributionStatus}`,
+          createdAt: now,
+        }
+      ).catch(() => {});
+
+      return res.status(201).json({ ok: true, attribution: payload });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to record attribution.' });
+    }
+  });
+
+  // Super Admin only: Server-verified commission calculation from approved subscription payment
+  app.post('/api/sales/commissions/sync', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser || !(await isAuthorizedSuperAdmin(verifiedUser))) {
+      return res.status(403).json({ error: 'Super Admin authentication required.' });
+    }
+    try {
+      const paymentId = sanitizeDocId(req.body?.paymentId);
+      if (!paymentId) return res.status(400).json({ error: 'Valid paymentId is required.' });
+
+      const paySnap = await getDoc(doc(db, 'platform_payments', paymentId));
+      if (!paySnap.exists()) return res.status(404).json({ error: 'Payment not found.' });
+      const payment = paySnap.data();
+      if (payment.status !== 'approved' || Number(payment.amount) <= 0) {
+        return res.json({ entry: null });
+      }
+
+      const attrSnap = await getDoc(doc(db, 'referralAttributions', payment.shopId));
+      if (!attrSnap.exists()) return res.json({ entry: null });
+      const attr = attrSnap.data();
+      if (attr.attributionStatus === 'rejected_self_referral' || attr.attributionStatus === 'duplicate_blocked') {
+        return res.json({ entry: null });
+      }
+
+      const ledgerId = `comm_${paymentId}`;
+      const existingSnap = await getDoc(doc(db, 'commissionLedger', ledgerId));
+      if (existingSnap.exists()) {
+        return res.json({ entry: { ...existingSnap.data(), id: ledgerId } });
+      }
+
+      const [memberSnap, settingsSnap] = await Promise.all([
+        getDoc(doc(db, 'salesMembers', attr.salesmanId)),
+        getDoc(doc(db, 'salesSettings', 'general')),
+      ]);
+      if (!memberSnap.exists()) return res.json({ entry: null });
+      const member = memberSnap.data();
+      const settings = settingsSnap.exists() ? settingsSnap.data() : {};
+      const plans: any[] = Array.isArray(settings.commissionPlans) && settings.commissionPlans.length > 0
+        ? settings.commissionPlans
+        : [{ id: 'tier-standard', firstSubRatePct: 15, renewalRatePct: 5, verifiedShopBonus: 300, yearlyPlanBonusPct: 3 }];
+      const tier = plans.find((t) => t.id === member.commissionPlanId) || plans[0];
+
+      const isRenewal = Boolean(attr.firstPaymentId && attr.firstPaymentId !== paymentId);
+      const baseRate = isRenewal ? Number(tier.renewalRatePct || 5) : Number(tier.firstSubRatePct || 15);
+      const yearlyBonus = payment.billingCycle === 'yearly' ? Number(tier.yearlyPlanBonusPct || 0) : 0;
+      const ratePct = Math.max(0, baseRate + yearlyBonus);
+      const flatBonusAmount = isRenewal ? 0 : Math.max(0, Number(tier.verifiedShopBonus || 0));
+      const commissionAmount = Math.round((Number(payment.amount) * ratePct) / 100) + flatBonusAmount;
+
+      const now = new Date().toISOString();
+      const entry = stripUndefined({
+        id: ledgerId,
+        salesmanId: attr.salesmanId,
+        salesmanUid: member.uid,
+        salesmanName: member.fullName,
+        shopId: payment.shopId,
+        shopName: payment.shopName,
+        paymentId,
+        attributionId: attrSnap.id,
+        planId: payment.planId,
+        planName: payment.planName,
+        billingCycle: payment.billingCycle,
+        paymentAmount: Number(payment.amount),
+        commissionRatePct: ratePct,
+        flatBonusAmount,
+        commissionAmount,
+        commissionType: isRenewal ? 'subscription_renewal' : 'subscription_first',
+        status: 'pending',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await runTransaction(db, async (tx) => {
+        const check = await tx.get(doc(db, 'commissionLedger', ledgerId));
+        if (check.exists()) return;
+        tx.set(doc(db, 'commissionLedger', ledgerId), entry);
+        tx.update(doc(db, 'referralAttributions', attrSnap.id), {
+          attributionStatus: 'subscribed',
+          firstPaymentId: attr.firstPaymentId || paymentId,
+          totalRevenueGenerated: Number(attr.totalRevenueGenerated || 0) + Number(payment.amount),
+          updatedAt: now,
+        });
+      });
+
+      return res.status(201).json({ entry });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Commission sync failed.' });
+    }
+  });
+
+  // Super Admin only: Approve, reject, or reverse commission ledger entry
+  app.post('/api/sales/commissions/decision', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser || !(await isAuthorizedSuperAdmin(verifiedUser))) {
+      return res.status(403).json({ error: 'Super Admin authentication required.' });
+    }
+    try {
+      const commissionId = sanitizeDocId(req.body?.commissionId);
+      const decision = String(req.body?.decision || '');
+      const reason = String(req.body?.reason || '').trim();
+      if (!commissionId || !['approved', 'rejected', 'reversed'].includes(decision)) {
+        return res.status(400).json({ error: 'Valid commissionId and decision required.' });
+      }
+
+      const now = new Date().toISOString();
+      await runTransaction(db, async (tx) => {
+        const ref = doc(db, 'commissionLedger', commissionId);
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('Commission entry not found.');
+        const cur = snap.data();
+
+        if (decision === 'approved' && cur.status !== 'pending') {
+          throw new Error(`Only pending commissions can be approved (current: ${cur.status}).`);
+        }
+        if (decision === 'rejected' && cur.status !== 'pending') {
+          throw new Error(`Only pending commissions can be rejected (current: ${cur.status}).`);
+        }
+        if (decision === 'reversed' && !['pending', 'approved', 'paid'].includes(cur.status)) {
+          throw new Error(`Commission already ${cur.status}.`);
+        }
+
+        const patch: Record<string, any> = { status: decision, updatedAt: now };
+        if (decision === 'approved') {
+          patch.approvedBy = verifiedUser.email;
+          patch.approvedAt = now;
+        } else if (decision === 'rejected') {
+          patch.rejectionReason = reason || 'Rejected by Super Admin.';
+          patch.approvedBy = verifiedUser.email;
+          patch.approvedAt = now;
+        } else if (decision === 'reversed') {
+          patch.reversalReason = reason || 'Reversed due to refund/chargeback.';
+          patch.reversedBy = verifiedUser.email;
+          patch.reversedAt = now;
+        }
+        tx.update(ref, patch);
+      });
+
+      const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      await setDoc(doc(db, 'salesAuditLogs', slogId), {
+        id: slogId,
+        actorUid: verifiedUser.uid,
+        actorEmail: verifiedUser.email,
+        actorRole: 'super_admin',
+        action: `Commission ${decision}`,
+        entityType: 'commission',
+        entityId: commissionId,
+        details: `${decision.toUpperCase()} commission ${commissionId}${reason ? ` · ${reason}` : ''}`,
+        createdAt: now,
+      }).catch(() => {});
+
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || 'Could not update commission.' });
+    }
+  });
+
+  // Super Admin only: Process verified manual payout & mark ledger entries paid atomically
+  app.post('/api/sales/payouts', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser || !(await isAuthorizedSuperAdmin(verifiedUser))) {
+      return res.status(403).json({ error: 'Super Admin authentication required.' });
+    }
+    try {
+      const salesmanId = sanitizeDocId(req.body?.salesmanId);
+      const ledgerEntryIds: string[] = Array.isArray(req.body?.ledgerEntryIds)
+        ? req.body.ledgerEntryIds.map((id: unknown) => sanitizeDocId(id)).filter(Boolean)
+        : [];
+      const method = String(req.body?.method || 'bank_transfer');
+      const accountTitle = String(req.body?.accountTitle || '').trim();
+      const accountNumber = String(req.body?.accountNumber || '').trim();
+      const bankName = String(req.body?.bankName || '').trim();
+      const transactionReference = String(req.body?.transactionReference || '').trim();
+      const notes = String(req.body?.notes || '').trim();
+
+      if (!salesmanId || ledgerEntryIds.length === 0 || !transactionReference || !accountTitle || !accountNumber) {
+        return res.status(400).json({ error: 'Incomplete payout settlement details.' });
+      }
+
+      const memberSnap = await getDoc(doc(db, 'salesMembers', salesmanId));
+      if (!memberSnap.exists()) return res.status(404).json({ error: 'Salesman not found.' });
+      const member = memberSnap.data();
+
+      const now = new Date().toISOString();
+      const payoutId = `pay_sls_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      const payoutNumber = `PAY-SLS-${Math.floor(100000 + Math.random() * 900000)}`;
+      let computedTotal = 0;
+
+      const payoutPayload = await runTransaction(db, async (tx) => {
+        for (const cid of ledgerEntryIds) {
+          const snap = await tx.get(doc(db, 'commissionLedger', cid));
+          if (!snap.exists()) throw new Error(`Commission ${cid} does not exist.`);
+          const cData = snap.data();
+          if (cData.salesmanId !== salesmanId) {
+            throw new Error('Commission entries must belong to the selected salesman.');
+          }
+          if (cData.status !== 'approved') {
+            throw new Error(`Commission ${cid} is ${cData.status}; only approved commissions can be paid.`);
+          }
+          computedTotal += Number(cData.commissionAmount || 0);
+        }
+
+        const payload = stripUndefined({
+          id: payoutId,
+          payoutNumber,
+          salesmanId,
+          salesmanUid: member.uid,
+          salesmanName: member.fullName,
+          salesmanEmail: member.email,
+          ledgerEntryIds,
+          totalAmount: computedTotal,
+          method,
+          accountTitle,
+          accountNumber,
+          bankName: bankName || undefined,
+          transactionReference,
+          notes: notes || undefined,
+          status: 'processed',
+          processedBy: verifiedUser.email,
+          processedAt: now,
+          createdAt: now,
+        });
+
+        tx.set(doc(db, 'commissionPayouts', payoutId), payload);
+        for (const cid of ledgerEntryIds) {
+          tx.update(doc(db, 'commissionLedger', cid), {
+            status: 'paid',
+            payoutId,
+            paidAt: now,
+            updatedAt: now,
+          });
+        }
+        return payload;
+      });
+
+      const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      await setDoc(doc(db, 'salesAuditLogs', slogId), {
+        id: slogId,
+        actorUid: verifiedUser.uid,
+        actorEmail: verifiedUser.email,
+        actorRole: 'super_admin',
+        action: 'Recorded Commission Payout',
+        entityType: 'payout',
+        entityId: payoutId,
+        details: `Paid Rs. ${computedTotal} to ${member.fullName} (${payoutNumber}, TID: ${transactionReference})`,
+        createdAt: now,
+      }).catch(() => {});
+
+      return res.status(201).json({ payout: payoutPayload });
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || 'Payout failed.' });
+    }
+  });
+
+  // Super Admin only: Regenerate unique referral code & sync public index
+  app.post('/api/sales/referrals/regenerate', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser || !(await isAuthorizedSuperAdmin(verifiedUser))) {
+      return res.status(403).json({ error: 'Super Admin authentication required.' });
+    }
+    try {
+      const memberId = sanitizeDocId(req.body?.memberId);
+      if (!memberId) return res.status(400).json({ error: 'Valid memberId required.' });
+
+      const [memberSnap, allSnap, settingsSnap] = await Promise.all([
+        getDoc(doc(db, 'salesMembers', memberId)),
+        getDocs(collection(db, 'salesMembers')),
+        getDoc(doc(db, 'salesSettings', 'general')),
+      ]);
+      if (!memberSnap.exists()) return res.status(404).json({ error: 'Salesman not found.' });
+
+      const member = memberSnap.data();
+      const existingCodes = new Set(allSnap.docs.map((d) => String(d.data()?.referralCode || '').toUpperCase()));
+      const cleanName = String(member.fullName || 'REP').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'REP';
+      let newCode = `SAL-${cleanName}-${Math.floor(1000 + Math.random() * 9000)}`;
+      while (existingCodes.has(newCode)) {
+        newCode = `SAL-${cleanName}-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+      const portalBase = settingsSnap.exists() ? String(settingsSnap.data()?.portalBaseUrl || 'https://sbkhush.com') : 'https://sbkhush.com';
+      const newLink = `${portalBase.replace(/\/+$/, '')}/r/${encodeURIComponent(newCode)}`;
+      const now = new Date().toISOString();
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'salesMembers', memberId), {
+        referralCode: newCode,
+        referralLink: newLink,
+        updatedAt: now,
+      });
+      if (member.referralCode) {
+        batch.delete(doc(db, 'salesReferralIndex', member.referralCode));
+      }
+      batch.set(doc(db, 'salesReferralIndex', newCode), {
+        referralCode: newCode,
+        salesmanId: memberId,
+        salesmanUid: member.uid || null,
+        salesmanName: member.fullName,
+        accountStatus: member.accountStatus,
+        qrScanCount: member.qrScanCount || 0,
+        updatedAt: now,
+      });
+      await batch.commit();
+
+      return res.json({ referralCode: newCode, referralLink: newLink });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to regenerate referral code.' });
     }
   });
 

@@ -21,6 +21,7 @@ import { ToastProvider } from './components/common/Toast';
 import { PlatformLandingPage } from './platform/PlatformLandingPage';
 import { RegisterShopPage } from './platform/RegisterShopPage';
 import { LoginPage } from './platform/LoginPage';
+import { ReferralRedirectPage } from './platform/ReferralRedirectPage';
 
 // Layer 2: Super Admin Portal
 import { SuperAdminLayout } from './superadmin/SuperAdminLayout';
@@ -33,6 +34,26 @@ import { SuperAdminAnalyticsPage } from './superadmin/SuperAdminAnalyticsPage';
 import { SuperAdminSupportPage } from './superadmin/SuperAdminSupportPage';
 import { SuperAdminAuditLogsPage } from './superadmin/SuperAdminAuditLogsPage';
 import { SuperAdminSettingsPage } from './superadmin/SuperAdminSettingsPage';
+import { SalesOverviewPage } from './superadmin/sales/SalesOverviewPage';
+import { SalesPortalAccessPage } from './superadmin/sales/SalesPortalAccessPage';
+import { SalesMembersPage } from './superadmin/sales/SalesMembersPage';
+import { SalesMemberDetailPage } from './superadmin/sales/SalesMemberDetailPage';
+import { SalesTeamsPage } from './superadmin/sales/SalesTeamsPage';
+import { SalesLeadsPage } from './superadmin/sales/SalesLeadsPage';
+import { SalesRegistrationsPage } from './superadmin/sales/SalesRegistrationsPage';
+import { SalesReferralsPage } from './superadmin/sales/SalesReferralsPage';
+import { SalesTargetsPage } from './superadmin/sales/SalesTargetsPage';
+import { SalesCommissionsPage } from './superadmin/sales/SalesCommissionsPage';
+import { SalesPayoutsPage } from './superadmin/sales/SalesPayoutsPage';
+import { SalesQrCodesPage } from './superadmin/sales/SalesQrCodesPage';
+import { SalesReportsPage } from './superadmin/sales/SalesReportsPage';
+import { SalesActivityLogsPage } from './superadmin/sales/SalesActivityLogsPage';
+import { SalesSettingsPage } from './superadmin/sales/SalesSettingsPage';
+
+// Layer 2B: Individual Salesman Portal
+import { SalesmanLoginPage } from './salesman/SalesmanLoginPage';
+import { SalesmanLayout } from './salesman/SalesmanLayout';
+import { SalesmanDashboardPage } from './salesman/SalesmanDashboardPage';
 
 // Layer 3: Merchant Shop Dashboard
 import { ShopDashboardLayout } from './dashboard/ShopDashboardLayout';
@@ -263,6 +284,22 @@ export default function App() {
               <Route path="/" element={<PlatformLandingPage />} />
               <Route path="/register" element={<RegisterShopPage />} />
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/r/:refCode" element={<ReferralRedirectPage />} />
+
+              {/* Layer 2B: Individual Salesman Portal */}
+              <Route path="/salesman/login" element={<SalesmanLoginPage />} />
+              <Route path="/salesman" element={<SalesmanLayout />}>
+                <Route index element={<SalesmanDashboardPage />} />
+                <Route path="leads" element={<SalesmanDashboardPage />} />
+                <Route path="referrals" element={<SalesmanDashboardPage />} />
+                <Route path="targets" element={<SalesmanDashboardPage />} />
+                <Route path="commissions" element={<SalesmanDashboardPage />} />
+                <Route path="payouts" element={<SalesmanDashboardPage />} />
+                <Route path="activities" element={<SalesmanDashboardPage />} />
+                <Route path="qr" element={<SalesmanDashboardPage />} />
+                <Route path="notifications" element={<SalesmanDashboardPage />} />
+                <Route path="team" element={<SalesmanDashboardPage />} />
+              </Route>
 
               {/* Layer 2: Super Admin Portal */}
               <Route path="/super-admin" element={<SuperAdminLayout />}>
@@ -275,6 +312,22 @@ export default function App() {
                 <Route path="support" element={<SuperAdminSupportPage />} />
                 <Route path="audit-logs" element={<SuperAdminAuditLogsPage />} />
                 <Route path="settings" element={<SuperAdminSettingsPage />} />
+                <Route path="sales" element={<SalesOverviewPage />} />
+                <Route path="sales/portal" element={<SalesPortalAccessPage />} />
+                <Route path="sales/members" element={<SalesMembersPage />} />
+                <Route path="sales/members/new" element={<SalesMembersPage defaultCreateOpen />} />
+                <Route path="sales/members/:memberId" element={<SalesMemberDetailPage />} />
+                <Route path="sales/teams" element={<SalesTeamsPage />} />
+                <Route path="sales/leads" element={<SalesLeadsPage />} />
+                <Route path="sales/registrations" element={<SalesRegistrationsPage />} />
+                <Route path="sales/referrals" element={<SalesReferralsPage />} />
+                <Route path="sales/targets" element={<SalesTargetsPage />} />
+                <Route path="sales/commissions" element={<SalesCommissionsPage />} />
+                <Route path="sales/payouts" element={<SalesPayoutsPage />} />
+                <Route path="sales/qr-codes" element={<SalesQrCodesPage />} />
+                <Route path="sales/reports" element={<SalesReportsPage />} />
+                <Route path="sales/activity-logs" element={<SalesActivityLogsPage />} />
+                <Route path="sales/settings" element={<SalesSettingsPage />} />
               </Route>
 
               {/* Layer 3: Shop Admin Management Portal */}

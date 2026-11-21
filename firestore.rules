@@ -666,6 +666,187 @@ service cloud.firestore {
     }
 
     // ====================================================
+    // SALESMAN PORTAL, CRM LEADS, REFERRALS, COMMISSIONS & PAYOUTS
+    // ====================================================
+
+    match /salesSettings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isValidId(docId) && isSuperAdmin();
+    }
+
+    match /salesReferralIndex/{code} {
+      allow get: if isValidId(code);
+      allow list: if isSuperAdmin();
+      allow create, delete: if isValidId(code) && isSuperAdmin();
+      allow update: if isValidId(code) && (
+        isSuperAdmin() ||
+        (isSignedIn() && resource.data.salesmanUid == request.auth.uid &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['qrScanCount', 'updatedAt']))
+      );
+    }
+
+    match /salesMembers/{memberId} {
+      allow get: if isValidId(memberId) && (
+        isSuperAdmin() || (
+          isSignedIn() && (
+            resource.data.uid == request.auth.uid ||
+            resource.data.assignedManagerUid == request.auth.uid ||
+            (request.auth.token.email_verified == true && resource.data.email == request.auth.token.email)
+          )
+        )
+      );
+      allow list: if isSuperAdmin() || (
+        isSignedIn() && (
+          resource.data.uid == request.auth.uid ||
+          resource.data.assignedManagerUid == request.auth.uid ||
+          (request.auth.token.email_verified == true && resource.data.email == request.auth.token.email)
+        )
+      );
+      allow create, delete: if isValidId(memberId) && isSuperAdmin();
+      allow update: if isValidId(memberId) && (
+        isSuperAdmin() || (
+          isSignedIn() &&
+          (resource.data.uid == request.auth.uid ||
+            (request.auth.token.email_verified == true && resource.data.email == request.auth.token.email)) &&
+          incoming().uid == request.auth.uid &&
+          incoming().role == existing().role &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'uid', 'inviteStatus', 'acceptedAt', 'accountStatus',
+            'lastLoginAt', 'lastActivityAt', 'updatedAt', 'payoutDetails'
+          ]) &&
+          (existing().accountStatus == 'invited' || incoming().accountStatus == existing().accountStatus)
+        )
+      );
+    }
+
+    match /salesTeams/{teamId} {
+      allow get: if isValidId(teamId) && (
+        isSuperAdmin() ||
+        (isSignedIn() && resource.data.managerUid == request.auth.uid)
+      );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.managerUid == request.auth.uid);
+      allow write: if isValidId(teamId) && isSuperAdmin();
+    }
+
+    match /salesLeads/{leadId} {
+      allow get: if isValidId(leadId) && (
+        isSuperAdmin() || (
+          isSignedIn() && (
+            resource.data.assignedSalesmanUid == request.auth.uid ||
+            resource.data.assignedManagerUid == request.auth.uid
+          )
+        )
+      );
+      allow list: if isSuperAdmin() || (
+        isSignedIn() && (
+          resource.data.assignedSalesmanUid == request.auth.uid ||
+          resource.data.assignedManagerUid == request.auth.uid
+        )
+      );
+      allow create: if isValidId(leadId) && (
+        isSuperAdmin() || (
+          isSignedIn() &&
+          incoming().assignedSalesmanUid == request.auth.uid
+        )
+      );
+      allow update: if isValidId(leadId) && (
+        isSuperAdmin() || (
+          isSignedIn() &&
+          existing().assignedSalesmanUid == request.auth.uid &&
+          incoming().assignedSalesmanUid == existing().assignedSalesmanUid
+        )
+      );
+      allow delete: if isValidId(leadId) && isSuperAdmin();
+    }
+
+    match /salesActivities/{activityId} {
+      allow get: if isValidId(activityId) && (
+        isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid)
+      );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid);
+      allow create: if isValidId(activityId) && (
+        isSuperAdmin() || (isSignedIn() && incoming().salesmanUid == request.auth.uid)
+      );
+      allow update, delete: if isValidId(activityId) && isSuperAdmin();
+    }
+
+    match /salesTargets/{targetId} {
+      allow get: if isValidId(targetId) && (
+        isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid)
+      );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid);
+      allow write: if isValidId(targetId) && isSuperAdmin();
+    }
+
+    match /referralAttributions/{shopId} {
+      allow get: if isValidId(shopId) && (
+        isSuperAdmin() ||
+        (isSignedIn() && (resource.data.salesmanUid == request.auth.uid || resource.data.ownerId == request.auth.uid))
+      );
+      allow list: if isSuperAdmin() || (
+        isSignedIn() && (resource.data.salesmanUid == request.auth.uid || resource.data.ownerId == request.auth.uid)
+      );
+      allow create: if isValidId(shopId) && isSignedIn() && (
+        isSuperAdmin() || (
+          incoming().ownerId == request.auth.uid &&
+          incoming().shopId == shopId &&
+          incoming().attributionStatus in ['registered', 'rejected_self_referral'] &&
+          incoming().totalRevenueGenerated == 0
+        )
+      );
+      allow update, delete: if isValidId(shopId) && isSuperAdmin();
+    }
+
+    // Strict financial isolation: salesmen can READ their own commissions & payouts ONLY; NEVER edit!
+    match /commissionLedger/{commissionId} {
+      allow get: if isValidId(commissionId) && (
+        isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid)
+      );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid);
+      allow create, update, delete: if isValidId(commissionId) && isSuperAdmin();
+    }
+
+    match /commissionPayouts/{payoutId} {
+      allow get: if isValidId(payoutId) && (
+        isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid)
+      );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid);
+      allow create, update, delete: if isValidId(payoutId) && isSuperAdmin();
+    }
+
+    match /salesNotifications/{notifId} {
+      allow get: if isValidId(notifId) && (
+        isSuperAdmin() || (isSignedIn() && resource.data.recipientUid == request.auth.uid)
+      );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.recipientUid == request.auth.uid);
+      allow create: if isValidId(notifId) && (isSuperAdmin() || isSignedIn());
+      allow update: if isValidId(notifId) && (
+        isSuperAdmin() || (
+          isSignedIn() &&
+          resource.data.recipientUid == request.auth.uid &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['isRead'])
+        )
+      );
+      allow delete: if isValidId(notifId) && isSuperAdmin();
+    }
+
+    match /salesQrEvents/{eventId} {
+      allow get: if isValidId(eventId) && isSuperAdmin();
+      allow list: if isSuperAdmin();
+      allow create: if isValidId(eventId) &&
+        incoming().keys().hasAll(['id', 'salesmanId', 'referralCode', 'source', 'createdAt']) &&
+        incoming().keys().hasOnly(['id', 'salesmanId', 'referralCode', 'source', 'userAgent', 'convertedShopId', 'createdAt']);
+      allow update, delete: if isValidId(eventId) && isSuperAdmin();
+    }
+
+    match /salesAuditLogs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create: if isValidId(logId) && isSignedIn() && incoming().actorUid == request.auth.uid;
+      // Immutable financial & operational audit logs
+      allow update, delete: if false;
+    }
+
+    // ====================================================
     // LEGACY COLLECTIONS (Strict Super Admin Only Writes; Public Read Restricted)
     // ====================================================
     match /admins/{adminId} {

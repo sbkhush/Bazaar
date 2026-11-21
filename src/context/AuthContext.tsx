@@ -27,9 +27,11 @@ import {
   UserAddress,
   ShopMembership,
   ShopInvite,
+  SalesMember,
 } from '../types';
 import { SUPER_ADMIN_EMAIL } from '../data/seedData';
 import { stripUndefined } from '../services/platformService';
+import { linkSalesMemberOnLogin } from '../services/salesService';
 
 interface AuthContextType {
   currentUser: FirebaseUser | null;
@@ -38,6 +40,10 @@ interface AuthContextType {
   isAdmin: boolean;
   isSuperAdmin: boolean;
   isBlocked: boolean;
+  salesMember: SalesMember | null;
+  isSalesman: boolean;
+  isSalesManager: boolean;
+  refreshSalesMember: () => Promise<SalesMember | null>;
   shopMemberships: ShopMembership[];
   activeShopId: string | null;
   setActiveShopId: (shopId: string) => void;
@@ -60,6 +66,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSuperAdminVerified, setIsSuperAdminVerified] = useState(false);
+  const [salesMember, setSalesMember] = useState<SalesMember | null>(null);
   const [shopMemberships, setShopMemberships] = useState<ShopMembership[]>([]);
   const [activeShopId, setActiveShopIdState] = useState<string | null>(() => {
     try {
@@ -248,6 +255,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const refreshSalesMember = useCallback(async (): Promise<SalesMember | null> => {
+    if (!currentUser?.uid) {
+      setSalesMember(null);
+      return null;
+    }
+    const sm = await linkSalesMemberOnLogin(currentUser.uid, currentUser.email);
+    setSalesMember(sm);
+    return sm;
+  }, [currentUser?.uid, currentUser?.email]);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -256,9 +273,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await syncUserProfile(user);
         await claimPendingInvites(user);
         await loadUserMemberships(user.uid);
+        const sm = await linkSalesMemberOnLogin(user.uid, user.email).catch(() => null);
+        setSalesMember(sm);
       } else {
         setUserProfile(null);
         setIsSuperAdminVerified(false);
+        setSalesMember(null);
         setShopMemberships([]);
       }
       setLoading(false);
@@ -336,6 +356,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isBlocked = Boolean(userProfile?.isBlocked);
   const isSuperAdmin = !isBlocked && isSuperAdminVerified;
+  const isSalesman = Boolean(
+    !isBlocked && salesMember && (salesMember.accountStatus === 'active' || salesMember.accountStatus === 'invited')
+  );
+  const isSalesManager = Boolean(isSalesman && salesMember?.role === 'sales_manager');
   const isAdmin = !isBlocked && (isSuperAdmin || shopMemberships.length > 0);
 
   return (
@@ -347,6 +371,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAdmin,
         isSuperAdmin,
         isBlocked,
+        salesMember,
+        isSalesman,
+        isSalesManager,
+        refreshSalesMember,
         shopMemberships,
         activeShopId,
         setActiveShopId,

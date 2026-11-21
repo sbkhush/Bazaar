@@ -15,12 +15,30 @@ import {
   LifeBuoy,
   History,
   Settings,
+  TrendingUp,
+  UserCheck,
+  Users,
+  UserPlus,
+  UsersRound,
+  Target,
+  Building2,
+  Share2,
+  Award,
+  Coins,
+  Wallet,
+  QrCode,
+  FileBarChart2,
+  ClipboardList,
+  Sliders,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export const SuperAdminLayout: React.FC = () => {
   const { currentUser, isSuperAdmin, loading, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [salesOpen, setSalesOpen] = useState(true);
   const navigate = useNavigate();
 
   if (loading) {
@@ -71,6 +89,24 @@ export const SuperAdminLayout: React.FC = () => {
     { to: '/super-admin/support', label: 'Support Tickets', icon: LifeBuoy },
     { to: '/super-admin/audit-logs', label: 'Audit Logs', icon: History },
     { to: '/super-admin/settings', label: 'Platform Settings', icon: Settings },
+  ];
+
+  const salesNavItems = [
+    { to: '/super-admin/sales', label: 'Sales Overview', icon: TrendingUp, end: true },
+    { to: '/super-admin/sales/portal', label: 'Salesman Portal', icon: UserCheck },
+    { to: '/super-admin/sales/members', label: 'All Salesmen', icon: Users, end: true },
+    { to: '/super-admin/sales/members/new', label: 'Add New Salesman', icon: UserPlus },
+    { to: '/super-admin/sales/teams', label: 'Sales Teams', icon: UsersRound },
+    { to: '/super-admin/sales/leads', label: 'Sales Leads', icon: Target },
+    { to: '/super-admin/sales/registrations', label: 'Shop Registrations', icon: Building2 },
+    { to: '/super-admin/sales/referrals', label: 'Referrals', icon: Share2 },
+    { to: '/super-admin/sales/targets', label: 'Sales Targets', icon: Award },
+    { to: '/super-admin/sales/commissions', label: 'Commission Management', icon: Coins },
+    { to: '/super-admin/sales/payouts', label: 'Payout Management', icon: Wallet },
+    { to: '/super-admin/sales/qr-codes', label: 'QR Code Management', icon: QrCode },
+    { to: '/super-admin/sales/reports', label: 'Sales Reports', icon: FileBarChart2 },
+    { to: '/super-admin/sales/activity-logs', label: 'Activity Logs', icon: ClipboardList },
+    { to: '/super-admin/sales/settings', label: 'Sales Settings', icon: Sliders },
   ];
 
   const handleSignOut = async () => {
@@ -134,6 +170,41 @@ export const SuperAdminLayout: React.FC = () => {
               <span>{item.label}</span>
             </NavLink>
           ))}
+
+          {/* Sales Management Group */}
+          <div className="pt-4 mt-4 border-t border-slate-800/80">
+            <button
+              type="button"
+              onClick={() => setSalesOpen((prev) => !prev)}
+              className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-extrabold uppercase tracking-wider text-emerald-400 hover:text-emerald-300"
+            >
+              <span>Sales Management</span>
+              {salesOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+
+            {salesOpen && (
+              <div className="mt-1 space-y-0.5">
+                {salesNavItems.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    onClick={() => setSidebarOpen(false)}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 px-3.5 py-2 rounded-xl text-xs font-semibold transition ${
+                        isActive
+                          ? 'bg-[#065F46] text-white'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                      }`
+                    }
+                  >
+                    <item.icon className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
         </nav>
 
         <div className="p-4 border-t border-slate-800 space-y-2">

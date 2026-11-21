@@ -458,6 +458,9 @@ export async function registerNewShop(input: {
   address: string;
   planId: string;
   billingCycle: BillingCycle;
+  referralCode?: string;
+  referralSource?: 'referral_link' | 'qr_scan' | 'manual_assisted' | 'code_entry';
+  leadId?: string;
   paymentProof?: {
     method: 'easypaisa' | 'jazzcash' | 'bank_transfer';
     transactionId: string;
@@ -684,6 +687,23 @@ export async function registerNewShop(input: {
       });
     }
 
+    if (input.referralCode?.trim()) {
+      const { recordReferralAttribution } = await import('./salesService');
+      await recordReferralAttribution({
+        referralCode: input.referralCode.trim(),
+        shopId,
+        shopSlug: newShop.slug,
+        shopName: newShop.name,
+        ownerId: input.ownerId,
+        ownerEmail: input.ownerEmail,
+        ownerPhone: input.ownerPhone,
+        city: newShop.city,
+        industry: businessType,
+        leadId: input.leadId,
+        source: input.referralSource || 'code_entry',
+      }).catch((e) => console.warn('Referral attribution note:', e));
+    }
+
     await logPlatformActivity('Registered Shop', 'shop', shopId, `New ${businessType} shop "${newShop.name}" registered on ${assignedPlan.name}`);
     return newShop;
   } catch (err) {
@@ -698,6 +718,10 @@ export async function updateShopStatus(shopId: string, status: ShopStatus): Prom
     batch.update(doc(db, 'shops', shopId), { status, updatedAt: now });
     batch.set(doc(db, 'shops_public', shopId), { status, updatedAt: now }, { merge: true });
     await batch.commit();
+    if (status === 'active') {
+      const { verifyReferralAttributionOnShopActivation } = await import('./salesService');
+      await verifyReferralAttributionOnShopActivation(shopId).catch(() => {});
+    }
     await logPlatformActivity(`Shop ${status}`, 'shop', shopId, `Changed shop ${shopId} status to ${status}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}`);
@@ -954,6 +978,9 @@ export async function approvePlatformPayment(paymentId: string): Promise<void> {
       logMsg = `Approved Rs. ${payment.amount} for ${payment.shopName} (${payment.planName})`;
     });
 
+    const { syncCommissionForApprovedPayment } = await import('./salesService');
+    await syncCommissionForApprovedPayment(paymentId).catch((e) => console.warn('Commission sync note:', e));
+
     await logPlatformActivity('Approved Payment', 'payment', paymentId, logMsg);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `platform_payments/${paymentId}`);
@@ -977,6 +1004,8 @@ export async function rejectPlatformPayment(paymentId: string, reason: string): 
         reviewedAt: new Date().toISOString(),
       });
     });
+    const { reverseCommissionForPayment } = await import('./salesService');
+    await reverseCommissionForPayment(paymentId, reason).catch(() => {});
     await logPlatformActivity('Rejected Payment', 'payment', paymentId, `Rejected payment ${paymentId}: ${reason}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `platform_payments/${paymentId}`);

@@ -234,6 +234,72 @@
         "status": { "type": "string", "enum": ["completed", "returned"] }
       },
       "required": ["id", "shopId", "invoiceNumber", "idempotencyKey", "total", "status"]
+    },
+    "SalesMember": {
+      "title": "Sales Representative / Manager",
+      "description": "Field salesman, senior salesman, or regional sales manager profile (zero stored passwords)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "city": { "type": "string" },
+        "role": { "type": "string", "enum": ["salesman", "senior_salesman", "sales_manager"] },
+        "accountStatus": { "type": "string", "enum": ["active", "inactive", "suspended", "invited"] },
+        "referralCode": { "type": "string" },
+        "commissionPlanId": { "type": "string" }
+      },
+      "required": ["id", "employeeId", "fullName", "email", "role", "accountStatus", "referralCode"]
+    },
+    "SalesLead": {
+      "title": "Sales CRM Lead",
+      "description": "Merchant prospect lead with duplicate matching keys and pipeline status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessName": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "phone": { "type": "string" },
+        "normalizedPhone": { "type": "string" },
+        "city": { "type": "string" },
+        "industry": { "type": "string" },
+        "status": { "type": "string" },
+        "assignedSalesmanId": { "type": "string" }
+      },
+      "required": ["id", "businessName", "ownerName", "phone", "city", "status"]
+    },
+    "CommissionLedgerEntry": {
+      "title": "Sales Commission Ledger Entry",
+      "description": "Server-calculated commission ledger record generated from verified subscription payments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "salesmanId": { "type": "string" },
+        "shopId": { "type": "string" },
+        "paymentId": { "type": "string" },
+        "paymentAmount": { "type": "number" },
+        "commissionAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "paid", "reversed"] }
+      },
+      "required": ["id", "salesmanId", "shopId", "paymentId", "commissionAmount", "status"]
+    },
+    "CommissionPayout": {
+      "title": "Salesman Commission Payout",
+      "description": "Manual disbursement settlement record via Bank Transfer, EasyPaisa, or JazzCash",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "payoutNumber": { "type": "string" },
+        "salesmanId": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "method": { "type": "string", "enum": ["bank_transfer", "easypaisa", "jazzcash"] },
+        "transactionReference": { "type": "string" },
+        "status": { "type": "string", "enum": ["processed", "reversed"] }
+      },
+      "required": ["id", "payoutNumber", "salesmanId", "totalAmount", "method", "transactionReference"]
     }
   },
   "firestore": {
@@ -365,6 +431,49 @@
     },
     "/users/{userId}/shopMemberships/{shopId}": {
       "description": "User's authorized shop memberships for fast workspace resolution"
+    },
+    "/salesSettings/{docId}": {
+      "description": "Global sales commission tiers, attribution rules, and portal URL settings"
+    },
+    "/salesReferralIndex/{code}": {
+      "description": "Public non-PII referral code lookup index for shop registration & QR redirects"
+    },
+    "/salesMembers/{memberId}": {
+      "schema": { "$ref": "#/entities/SalesMember" },
+      "description": "Salesmen, senior salesmen, and regional sales managers (strictly no stored passwords)"
+    },
+    "/salesTeams/{teamId}": {
+      "description": "Regional sales teams and manager assignments"
+    },
+    "/salesLeads/{leadId}": {
+      "schema": { "$ref": "#/entities/SalesLead" },
+      "description": "Merchant sales CRM pipeline with normalized duplicate-detection fields"
+    },
+    "/salesActivities/{activityId}": {
+      "description": "Sales calls, field visits, WhatsApp follow-ups, demos, and registration assistance logs"
+    },
+    "/salesTargets/{targetId}": {
+      "description": "Salesman KPI targets and bonus rules"
+    },
+    "/referralAttributions/{shopId}": {
+      "description": "Verified shop-to-salesman referral attributions (one attribution per shopId)"
+    },
+    "/commissionLedger/{commissionId}": {
+      "schema": { "$ref": "#/entities/CommissionLedgerEntry" },
+      "description": "Server-calculated commission entries per approved subscription payment"
+    },
+    "/commissionPayouts/{payoutId}": {
+      "schema": { "$ref": "#/entities/CommissionPayout" },
+      "description": "Disbursed manual payout statements for salesmen"
+    },
+    "/salesNotifications/{notifId}": {
+      "description": "In-app notifications for lead assignments, conversions, commissions, and payouts"
+    },
+    "/salesQrEvents/{eventId}": {
+      "description": "QR scan & referral link click attribution events"
+    },
+    "/salesAuditLogs/{logId}": {
+      "description": "Immutable financial & operational audit trail for all sales actions"
     }
   }
 }

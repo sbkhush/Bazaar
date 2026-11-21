@@ -659,4 +659,314 @@ describe('Phase 2-6 Audit: Dual Social System, Storage Quota, Partial Merge, Pri
   });
 });
 
+describe('Super Admin Sales Management & Individual Salesman Portal', () => {
+  it('calculates commissions deterministically for first subscription, yearly plans, and renewals', async () => {
+    const {
+      calculateCommissionForPayment,
+      DEFAULT_SALES_SETTINGS,
+    } = await import('../src/services/salesService');
+
+    const firstMonthly = calculateCommissionForPayment({
+      paymentAmount: 2000,
+      billingCycle: 'monthly',
+      member: { commissionPlanId: 'tier-standard' },
+      settings: DEFAULT_SALES_SETTINGS,
+      isRenewal: false,
+    });
+    expect(firstMonthly.ratePct).toBe(15);
+    expect(firstMonthly.flatBonusAmount).toBe(300);
+    expect(firstMonthly.commissionAmount).toBe(600);
+    expect(firstMonthly.commissionType).toBe('subscription_first');
+
+    const firstYearly = calculateCommissionForPayment({
+      paymentAmount: 20000,
+      billingCycle: 'yearly',
+      member: { commissionPlanId: 'tier-standard' },
+      settings: DEFAULT_SALES_SETTINGS,
+      isRenewal: false,
+    });
+    expect(firstYearly.ratePct).toBe(18);
+    expect(firstYearly.flatBonusAmount).toBe(300);
+    expect(firstYearly.commissionAmount).toBe(3900);
+
+    const renewal = calculateCommissionForPayment({
+      paymentAmount: 2000,
+      billingCycle: 'monthly',
+      member: { commissionPlanId: 'tier-standard' },
+      settings: DEFAULT_SALES_SETTINGS,
+      isRenewal: true,
+    });
+    expect(renewal.ratePct).toBe(5);
+    expect(renewal.flatBonusAmount).toBe(0);
+    expect(renewal.commissionAmount).toBe(100);
+    expect(renewal.commissionType).toBe('subscription_renewal');
+  });
+
+  it('normalizes phone formats and catches duplicate leads by phone, email, or business+city', async () => {
+    const {
+      normalizePhoneForMatch,
+      detectDuplicateLead,
+    } = await import('../src/services/salesService');
+
+    expect(normalizePhoneForMatch('+92 300 1234567')).toBe('03001234567');
+    expect(normalizePhoneForMatch('3001234567')).toBe('03001234567');
+    expect(normalizePhoneForMatch('0300-1234567')).toBe('03001234567');
+
+    const existing = [
+      {
+        id: 'lead_1',
+        businessName: 'Al-Madina Mart',
+        ownerName: 'Bilal',
+        phone: '03001234567',
+        normalizedPhone: '03001234567',
+        email: 'bilal@madina.pk',
+        normalizedEmail: 'bilal@madina.pk',
+        city: 'Lahore',
+        industry: 'general_store' as const,
+        leadSource: 'field_visit' as const,
+        status: 'New' as const,
+        createdBy: 'admin',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+
+    expect(
+      detectDuplicateLead(
+        { businessName: 'Other Name', phone: '+923001234567', city: 'Karachi' },
+        existing
+      )?.reason
+    ).toContain('phone');
+
+    expect(
+      detectDuplicateLead(
+        { businessName: 'Other Name', phone: '03110000000', email: 'BILAL@madina.pk', city: 'Karachi' },
+        existing
+      )?.reason
+    ).toContain('email');
+
+    expect(
+      detectDuplicateLead(
+        { businessName: 'al-madina mart', phone: '03110000000', city: 'lahore' },
+        existing
+      )?.reason
+    ).toContain('Matching business');
+  });
+
+  it('mitigates CSV formula injection and parses RFC-4180 CSV rows cleanly', async () => {
+    const { escapeCsvCell, buildCsvContent, parseCsvRows } = await import('../src/utils/csvUtils');
+
+    expect(escapeCsvCell('=CMD|"/C calc"!A0')).toBe('"\'=CMD|""/C calc""!A0"');
+    expect(escapeCsvCell('+SUM(1,2)')).toBe('"\'+SUM(1,2)"');
+    expect(escapeCsvCell('-100')).toBe("'-100");
+    expect(escapeCsvCell('@evil')).toBe("'@evil");
+
+    const csv = buildCsvContent(['Shop', 'City'], [['Lahore, Central', 'Lahore']]);
+    const parsed = parseCsvRows(csv);
+    expect(parsed).toEqual([
+      ['Shop', 'City'],
+      ['Lahore, Central', 'Lahore'],
+    ]);
+  });
+
+  it('computes live Sales Dashboard analytics from real database records without hardcoded values', async () => {
+    const { computeSalesDashboardAnalytics } = await import('../src/services/salesService');
+
+    const todayIso = new Date().toISOString();
+    const summary = computeSalesDashboardAnalytics(
+      {
+        members: [
+          {
+            id: 'sm1',
+            employeeId: 'BPK-SLS-001',
+            fullName: 'Usman Tariq',
+            email: 'usman@sbkhush.com',
+            phone: '03001112233',
+            city: 'Karachi',
+            role: 'salesman',
+            territory: 'South Karachi',
+            industryFocus: 'all',
+            joiningDate: '2026-01-01',
+            employmentStatus: 'full_time',
+            monthlyTarget: 50000,
+            yearlyTarget: 600000,
+            commissionPlanId: 'tier-standard',
+            commissionPlanName: 'Standard',
+            accountStatus: 'active',
+            referralCode: 'SAL-USMA-1001',
+            referralLink: 'https://sbkhush.com/r/SAL-USMA-1001',
+            qrScanCount: 12,
+            createdBy: 'admin',
+            createdAt: todayIso,
+          },
+        ],
+        leads: [
+          {
+            id: 'l1',
+            businessName: 'Clifton Grocery',
+            ownerName: 'Hassan',
+            phone: '03211112233',
+            normalizedPhone: '03211112233',
+            city: 'Karachi',
+            industry: 'general_store',
+            assignedSalesmanId: 'sm1',
+            leadSource: 'field_visit',
+            status: 'Converted',
+            createdBy: 'admin',
+            createdAt: todayIso,
+          },
+        ],
+        referrals: [
+          {
+            id: 'shop1',
+            referralCode: 'SAL-USMA-1001',
+            salesmanId: 'sm1',
+            salesmanName: 'Usman Tariq',
+            shopId: 'shop1',
+            shopSlug: 'clifton-grocery',
+            shopName: 'Clifton Grocery',
+            ownerId: 'u_shop',
+            ownerEmail: 'hassan@clifton.pk',
+            city: 'Karachi',
+            industry: 'general_store',
+            source: 'qr_scan',
+            attributionStatus: 'subscribed',
+            totalRevenueGenerated: 5000,
+            createdAt: todayIso,
+          },
+        ],
+        shops: [
+          {
+            id: 'shop1',
+            slug: 'clifton-grocery',
+            name: 'Clifton Grocery',
+            ownerId: 'u_shop',
+            ownerName: 'Hassan',
+            ownerEmail: 'hassan@clifton.pk',
+            ownerPhone: '03211112233',
+            city: 'Karachi',
+            address: 'Clifton',
+            businessType: 'general_store',
+            status: 'active',
+            subscription: {
+              planId: 'business',
+              planName: 'Business',
+              status: 'active',
+              billingCycle: 'monthly',
+              pricePaid: 5000,
+              startDate: todayIso,
+              expiryDate: todayIso,
+            },
+            usage: { productsCount: 2, ordersCount: 1, storageBytes: 0, staffCount: 1 },
+            createdAt: todayIso,
+          },
+        ],
+        payments: [
+          {
+            id: 'pay1',
+            shopId: 'shop1',
+            shopName: 'Clifton Grocery',
+            shopSlug: 'clifton-grocery',
+            ownerId: 'u_shop',
+            ownerEmail: 'hassan@clifton.pk',
+            planId: 'business',
+            planName: 'Business',
+            billingCycle: 'monthly',
+            amount: 5000,
+            method: 'easypaisa',
+            senderNumber: '03211112233',
+            transactionId: 'TID-1',
+            proofUrl: 'https://cdn.example.com/proof.jpg',
+            status: 'approved',
+            createdAt: todayIso,
+          },
+        ],
+        commissions: [
+          {
+            id: 'comm_pay1',
+            salesmanId: 'sm1',
+            salesmanName: 'Usman Tariq',
+            shopId: 'shop1',
+            shopName: 'Clifton Grocery',
+            paymentId: 'pay1',
+            planId: 'business',
+            planName: 'Business',
+            billingCycle: 'monthly',
+            paymentAmount: 5000,
+            commissionRatePct: 15,
+            flatBonusAmount: 300,
+            commissionAmount: 1050,
+            commissionType: 'subscription_first',
+            status: 'approved',
+            createdAt: todayIso,
+          },
+        ],
+        targets: [],
+      },
+      { preset: 'all_time' }
+    );
+
+    expect(summary.totalSalesmen).toBe(1);
+    expect(summary.activeSalesmen).toBe(1);
+    expect(summary.convertedLeads).toBe(1);
+    expect(summary.totalRegisteredShops).toBe(1);
+    expect(summary.verifiedShops).toBe(1);
+    expect(summary.paidSubscriptions).toBe(1);
+    expect(summary.totalSalesRevenue).toBe(5000);
+    expect(summary.totalCommissionGenerated).toBe(1050);
+    expect(summary.pendingCommission).toBe(1050);
+    expect(summary.commissionPaid).toBe(0);
+    expect(summary.targetVsAchievement[0].conversionRate).toBe(100);
+  });
+
+  it('enforces Sales RBAC isolation in firestore.rules, server.ts, and exposes all 15 Super Admin menu links + Salesman Portal routes', () => {
+    const firestoreRules = fs.readFileSync(path.join(WORKSPACE_ROOT, 'firestore.rules'), 'utf-8');
+    const serverSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'server.ts'), 'utf-8');
+    const layoutSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/superadmin/SuperAdminLayout.tsx'), 'utf-8');
+    const appSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/App.tsx'), 'utf-8');
+
+    // Commission & Payout strict read-only for salesmen
+    expect(firestoreRules).toContain('match /commissionLedger/{commissionId}');
+    expect(firestoreRules).toContain('allow create, update, delete: if isValidId(commissionId) && isSuperAdmin();');
+    expect(firestoreRules).toContain('match /commissionPayouts/{payoutId}');
+    expect(firestoreRules).toContain('allow create, update, delete: if isValidId(payoutId) && isSuperAdmin();');
+    expect(firestoreRules).toContain('match /salesAuditLogs/{logId}');
+    expect(firestoreRules).toContain('allow update, delete: if false;');
+    expect(firestoreRules).toContain('match /salesReferralIndex/{code}');
+
+    // Backend sales routes with Super Admin Bearer token checks
+    expect(serverSrc).toContain("app.post('/api/sales/qr/track'");
+    expect(serverSrc).toContain("app.post('/api/sales/referrals/record'");
+    expect(serverSrc).toContain("app.post('/api/sales/commissions/sync'");
+    expect(serverSrc).toContain("app.post('/api/sales/commissions/decision'");
+    expect(serverSrc).toContain("app.post('/api/sales/payouts'");
+    expect(serverSrc).toContain("app.post('/api/sales/referrals/regenerate'");
+
+    // All 15 Super Admin Sales Management nav routes & Individual Salesman Portal routes
+    const requiredNavLabels = [
+      'Sales Overview',
+      'Salesman Portal',
+      'All Salesmen',
+      'Add New Salesman',
+      'Sales Teams',
+      'Sales Leads',
+      'Shop Registrations',
+      'Referrals',
+      'Sales Targets',
+      'Commission Management',
+      'Payout Management',
+      'QR Code Management',
+      'Sales Reports',
+      'Activity Logs',
+      'Sales Settings',
+    ];
+    for (const label of requiredNavLabels) {
+      expect(layoutSrc).toContain(label);
+    }
+    expect(appSrc).toContain('/salesman/login');
+    expect(appSrc).toContain('/salesman');
+    expect(appSrc).toContain('/r/:refCode');
+    expect(appSrc).toContain('sales/qr-codes');
+    expect(appSrc).toContain('sales/payouts');
+  });
+});
 

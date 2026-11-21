@@ -24,6 +24,7 @@ import {
   getSubscriptionPlans,
   registerNewShop,
 } from '../services/platformService';
+import { getReferralCodeOwner } from '../services/salesService';
 import { ImageUploader } from '../components/common/ImageUploader';
 
 export const RegisterShopPage: React.FC = () => {
@@ -62,6 +63,19 @@ export const RegisterShopPage: React.FC = () => {
   const [senderNumber, setSenderNumber] = useState('');
   const [proofImages, setProofImages] = useState<string[]>([]);
 
+  // Referral / Salesman Attribution
+  const [referralCode, setReferralCode] = useState(() => {
+    const paramRef = searchParams.get('ref');
+    if (paramRef) return paramRef.trim().toUpperCase();
+    try {
+      return localStorage.getItem('bazaarpk_ref_code') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [referralOwnerName, setReferralOwnerName] = useState<string | null>(null);
+  const [leadId] = useState(() => searchParams.get('leadId') || '');
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,6 +83,19 @@ export const RegisterShopPage: React.FC = () => {
     getSubscriptionPlans(true).then(setPlans).catch(() => {});
     getPlatformSettings().then(setPlatformSettings).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const code = referralCode.trim().toUpperCase();
+    if (!code || code.length < 4) {
+      setReferralOwnerName(null);
+      return;
+    }
+    const t = setTimeout(async () => {
+      const owner = await getReferralCodeOwner(code);
+      setReferralOwnerName(owner && owner.accountStatus === 'active' ? owner.salesmanName : null);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [referralCode]);
 
   useEffect(() => {
     if (currentUser) {
@@ -148,6 +175,16 @@ export const RegisterShopPage: React.FC = () => {
         if (!uid) throw new Error('Account created, please try again.');
       }
 
+      let referralSource: 'referral_link' | 'qr_scan' | 'manual_assisted' | 'code_entry' = 'code_entry';
+      try {
+        const storedSource = localStorage.getItem('bazaarpk_ref_source');
+        if (storedSource === 'qr_scan' || storedSource === 'referral_link') {
+          referralSource = storedSource;
+        } else if (leadId) {
+          referralSource = 'manual_assisted';
+        }
+      } catch {}
+
       const newShop = await registerNewShop({
         ownerId: uid,
         ownerName: finalName,
@@ -160,6 +197,9 @@ export const RegisterShopPage: React.FC = () => {
         address: address.trim(),
         planId: selectedPlanId,
         billingCycle,
+        referralCode: referralCode.trim() ? referralCode.trim().toUpperCase() : undefined,
+        referralSource: referralCode.trim() ? referralSource : undefined,
+        leadId: leadId || undefined,
         paymentProof:
           isPaidPlan && submitPaymentNow
             ? {
@@ -170,6 +210,11 @@ export const RegisterShopPage: React.FC = () => {
               }
             : undefined,
       });
+
+      try {
+        localStorage.removeItem('bazaarpk_ref_code');
+        localStorage.removeItem('bazaarpk_ref_source');
+      } catch {}
 
       await refreshMemberships();
       setActiveShopId(newShop.id);
@@ -386,6 +431,27 @@ export const RegisterShopPage: React.FC = () => {
                     placeholder="Shop 14, Main Boulevard, Gulberg III"
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-[#065F46] focus:outline-none"
                   />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Sales Representative / Referral Code <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <input
+                      type="text"
+                      value={referralCode}
+                      onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                      placeholder="e.g. SAL-AHMA-1024"
+                      className="sm:w-72 px-3 py-2.5 border border-slate-200 rounded-xl text-xs font-mono uppercase focus:ring-2 focus:ring-[#065F46] focus:outline-none"
+                    />
+                    {referralOwnerName && (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Referred by {referralOwnerName}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

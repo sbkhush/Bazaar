@@ -1,4 +1,14 @@
-export type UserRole = 'customer' | 'shop_owner' | 'shop_admin' | 'shop_staff' | 'admin' | 'super_admin';
+export type UserRole =
+  | 'customer'
+  | 'shop_owner'
+  | 'shop_admin'
+  | 'shop_staff'
+  | 'admin'
+  | 'super_admin'
+  | 'salesman'
+  | 'sales_manager';
+
+export * from './sales';
 
 export type StaffRole = 'shop_owner' | 'shop_admin' | 'shop_staff';
 
