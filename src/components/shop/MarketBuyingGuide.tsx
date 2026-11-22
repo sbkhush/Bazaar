@@ -11,7 +11,6 @@ import {
   ArrowRight,
   TrendingUp,
 } from 'lucide-react';
-import { buildApiUrl, isBackendApiAvailable } from '../../config/api';
 
 interface GroundedSource {
   title: string;
@@ -106,11 +105,7 @@ export const MarketBuyingGuide: React.FC<MarketBuyingGuideProps> = ({
     setIsOpen(true);
 
     try {
-      if (!isBackendApiAvailable()) {
-        throw new Error('Static host mode');
-      }
-
-      const response = await fetch(buildApiUrl('/api/buying-guide'), {
+      const response = await fetch('/api/buying-guide', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

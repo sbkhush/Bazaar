@@ -32,7 +32,6 @@ import {
 import { ImageUploader } from '../components/common/ImageUploader';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { BRAND } from '../config/brand';
-import { formatFirebaseAuthError, validateEmailAndPasswordInput } from '../utils/authErrors';
 
 export const RegisterShopPage: React.FC = () => {
   const { currentUser, loginWithGoogle, registerWithEmail, refreshMemberships, setActiveShopId } = useAuth();
@@ -168,9 +167,10 @@ export const RegisterShopPage: React.FC = () => {
       let finalName = ownerName.trim() || currentUser?.displayName || 'Store Owner';
 
       if (!uid) {
-        const validated = validateEmailAndPasswordInput(finalEmail, password);
-        finalEmail = validated.email;
-        await registerWithEmail(finalName, validated.email, validated.password, ownerPhone);
+        if (!finalEmail || password.length < 6) {
+          throw new Error('Please enter a valid email and a password of at least 6 characters.');
+        }
+        await registerWithEmail(finalName, finalEmail, password, ownerPhone);
         // Fetch freshly signed-in auth user via modular auth import cleanly
         const { auth } = await import('../firebase/config');
         uid = auth.currentUser?.uid;
@@ -220,7 +220,7 @@ export const RegisterShopPage: React.FC = () => {
       setActiveShopId(newShop.id);
       navigate('/dashboard');
     } catch (err: any) {
-      setError(formatFirebaseAuthError(err, 'Registration failed. Please review your details.'));
+      setError(err?.message || 'Registration failed. Please review your details.');
     } finally {
       setSubmitting(false);
     }
@@ -266,11 +266,7 @@ export const RegisterShopPage: React.FC = () => {
                 {!currentUser && (
                   <button
                     type="button"
-                    onClick={() =>
-                      loginWithGoogle().catch((e) =>
-                        setError(formatFirebaseAuthError(e, 'Google sign-in failed.'))
-                      )
-                    }
+                    onClick={() => loginWithGoogle().catch((e) => setError(e.message))}
                     className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold hover:bg-slate-50 transition"
                   >
                     Continue with Google

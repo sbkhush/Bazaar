@@ -60,7 +60,6 @@ export const SuperAdminShopsPage: React.FC = () => {
   const [extraDays, setExtraDays] = useState(30);
   const [freeOverride, setFreeOverride] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   // Delete confirmation modal
   const [deleteTarget, setDeleteTarget] = useState<Shop | null>(null);
@@ -190,7 +189,6 @@ export const SuperAdminShopsPage: React.FC = () => {
   const handleApplyPlan = async () => {
     if (!planModalShop) return;
     setActionBusy(true);
-    setActionError(null);
     try {
       await assignShopSubscription(planModalShop.id, {
         planId: selectedPlanId,
@@ -201,34 +199,19 @@ export const SuperAdminShopsPage: React.FC = () => {
       });
       setPlanModalShop(null);
       await loadShops();
-    } catch (err: any) {
-      setActionError(err?.message || 'Failed to update subscription plan.');
     } finally {
       setActionBusy(false);
-    }
-  };
-
-  const handleToggleShopStatus = async (shopId: string, nextStatus: 'active' | 'suspended') => {
-    setActionError(null);
-    try {
-      await updateShopStatus(shopId, nextStatus);
-      await loadShops();
-    } catch (err: any) {
-      setActionError(err?.message || `Failed to mark shop ${shopId} as ${nextStatus}.`);
     }
   };
 
   const handleDeleteShop = async () => {
     if (!deleteTarget || deleteConfirmSlug !== deleteTarget.slug) return;
     setActionBusy(true);
-    setActionError(null);
     try {
       await deleteShopComplete(deleteTarget.id);
       setDeleteTarget(null);
       setDeleteConfirmSlug('');
       await loadShops();
-    } catch (err: any) {
-      setActionError(err?.message || `Failed to delete shop "${deleteTarget.slug}".`);
     } finally {
       setActionBusy(false);
     }
@@ -264,15 +247,6 @@ export const SuperAdminShopsPage: React.FC = () => {
           </button>
         </div>
       </div>
-
-      {actionError && (
-        <div className="p-3.5 rounded-xl border border-red-200 bg-red-50 text-red-800 text-xs font-medium flex items-center justify-between gap-2">
-          <span>{actionError}</span>
-          <button type="button" onClick={() => setActionError(null)} className="text-red-600 hover:text-red-900">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
 
       {/* Non-Destructive Demo & Legacy Data Audit Panel */}
       {auditOpen && (
@@ -615,7 +589,7 @@ export const SuperAdminShopsPage: React.FC = () => {
                         {s.status === 'active' ? (
                           <button
                             type="button"
-                            onClick={() => handleToggleShopStatus(s.id, 'suspended')}
+                            onClick={() => updateShopStatus(s.id, 'suspended').then(loadShops)}
                             title="Suspend Shop"
                             className="p-1.5 rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50"
                           >
@@ -624,7 +598,7 @@ export const SuperAdminShopsPage: React.FC = () => {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => handleToggleShopStatus(s.id, 'active')}
+                            onClick={() => updateShopStatus(s.id, 'active').then(loadShops)}
                             title="Activate Shop"
                             className="p-1.5 rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50"
                           >

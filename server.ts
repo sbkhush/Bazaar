@@ -222,33 +222,25 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  // Explicit CORS allowlist for GitHub Pages (https://sbkhush.github.io), production domain (sbkhush.com), and local dev
-  const defaultProductionOrigins = [
-    'https://sbkhush.github.io',
-    'https://sbkhush.com',
-    'https://www.sbkhush.com',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:5173',
-  ];
-  const envOrigins = (process.env.ALLOWED_ORIGINS || '')
+  // Clean CORS middleware (configurable via ALLOWED_ORIGINS or allows GitHub Pages / localhost in preview)
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
-  const allowedOrigins = Array.from(new Set([...defaultProductionOrigins, ...envOrigins]));
 
   app.use((req: Request, res: Response, next: NextFunction) => {
     const origin = req.headers.origin;
     if (origin) {
       const isAllowed =
+        allowedOrigins.length === 0 ||
         allowedOrigins.includes(origin) ||
         origin.endsWith('.github.io') ||
-        origin.startsWith('http://localhost:') ||
-        origin.startsWith('http://127.0.0.1:');
+        origin.startsWith('http://localhost') ||
+        origin.startsWith('http://127.0.0.1');
       if (isAllowed) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       }
     }
@@ -279,7 +271,6 @@ async function startServer() {
       firestoreDatabaseId: firebaseConfig.firestoreDatabaseId,
       storageBucket: firebaseConfig.storageBucket,
       geminiConfigured: Boolean(apiKey),
-      corsOriginsConfigured: allowedOrigins,
       timestamp: new Date().toISOString(),
     });
   });

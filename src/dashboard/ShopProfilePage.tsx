@@ -12,17 +12,15 @@ import {
   getShopSupportTickets,
 } from '../services/platformService';
 import { ContactMessage, ActivityLog, SupportTicket } from '../types';
-import { ImageUploader } from '../components/common/ImageUploader';
 
 export const ShopProfilePage: React.FC = () => {
   const { shopId, shop, userRole, isReadOnly } = useDashboard();
-  const { currentUser, userProfile, resetPassword, updateProfileDetails } = useAuth();
+  const { currentUser, resetPassword } = useAuth();
   const [messages, setMessages] = useState<ContactMessage[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [loading, setLoading] = useState(true);
   const [resetSent, setResetSent] = useState(false);
-  const [avatarSaving, setAvatarSaving] = useState(false);
 
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketCategory, setTicketCategory] = useState<SupportTicket['category']>('technical');
@@ -109,69 +107,27 @@ export const ShopProfilePage: React.FC = () => {
         </div>
       )}
 
-      {/* Account Info & Profile Avatar */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 text-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            {userProfile?.photoURL || currentUser?.photoURL ? (
-              <img
-                src={userProfile?.photoURL || currentUser?.photoURL || ''}
-                alt={currentUser?.displayName || 'Profile'}
-                className="w-14 h-14 rounded-2xl object-cover border border-slate-200 shrink-0"
-              />
-            ) : (
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#065F46] font-extrabold text-lg flex items-center justify-center border border-emerald-200 shrink-0">
-                {(currentUser?.displayName || shop?.ownerName || 'U').charAt(0).toUpperCase()}
-              </div>
-            )}
-            <div className="space-y-1">
-              <p className="text-sm font-extrabold text-slate-900">{currentUser?.displayName || shop?.ownerName}</p>
-              <p className="text-slate-600">{currentUser?.email}</p>
-              <p className="text-slate-500 uppercase font-bold text-[11px]">
-                Role: {userRole.replace('_', ' ')} · Store: {shop?.name}
-              </p>
-            </div>
-          </div>
-          {!isReadOnly && (
-            <div className="flex flex-col items-start sm:items-end gap-1.5">
-              <button
-                type="button"
-                onClick={handlePasswordReset}
-                className="px-4 py-2 border border-slate-300 rounded-xl font-semibold hover:bg-slate-50"
-              >
-                Send Password Reset Email
-              </button>
-              {resetSent && (
-                <span className="text-emerald-700 font-semibold">Reset instructions emailed!</span>
-              )}
-            </div>
-          )}
+      {/* Account Info */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
+        <div className="space-y-1">
+          <p className="text-sm font-extrabold text-slate-900">{currentUser?.displayName || shop?.ownerName}</p>
+          <p className="text-slate-600">{currentUser?.email}</p>
+          <p className="text-slate-500 uppercase font-bold text-[11px]">
+            Role: {userRole.replace('_', ' ')} · Store: {shop?.name}
+          </p>
         </div>
-
-        {!isReadOnly && currentUser && (
-          <div className="pt-4 border-t border-slate-100">
-            <ImageUploader
-              shopId={shopId || 'profile'}
-              folder="profile"
-              subPath={currentUser.uid}
-              images={userProfile?.photoURL || currentUser.photoURL ? [userProfile?.photoURL || currentUser.photoURL || ''] : []}
-              onChange={async (imgs) => {
-                setAvatarSaving(true);
-                setErrorMsg(null);
-                try {
-                  await updateProfileDetails({
-                    displayName: userProfile?.displayName || currentUser.displayName || shop?.ownerName || 'Owner',
-                    phoneNumber: userProfile?.phoneNumber,
-                    photoURL: imgs[0] || '',
-                  });
-                } catch (err: any) {
-                  setErrorMsg(err?.message || 'Failed to save profile photo.');
-                } finally {
-                  setAvatarSaving(false);
-                }
-              }}
-              label={avatarSaving ? 'Saving Profile Photo...' : 'Owner Profile Photo (/users/{uid}/profile/...)'}
-            />
+        {!isReadOnly && (
+          <div className="flex flex-col items-start sm:items-end gap-1.5">
+            <button
+              type="button"
+              onClick={handlePasswordReset}
+              className="px-4 py-2 border border-slate-300 rounded-xl font-semibold hover:bg-slate-50"
+            >
+              Send Password Reset Email
+            </button>
+            {resetSent && (
+              <span className="text-emerald-700 font-semibold">Reset instructions emailed!</span>
+            )}
           </div>
         )}
       </div>

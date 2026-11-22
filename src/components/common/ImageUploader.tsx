@@ -15,11 +15,9 @@ import {
   uploadShopImage,
   uploadPlatformSubscriptionProof,
   uploadPlatformLogo,
-  uploadUserProfileAvatar,
   deleteStorageImageByUrl,
   StorageFolder,
 } from '../../services/storageService';
-import { auth } from '../../firebase/config';
 import { SafeImage } from './SafeImage';
 
 interface ImageUploaderProps {
@@ -80,8 +78,6 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
             ? await uploadPlatformLogo(filesToUpload[i], progressCb)
             : folder === 'platform_subscription'
             ? await uploadPlatformSubscriptionProof(shopId, filesToUpload[i], progressCb)
-            : folder === 'profile'
-            ? await uploadUserProfileAvatar(subPath || auth.currentUser?.uid || '', filesToUpload[i], progressCb)
             : await uploadShopImage(filesToUpload[i], {
                 shopId,
                 folder,
@@ -151,15 +147,9 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     setRemovingIdx(idx);
     setError(null);
     try {
-      const deletedFromCloud = await deleteStorageImageByUrl(target, shopId);
+      await deleteStorageImageByUrl(target, shopId);
       onChange(images.filter((_, i) => i !== idx));
-      setStatusNotice(
-        target?.includes('firebasestorage.googleapis.com') && !deletedFromCloud
-          ? 'Image unlinked from form (cloud file retained or already deleted).'
-          : null
-      );
-    } catch (err: any) {
-      setError(err?.message || 'Could not remove image.');
+      setStatusNotice(null);
     } finally {
       setRemovingIdx(null);
     }
