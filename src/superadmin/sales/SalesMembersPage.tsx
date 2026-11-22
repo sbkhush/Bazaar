@@ -38,6 +38,7 @@ import {
 export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ defaultCreateOpen = false }) => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [members, setMembers] = useState<SalesMember[]>([]);
   const [teams, setTeams] = useState<SalesTeam[]>([]);
   const [settings, setSettings] = useState<SalesSettings | null>(null);
@@ -77,36 +78,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
   const [bankName, setBankName] = useState('');
   const [sendResetInvite, setSendResetInvite] = useState(true);
 
-  useEffect(() => {
-    setModalOpen(defaultCreateOpen);
-    if (defaultCreateOpen) {
-      setEditingMember(null);
-    }
-  }, [defaultCreateOpen]);
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [m, t, s] = await Promise.all([
-        getAllSalesMembers().catch(() => []),
-        getAllSalesTeams().catch(() => []),
-        getSalesSettings(),
-      ]);
-      setMembers(m);
-      setTeams(t);
-      setSettings(s);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const managers = useMemo(() => members.filter((m) => m.role === 'sales_manager'), [members]);
-
-  const openCreateModal = () => {
+  const resetCreateFields = (defaultPlanId?: string) => {
     setEditingMember(null);
     setFullName('');
     setEmail('');
@@ -122,7 +94,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
     setEmploymentStatus('full_time');
     setMonthlyTarget('50000');
     setYearlyTarget('600000');
-    setCommissionPlanId(settings?.commissionPlans[0]?.id || 'tier-standard');
+    setCommissionPlanId(defaultPlanId || settings?.commissionPlans[0]?.id || 'tier-standard');
     setAccountStatus('invited');
     setPreferredMethod('bank_transfer');
     setAccountTitle('');
@@ -130,6 +102,44 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
     setBankName('');
     setSendResetInvite(true);
     setFormError(null);
+  };
+
+  useEffect(() => {
+    setModalOpen(defaultCreateOpen);
+    if (defaultCreateOpen) {
+      resetCreateFields();
+    }
+  }, [defaultCreateOpen]);
+
+  const loadData = async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [m, t, s] = await Promise.all([
+        getAllSalesMembers(),
+        getAllSalesTeams().catch(() => []),
+        getSalesSettings(),
+      ]);
+      setMembers(m);
+      setTeams(t);
+      setSettings(s);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to load sales directory from Firestore.';
+      setLoadError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const managers = useMemo(() => members.filter((m) => m.role === 'sales_manager'), [members]);
+
+  const openCreateModal = () => {
+    resetCreateFields();
     setModalOpen(true);
   };
 
@@ -411,6 +421,17 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
         {loading ? (
           <div className="p-10 flex justify-center">
             <Loader2 className="w-6 h-6 animate-spin text-[#065F46]" />
+          </div>
+        ) : loadError ? (
+          <div className="p-10 text-center space-y-3">
+            <p className="text-sm font-bold text-rose-700">{loadError}</p>
+            <button
+              type="button"
+              onClick={loadData}
+              className="px-4 py-2 rounded-xl bg-[#065F46] text-white text-xs font-bold hover:bg-emerald-900"
+            >
+              Retry Loading Directory
+            </button>
           </div>
         ) : paginated.length === 0 ? (
           <div className="p-10 text-center space-y-2">

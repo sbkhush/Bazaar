@@ -21,7 +21,9 @@ service cloud.firestore {
       return isSignedIn() && (
         request.auth.token.super_admin == true ||
         isSuperAdminEmail() ||
-        exists(/databases/$(database)/documents/platform_admins/$(request.auth.uid))
+        exists(/databases/$(database)/documents/platform_admins/$(request.auth.uid)) ||
+        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'super_admin')
       );
     }
 

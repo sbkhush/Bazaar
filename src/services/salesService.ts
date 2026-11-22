@@ -13,8 +13,9 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { auth, db } from '../firebase/config';
+import { deleteApp, getApp, getApps, initializeApp } from 'firebase/app';
+import { createUserWithEmailAndPassword, getAuth, sendPasswordResetEmail } from 'firebase/auth';
+import app, { auth, db } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
 import {
   BillingCycle,
@@ -210,10 +211,12 @@ async function trySalesApi<T>(path: string, method: 'GET' | 'POST' = 'POST', bod
     }
     return json as T;
   } catch (err: any) {
-    // Fallback to Firestore client transactions when running on static GitHub Pages without Express API
+    const errMsg = String(err?.message || '');
     if (
-      err?.message?.includes('Failed to fetch') ||
-      err?.message?.includes('Unexpected token') ||
+      errMsg.includes('Failed to fetch') ||
+      errMsg.includes('Load failed') ||
+      errMsg.includes('NetworkError') ||
+      errMsg.includes('Unexpected token') ||
       err?.name === 'TypeError'
     ) {
       return null;
@@ -487,9 +490,16 @@ export async function createSalesMember(input: {
   if (!isAllowedSalesRole(input.role)) {
     throw new Error('Security Policy Violation: sales team accounts cannot hold super_admin or invalid roles.');
   }
+  const cleanFullName = input.fullName.trim();
+  if (cleanFullName.length < 2) {
+    throw new Error('Full name is required (at least 2 characters).');
+  }
   const cleanEmail = input.email.trim().toLowerCase();
   if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
     throw new Error('A valid corporate or personal email address is required.');
+  }
+  if (cleanEmail === 'hasanaamir815@gmail.com') {
+    throw new Error('Security Policy Violation: the Super Admin account cannot be registered as a sales member.');
   }
   const cleanPhone = input.phone.trim();
   const normalizedPhone = normalizePhoneForMatch(cleanPhone);
@@ -524,16 +534,43 @@ export async function createSalesMember(input: {
   const id = `sm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const employeeId = generateEmployeeId(existing);
   const referralCode = generateUniqueReferralCode(
-    input.fullName,
+    cleanFullName,
     existing.map((m) => m.referralCode)
   );
   const referralLink = buildReferralLink(referralCode, settings.portalBaseUrl);
   const now = new Date().toISOString();
 
+  let provisionedUid: string | undefined;
+  let secondaryUser: import('firebase/auth').User | null = null;
+  let secondaryAppRef: import('firebase/app').FirebaseApp | null = null;
+  let resetEmailSent = false;
+  let resetEmailWarning: string | undefined;
+
+  if (input.sendPasswordResetInvite) {
+    try {
+      const secondaryName = 'sbk-sales-provision';
+      secondaryAppRef = getApps().some((a) => a.name === secondaryName)
+        ? getApp(secondaryName)
+        : initializeApp(app.options, secondaryName);
+      const secondaryAuth = getAuth(secondaryAppRef);
+      const rnd = new Uint8Array(24);
+      crypto.getRandomValues(rnd);
+      const ephemeralSecret = Array.from(rnd, (b) => b.toString(16).padStart(2, '0')).join('');
+      const cred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, ephemeralSecret);
+      secondaryUser = cred.user;
+      provisionedUid = cred.user.uid;
+    } catch (authErr: any) {
+      if (authErr?.code !== 'auth/email-already-in-use') {
+        resetEmailWarning = authErr?.message || 'Could not pre-create Auth user; use Mail icon later.';
+      }
+    }
+  }
+
   const member = stripUndef<SalesMember>({
     id,
+    uid: provisionedUid,
     employeeId,
-    fullName: input.fullName.trim(),
+    fullName: cleanFullName,
     email: cleanEmail,
     phone: cleanPhone,
     city: input.city.trim(),
@@ -586,8 +623,6 @@ export async function createSalesMember(input: {
       details: `Created ${member.fullName} (${member.employeeId}, ${member.role}) · Referral Code: ${member.referralCode}`,
     });
 
-    let resetEmailSent = false;
-    let resetEmailWarning: string | undefined;
     if (input.sendPasswordResetInvite) {
       try {
         await sendPasswordResetEmail(auth, cleanEmail);
@@ -603,7 +638,14 @@ export async function createSalesMember(input: {
       _resetEmailWarning: resetEmailWarning,
     };
   } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `salesMembers/${id}`);
+    if (secondaryUser) {
+      await secondaryUser.delete().catch(() => {});
+    }
+    return handleFirestoreError(err, OperationType.CREATE, `salesMembers/${id}`);
+  } finally {
+    if (secondaryAppRef) {
+      await deleteApp(secondaryAppRef).catch(() => {});
+    }
   }
 }
 
@@ -667,12 +709,19 @@ export async function updateSalesMember(memberId: string, patch: Partial<SalesMe
 }
 
 export async function sendSalesmanPortalReset(email: string, memberId: string): Promise<void> {
-  await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+  const cleanEmail = email.trim().toLowerCase();
+  const apiRes = await trySalesApi<{ ok: boolean }>('/api/super-admin/sales/invite', 'POST', {
+    memberId,
+    email: cleanEmail,
+  });
+  if (apiRes?.ok) return;
+
+  await sendPasswordResetEmail(auth, cleanEmail);
   await logSalesAudit({
     action: 'Sent Portal Access Reset',
     entityType: 'sales_member',
     entityId: memberId,
-    details: `Triggered Firebase Authentication password reset/invite email to ${email}`,
+    details: `Triggered Firebase Authentication password reset/invite email to ${cleanEmail}`,
   });
 }
 

@@ -9,19 +9,23 @@ import firebaseConfig from './firebase-applet-config.json';
 import { db } from './src/firebase/config';
 import {
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
-  increment,
   query,
-  runTransaction,
   setDoc,
   setLogLevel,
-  updateDoc,
   where,
   writeBatch,
 } from 'firebase/firestore';
+import {
+  restCommitWrites,
+  restGetDoc,
+  restGetDocWithMeta,
+  restListCollection,
+  restQueryWhereEqual,
+  restSetDoc,
+} from './src/utils/firestoreRestServer';
 
 dotenv.config();
 setLogLevel('error');
@@ -96,6 +100,7 @@ interface VerifiedFirebaseUser {
   uid: string;
   email: string;
   emailVerified: boolean;
+  idToken: string;
 }
 
 async function verifyFirebaseIdToken(bearerHeader?: string): Promise<VerifiedFirebaseUser | null> {
@@ -122,6 +127,7 @@ async function verifyFirebaseIdToken(bearerHeader?: string): Promise<VerifiedFir
       uid: user.localId,
       email: String(user.email || '').toLowerCase(),
       emailVerified: Boolean(user.emailVerified),
+      idToken,
     };
   } catch {
     return null;
@@ -130,8 +136,10 @@ async function verifyFirebaseIdToken(bearerHeader?: string): Promise<VerifiedFir
 
 async function isAuthorizedSuperAdmin(user: VerifiedFirebaseUser): Promise<boolean> {
   if (user.email === SUPER_ADMIN_EMAIL && user.emailVerified) return true;
-  const adminSnap = await getDoc(doc(db, 'platform_admins', user.uid)).catch(() => null);
-  return Boolean(adminSnap && adminSnap.exists() && adminSnap.data()?.active !== false);
+  const adminDoc = await restGetDoc(['platform_admins', user.uid], user.idToken).catch(() => null);
+  if (adminDoc && adminDoc.active !== false) return true;
+  const legacyDoc = await restGetDoc(['admins', user.uid], user.idToken).catch(() => null);
+  return Boolean(legacyDoc && legacyDoc.role === 'super_admin');
 }
 
 interface TrustedSalesMemberDoc {
@@ -151,22 +159,18 @@ interface TrustedSalesMemberDoc {
 const ALLOWED_SERVER_SALES_ROLES = ['salesman', 'senior_salesman', 'sales_manager', 'referral_agent'];
 
 async function resolveTrustedSalesMember(user: VerifiedFirebaseUser): Promise<TrustedSalesMemberDoc | null> {
-  const byUid = await getDocs(query(collection(db, 'salesMembers'), where('uid', '==', user.uid))).catch(() => null);
-  if (byUid && !byUid.empty) {
-    const d = byUid.docs[0];
-    const data = d.data() as any;
-    if (ALLOWED_SERVER_SALES_ROLES.includes(data.role)) {
-      return { ...data, id: d.id };
-    }
+  const byUid = await restQueryWhereEqual<TrustedSalesMemberDoc>('salesMembers', 'uid', user.uid, user.idToken, {
+    limitCount: 1,
+  }).catch(() => []);
+  if (byUid.length > 0 && ALLOWED_SERVER_SALES_ROLES.includes(byUid[0].role)) {
+    return byUid[0];
   }
   if (user.email && user.emailVerified) {
-    const byEmail = await getDocs(query(collection(db, 'salesMembers'), where('email', '==', user.email))).catch(() => null);
-    if (byEmail && !byEmail.empty) {
-      const d = byEmail.docs[0];
-      const data = d.data() as any;
-      if (ALLOWED_SERVER_SALES_ROLES.includes(data.role)) {
-        return { ...data, id: d.id };
-      }
+    const byEmail = await restQueryWhereEqual<TrustedSalesMemberDoc>('salesMembers', 'email', user.email, user.idToken, {
+      limitCount: 1,
+    }).catch(() => []);
+    if (byEmail.length > 0 && ALLOWED_SERVER_SALES_ROLES.includes(byEmail[0].role)) {
+      return byEmail[0];
     }
   }
   return null;
@@ -189,12 +193,14 @@ async function resolveTrustedServerRole(user: VerifiedFirebaseUser): Promise<{
       return { role: 'salesman', salesMember: member };
     }
   }
-  const ownedSnap = await getDocs(query(collection(db, 'shops'), where('ownerId', '==', user.uid))).catch(() => null);
-  if (ownedSnap && !ownedSnap.empty) {
+  const ownedShops = await restQueryWhereEqual('shops', 'ownerId', user.uid, user.idToken, {
+    limitCount: 1,
+  }).catch(() => []);
+  if (ownedShops.length > 0) {
     return { role: 'merchant', salesMember: null };
   }
-  const memSnap = await getDocs(collection(db, 'users', user.uid, 'shopMemberships')).catch(() => null);
-  if (memSnap && !memSnap.empty) {
+  const memberships = await restListCollection(['users', user.uid, 'shopMemberships'], user.idToken).catch(() => []);
+  if (memberships.length > 0) {
     return { role: 'merchant', salesMember: null };
   }
   return { role: 'customer', salesMember: null };
@@ -202,12 +208,12 @@ async function resolveTrustedServerRole(user: VerifiedFirebaseUser): Promise<{
 
 async function isAuthorizedShopMember(user: VerifiedFirebaseUser, shopId: string): Promise<boolean> {
   if (await isAuthorizedSuperAdmin(user)) return true;
-  const [shopSnap, staffSnap] = await Promise.all([
-    getDoc(doc(db, 'shops', shopId)).catch(() => null),
-    getDoc(doc(db, 'shops', shopId, 'staff', user.uid)).catch(() => null),
+  const [shopDoc, staffDoc] = await Promise.all([
+    restGetDoc(['shops', shopId], user.idToken).catch(() => null),
+    restGetDoc(['shops', shopId, 'staff', user.uid], user.idToken).catch(() => null),
   ]);
-  if (shopSnap?.exists() && shopSnap.data()?.ownerId === user.uid) return true;
-  if (staffSnap?.exists() && staffSnap.data()?.status === 'active') return true;
+  if (shopDoc?.ownerId === user.uid) return true;
+  if (staffDoc?.status === 'active') return true;
   return false;
 }
 
@@ -410,11 +416,10 @@ Format cleanly in markdown with:
       }
 
       if (scope === 'platform') {
-        const snap = await getDoc(doc(db, 'platform_payment_receipts', receiptId));
-        if (!snap.exists()) {
+        const data = await restGetDoc(['platform_payment_receipts', receiptId], verifiedUser.idToken);
+        if (!data) {
           return res.status(404).json({ error: 'Subscription receipt not found.' });
         }
-        const data = snap.data();
         const isSuper = await isAuthorizedSuperAdmin(verifiedUser);
         if (!isSuper && data.ownerId !== verifiedUser.uid) {
           return res.status(403).json({ error: 'Forbidden: you do not have access to this receipt.' });
@@ -427,11 +432,10 @@ Format cleanly in markdown with:
       }
 
       const shopId = sanitizeShopId(req.query.shopId);
-      const snap = await getDoc(doc(db, 'shops', shopId, 'payment_receipts', receiptId));
-      if (!snap.exists()) {
+      const data = await restGetDoc(['shops', shopId, 'payment_receipts', receiptId], verifiedUser.idToken);
+      if (!data) {
         return res.status(404).json({ error: 'Order receipt not found.' });
       }
-      const data = snap.data();
       const authorizedMember = await isAuthorizedShopMember(verifiedUser, shopId);
       if (!authorizedMember && data.uploaderUid !== verifiedUser.uid) {
         return res.status(403).json({ error: 'Forbidden: tenant staff/owner permission required.' });
@@ -803,21 +807,30 @@ Format cleanly in markdown with:
         return res.status(400).json({ error: 'Valid referralCode is required.' });
       }
 
-      const idxRef = doc(db, 'salesReferralIndex', code);
-      const idxSnap = await getDoc(idxRef);
-      let owner: any = idxSnap.exists() ? idxSnap.data() : null;
+      const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+      let owner: Record<string, any> | null = await restGetDoc<Record<string, any>>(
+        ['salesReferralIndex', code],
+        verifiedUser?.idToken
+      ).catch(() => null);
 
-      if (!owner) {
-        const mSnap = await getDocs(query(collection(db, 'salesMembers'), where('referralCode', '==', code)));
-        if (!mSnap.empty) {
-          const m = mSnap.docs[0].data();
+      if (!owner && verifiedUser && (await isAuthorizedSuperAdmin(verifiedUser))) {
+        const matches = await restQueryWhereEqual<Record<string, any>>(
+          'salesMembers',
+          'referralCode',
+          code,
+          verifiedUser.idToken,
+          { limitCount: 1 }
+        ).catch(() => []);
+        if (matches.length > 0) {
+          const m = matches[0];
           owner = {
+            id: code,
             referralCode: code,
-            salesmanId: mSnap.docs[0].id,
+            salesmanId: m.id,
             salesmanUid: m.uid || null,
             salesmanName: m.fullName,
             accountStatus: m.accountStatus,
-            qrScanCount: m.qrScanCount || 0,
+            qrScanCount: Number(m.qrScanCount || 0),
           };
         }
       }
@@ -828,24 +841,41 @@ Format cleanly in markdown with:
 
       const now = new Date().toISOString();
       const evtId = `qr_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'salesQrEvents', evtId), {
-        id: evtId,
-        salesmanId: owner.salesmanId,
-        referralCode: code,
-        source,
-        createdAt: now,
-      });
-      batch.set(
-        idxRef,
-        { ...owner, qrScanCount: increment(1), updatedAt: now },
-        { merge: true }
-      );
-      batch.update(doc(db, 'salesMembers', owner.salesmanId), {
-        qrScanCount: increment(1),
-        updatedAt: now,
-      });
-      await batch.commit().catch(() => {});
+      // Public salesQrEvents create rule permits unauthenticated scan logging on its own
+      await restSetDoc(
+        ['salesQrEvents', evtId],
+        {
+          id: evtId,
+          salesmanId: owner.salesmanId,
+          referralCode: code,
+          source,
+          createdAt: now,
+        },
+        verifiedUser?.idToken
+      ).catch(() => {});
+
+      // Best-effort counter update only when caller is Super Admin or owns the referral code
+      if (verifiedUser && owner.salesmanId) {
+        const canUpdateCounter =
+          owner.salesmanUid === verifiedUser.uid || (await isAuthorizedSuperAdmin(verifiedUser));
+        if (canUpdateCounter) {
+          const nextCount = (Number(owner.qrScanCount) || 0) + 1;
+          await restSetDoc(
+            ['salesReferralIndex', code],
+            {
+              referralCode: code,
+              salesmanId: owner.salesmanId,
+              salesmanUid: owner.salesmanUid || null,
+              salesmanName: owner.salesmanName,
+              accountStatus: owner.accountStatus,
+              qrScanCount: nextCount,
+              updatedAt: now,
+            },
+            verifiedUser.idToken,
+            true
+          ).catch(() => {});
+        }
+      }
 
       return res.json({ ok: true, owner });
     } catch (err: any) {
@@ -863,45 +893,71 @@ Format cleanly in markdown with:
       const code = String(req.body?.referralCode || '').trim().toUpperCase();
       const shopId = sanitizeShopId(req.body?.shopId);
       const ownerId = String(req.body?.ownerId || '').trim();
+      if (!code || !/^[A-Z0-9-]{4,40}$/.test(code)) {
+        return res.json({ ok: false, attribution: null });
+      }
       const isSuper = await isAuthorizedSuperAdmin(verifiedUser);
       if (!isSuper && verifiedUser.uid !== ownerId) {
         return res.status(403).json({ error: 'Forbidden: owner identity mismatch.' });
       }
 
-      const mSnap = await getDocs(query(collection(db, 'salesMembers'), where('referralCode', '==', code)));
-      if (mSnap.empty) {
-        return res.json({ ok: false, attribution: null });
+      const idxOwner = await restGetDoc<Record<string, any>>(['salesReferralIndex', code], verifiedUser.idToken).catch(
+        () => null
+      );
+      let salesmanInfo: Record<string, any> | null = idxOwner
+        ? {
+            id: idxOwner.salesmanId,
+            uid: idxOwner.salesmanUid || undefined,
+            fullName: idxOwner.salesmanName,
+            accountStatus: idxOwner.accountStatus,
+          }
+        : null;
+
+      if (isSuper) {
+        const directMembers = await restQueryWhereEqual<Record<string, any>>(
+          'salesMembers',
+          'referralCode',
+          code,
+          verifiedUser.idToken,
+          { limitCount: 1 }
+        ).catch(() => []);
+        if (directMembers.length > 0) {
+          salesmanInfo = directMembers[0];
+        }
       }
-      const memberDoc = mSnap.docs[0];
-      const salesman = memberDoc.data();
-      if (salesman.accountStatus !== 'active') {
+
+      if (!salesmanInfo || salesmanInfo.accountStatus !== 'active') {
         return res.json({ ok: false, attribution: null });
       }
 
-      const attrRef = doc(db, 'referralAttributions', shopId);
-      const existingSnap = await getDoc(attrRef);
-      if (existingSnap.exists()) {
-        return res.json({ ok: true, attribution: existingSnap.data() });
+      let preventSelf = true;
+      if (isSuper) {
+        const settings = await restGetDoc<Record<string, any>>(['salesSettings', 'general'], verifiedUser.idToken).catch(
+          () => null
+        );
+        preventSelf = settings ? settings.preventSelfReferral !== false : true;
       }
 
-      const settingsSnap = await getDoc(doc(db, 'salesSettings', 'general'));
-      const preventSelf = settingsSnap.exists() ? settingsSnap.data()?.preventSelfReferral !== false : true;
       const ownerEmail = String(req.body?.ownerEmail || verifiedUser.email || '').trim().toLowerCase();
       const ownerPhone = String(req.body?.ownerPhone || '').trim();
 
       const isSelfReferral =
         preventSelf &&
-        (Boolean(salesman.uid && salesman.uid === ownerId) ||
-          String(salesman.email || '').toLowerCase() === ownerEmail ||
-          (ownerPhone && normalizePhoneDigits(salesman.phone) === normalizePhoneDigits(ownerPhone)));
+        (Boolean(salesmanInfo.uid && salesmanInfo.uid === ownerId) ||
+          Boolean(salesmanInfo.email && String(salesmanInfo.email).toLowerCase() === ownerEmail) ||
+          Boolean(
+            ownerPhone &&
+              salesmanInfo.phone &&
+              normalizePhoneDigits(salesmanInfo.phone) === normalizePhoneDigits(ownerPhone)
+          ));
 
       const now = new Date().toISOString();
       const payload = stripUndefined({
         id: shopId,
         referralCode: code,
-        salesmanId: memberDoc.id,
-        salesmanUid: salesman.uid,
-        salesmanName: salesman.fullName,
+        salesmanId: salesmanInfo.id,
+        salesmanUid: salesmanInfo.uid,
+        salesmanName: salesmanInfo.fullName,
         shopId,
         shopSlug: String(req.body?.shopSlug || shopId),
         shopName: String(req.body?.shopName || shopId),
@@ -918,40 +974,63 @@ Format cleanly in markdown with:
         updatedAt: now,
       });
 
-      await setDoc(attrRef, payload);
-
-      if (payload.leadId && !isSelfReferral) {
-        await updateDoc(doc(db, 'salesLeads', payload.leadId), {
-          status: 'Converted',
-          convertedShopId: shopId,
-          convertedShopSlug: payload.shopSlug,
-          updatedAt: now,
-        }).catch(() => {});
+      try {
+        await restCommitWrites(
+          [{ type: 'create', pathSegments: ['referralAttributions', shopId], data: payload }],
+          verifiedUser.idToken
+        );
+      } catch (createErr: any) {
+        if (createErr?.status === 409) {
+          const existing = await restGetDoc(['referralAttributions', shopId], verifiedUser.idToken).catch(() => null);
+          return res.json({ ok: true, attribution: existing });
+        }
+        throw createErr;
       }
 
-      const notifId = `sntf_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-      await setDoc(
-        doc(db, 'salesNotifications', notifId),
-        stripUndefined({
-          id: notifId,
-          recipientSalesmanId: memberDoc.id,
-          recipientUid: salesman.uid,
-          type: isSelfReferral ? 'commission_rejected' : 'shop_registered',
-          title: isSelfReferral
-            ? `Self-Referral Blocked: ${payload.shopName}`
-            : `Referred Shop Registered: ${payload.shopName}`,
-          message: isSelfReferral
-            ? `Registration matched your own identity and is ineligible for commission.`
-            : `${payload.shopName} registered using code ${code}.`,
-          link: salesman.role === 'referral_agent' ? '/referral/referrals' : '/salesman/referrals',
-          isRead: false,
-          createdAt: now,
-        })
-      ).catch(() => {});
+      if (payload.leadId && !isSelfReferral && isSuper) {
+        await restCommitWrites(
+          [
+            {
+              type: 'update',
+              pathSegments: ['salesLeads', payload.leadId],
+              data: {
+                status: 'Converted',
+                convertedShopId: shopId,
+                convertedShopSlug: payload.shopSlug,
+                updatedAt: now,
+              },
+            },
+          ],
+          verifiedUser.idToken
+        ).catch(() => {});
+      }
+
+      if (isSuper) {
+        const notifId = `sntf_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+        await restSetDoc(
+          ['salesNotifications', notifId],
+          stripUndefined({
+            id: notifId,
+            recipientSalesmanId: salesmanInfo.id,
+            recipientUid: salesmanInfo.uid,
+            type: isSelfReferral ? 'commission_rejected' : 'shop_registered',
+            title: isSelfReferral
+              ? `Self-Referral Blocked: ${payload.shopName}`
+              : `Referred Shop Registered: ${payload.shopName}`,
+            message: isSelfReferral
+              ? 'Registration matched your own identity and is ineligible for commission.'
+              : `${payload.shopName} registered using code ${code}.`,
+            link: salesmanInfo.role === 'referral_agent' ? '/referral/referrals' : '/salesman/referrals',
+            isRead: false,
+            createdAt: now,
+          }),
+          verifiedUser.idToken
+        ).catch(() => {});
+      }
 
       const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-      await setDoc(
-        doc(db, 'salesAuditLogs', slogId),
+      await restSetDoc(
+        ['salesAuditLogs', slogId],
         {
           id: slogId,
           actorUid: verifiedUser.uid,
@@ -960,14 +1039,15 @@ Format cleanly in markdown with:
           action: isSelfReferral ? 'Blocked Self-Referral' : 'Recorded Referral Attribution',
           entityType: 'referral',
           entityId: shopId,
-          details: `${payload.shopName} -> ${salesman.fullName} (${code}) · ${payload.attributionStatus}`,
+          details: `${payload.shopName} -> ${salesmanInfo.fullName} (${code}) · ${payload.attributionStatus}`,
           createdAt: now,
-        }
+        },
+        verifiedUser.idToken
       ).catch(() => {});
 
       return res.status(201).json({ ok: true, attribution: payload });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Failed to record attribution.' });
+      return res.status(err?.status || 500).json({ error: err?.message || 'Failed to record attribution.' });
     }
   });
 
@@ -981,36 +1061,38 @@ Format cleanly in markdown with:
       const paymentId = sanitizeDocId(req.body?.paymentId);
       if (!paymentId) return res.status(400).json({ error: 'Valid paymentId is required.' });
 
-      const paySnap = await getDoc(doc(db, 'platform_payments', paymentId));
-      if (!paySnap.exists()) return res.status(404).json({ error: 'Payment not found.' });
-      const payment = paySnap.data();
+      const payment = await restGetDoc<Record<string, any>>(['platform_payments', paymentId], verifiedUser.idToken);
+      if (!payment) return res.status(404).json({ error: 'Payment not found.' });
       if (payment.status !== 'approved' || Number(payment.amount) <= 0) {
         return res.json({ entry: null });
       }
 
-      const attrSnap = await getDoc(doc(db, 'referralAttributions', payment.shopId));
-      if (!attrSnap.exists()) return res.json({ entry: null });
-      const attr = attrSnap.data();
+      const attrMeta = await restGetDocWithMeta<Record<string, any>>(
+        ['referralAttributions', String(payment.shopId)],
+        verifiedUser.idToken
+      );
+      if (!attrMeta) return res.json({ entry: null });
+      const attr = attrMeta.data;
       if (attr.attributionStatus === 'rejected_self_referral' || attr.attributionStatus === 'duplicate_blocked') {
         return res.json({ entry: null });
       }
 
       const ledgerId = `comm_${paymentId}`;
-      const existingSnap = await getDoc(doc(db, 'commissionLedger', ledgerId));
-      if (existingSnap.exists()) {
-        return res.json({ entry: { ...existingSnap.data(), id: ledgerId } });
+      const existing = await restGetDoc(['commissionLedger', ledgerId], verifiedUser.idToken);
+      if (existing) {
+        return res.json({ entry: { ...existing, id: ledgerId } });
       }
 
-      const [memberSnap, settingsSnap] = await Promise.all([
-        getDoc(doc(db, 'salesMembers', attr.salesmanId)),
-        getDoc(doc(db, 'salesSettings', 'general')),
+      const [member, settings] = await Promise.all([
+        restGetDoc<Record<string, any>>(['salesMembers', String(attr.salesmanId)], verifiedUser.idToken),
+        restGetDoc<Record<string, any>>(['salesSettings', 'general'], verifiedUser.idToken).catch(() => null),
       ]);
-      if (!memberSnap.exists()) return res.json({ entry: null });
-      const member = memberSnap.data();
-      const settings = settingsSnap.exists() ? settingsSnap.data() : {};
-      const plans: any[] = Array.isArray(settings.commissionPlans) && settings.commissionPlans.length > 0
-        ? settings.commissionPlans
-        : [{ id: 'tier-standard', firstSubRatePct: 15, renewalRatePct: 5, verifiedShopBonus: 300, yearlyPlanBonusPct: 3 }];
+      if (!member) return res.json({ entry: null });
+
+      const plans: any[] =
+        Array.isArray(settings?.commissionPlans) && settings.commissionPlans.length > 0
+          ? settings.commissionPlans
+          : [{ id: 'tier-standard', firstSubRatePct: 15, renewalRatePct: 5, verifiedShopBonus: 300, yearlyPlanBonusPct: 3 }];
       const tier = plans.find((t) => t.id === member.commissionPlanId) || plans[0];
 
       const isRenewal = Boolean(attr.firstPaymentId && attr.firstPaymentId !== paymentId);
@@ -1029,7 +1111,7 @@ Format cleanly in markdown with:
         shopId: payment.shopId,
         shopName: payment.shopName,
         paymentId,
-        attributionId: attrSnap.id,
+        attributionId: attr.id,
         planId: payment.planId,
         planName: payment.planName,
         billingCycle: payment.billingCycle,
@@ -1043,21 +1125,27 @@ Format cleanly in markdown with:
         updatedAt: now,
       });
 
-      await runTransaction(db, async (tx) => {
-        const check = await tx.get(doc(db, 'commissionLedger', ledgerId));
-        if (check.exists()) return;
-        tx.set(doc(db, 'commissionLedger', ledgerId), entry);
-        tx.update(doc(db, 'referralAttributions', attrSnap.id), {
-          attributionStatus: 'subscribed',
-          firstPaymentId: attr.firstPaymentId || paymentId,
-          totalRevenueGenerated: Number(attr.totalRevenueGenerated || 0) + Number(payment.amount),
-          updatedAt: now,
-        });
-      });
+      await restCommitWrites(
+        [
+          { type: 'create', pathSegments: ['commissionLedger', ledgerId], data: entry },
+          {
+            type: 'update',
+            pathSegments: ['referralAttributions', attr.id],
+            data: {
+              attributionStatus: 'subscribed',
+              firstPaymentId: attr.firstPaymentId || paymentId,
+              totalRevenueGenerated: Number(attr.totalRevenueGenerated || 0) + Number(payment.amount),
+              updatedAt: now,
+            },
+            expectedUpdateTime: attrMeta.updateTime,
+          },
+        ],
+        verifiedUser.idToken
+      );
 
       return res.status(201).json({ entry });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Commission sync failed.' });
+      return res.status(err?.status || 500).json({ error: err?.message || 'Commission sync failed.' });
     }
   });
 
@@ -1075,55 +1163,70 @@ Format cleanly in markdown with:
         return res.status(400).json({ error: 'Valid commissionId and decision required.' });
       }
 
+      const commMeta = await restGetDocWithMeta<Record<string, any>>(
+        ['commissionLedger', commissionId],
+        verifiedUser.idToken
+      );
+      if (!commMeta) return res.status(404).json({ error: 'Commission entry not found.' });
+      const cur = commMeta.data;
+
+      if (decision === 'approved' && cur.status !== 'pending') {
+        return res.status(400).json({ error: `Only pending commissions can be approved (current: ${cur.status}).` });
+      }
+      if (decision === 'rejected' && cur.status !== 'pending') {
+        return res.status(400).json({ error: `Only pending commissions can be rejected (current: ${cur.status}).` });
+      }
+      if (decision === 'reversed' && !['pending', 'approved', 'paid'].includes(cur.status)) {
+        return res.status(400).json({ error: `Commission already ${cur.status}.` });
+      }
+
       const now = new Date().toISOString();
-      await runTransaction(db, async (tx) => {
-        const ref = doc(db, 'commissionLedger', commissionId);
-        const snap = await tx.get(ref);
-        if (!snap.exists()) throw new Error('Commission entry not found.');
-        const cur = snap.data();
+      const patch: Record<string, any> = { status: decision, updatedAt: now };
+      if (decision === 'approved') {
+        patch.approvedBy = verifiedUser.email;
+        patch.approvedAt = now;
+      } else if (decision === 'rejected') {
+        patch.rejectionReason = reason || 'Rejected by Super Admin.';
+        patch.approvedBy = verifiedUser.email;
+        patch.approvedAt = now;
+      } else if (decision === 'reversed') {
+        patch.reversalReason = reason || 'Reversed due to refund/chargeback.';
+        patch.reversedBy = verifiedUser.email;
+        patch.reversedAt = now;
+      }
 
-        if (decision === 'approved' && cur.status !== 'pending') {
-          throw new Error(`Only pending commissions can be approved (current: ${cur.status}).`);
-        }
-        if (decision === 'rejected' && cur.status !== 'pending') {
-          throw new Error(`Only pending commissions can be rejected (current: ${cur.status}).`);
-        }
-        if (decision === 'reversed' && !['pending', 'approved', 'paid'].includes(cur.status)) {
-          throw new Error(`Commission already ${cur.status}.`);
-        }
-
-        const patch: Record<string, any> = { status: decision, updatedAt: now };
-        if (decision === 'approved') {
-          patch.approvedBy = verifiedUser.email;
-          patch.approvedAt = now;
-        } else if (decision === 'rejected') {
-          patch.rejectionReason = reason || 'Rejected by Super Admin.';
-          patch.approvedBy = verifiedUser.email;
-          patch.approvedAt = now;
-        } else if (decision === 'reversed') {
-          patch.reversalReason = reason || 'Reversed due to refund/chargeback.';
-          patch.reversedBy = verifiedUser.email;
-          patch.reversedAt = now;
-        }
-        tx.update(ref, patch);
-      });
+      await restCommitWrites(
+        [
+          {
+            type: 'update',
+            pathSegments: ['commissionLedger', commissionId],
+            data: patch,
+            expectedUpdateTime: commMeta.updateTime,
+          },
+        ],
+        verifiedUser.idToken
+      );
 
       const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-      await setDoc(doc(db, 'salesAuditLogs', slogId), {
-        id: slogId,
-        actorUid: verifiedUser.uid,
-        actorEmail: verifiedUser.email,
-        actorRole: 'super_admin',
-        action: `Commission ${decision}`,
-        entityType: 'commission',
-        entityId: commissionId,
-        details: `${decision.toUpperCase()} commission ${commissionId}${reason ? ` · ${reason}` : ''}`,
-        createdAt: now,
-      }).catch(() => {});
+      await restSetDoc(
+        ['salesAuditLogs', slogId],
+        {
+          id: slogId,
+          actorUid: verifiedUser.uid,
+          actorEmail: verifiedUser.email,
+          actorRole: 'super_admin',
+          action: `Commission ${decision}`,
+          entityType: 'commission',
+          entityId: commissionId,
+          details: `${decision.toUpperCase()} commission ${commissionId}${reason ? ` · ${reason}` : ''}`,
+          createdAt: now,
+        },
+        verifiedUser.idToken
+      ).catch(() => {});
 
       return res.json({ ok: true });
     } catch (err: any) {
-      return res.status(400).json({ error: err?.message || 'Could not update commission.' });
+      return res.status(err?.status || 400).json({ error: err?.message || 'Could not update commission.' });
     }
   });
 
@@ -1149,78 +1252,92 @@ Format cleanly in markdown with:
         return res.status(400).json({ error: 'Incomplete payout settlement details.' });
       }
 
-      const memberSnap = await getDoc(doc(db, 'salesMembers', salesmanId));
-      if (!memberSnap.exists()) return res.status(404).json({ error: 'Salesman not found.' });
-      const member = memberSnap.data();
+      const member = await restGetDoc<Record<string, any>>(['salesMembers', salesmanId], verifiedUser.idToken);
+      if (!member) return res.status(404).json({ error: 'Salesman not found.' });
+
+      const entryMetas = await Promise.all(
+        ledgerEntryIds.map((cid) => restGetDocWithMeta<Record<string, any>>(['commissionLedger', cid], verifiedUser.idToken))
+      );
+
+      let computedTotal = 0;
+      for (let i = 0; i < ledgerEntryIds.length; i++) {
+        const cid = ledgerEntryIds[i];
+        const meta = entryMetas[i];
+        if (!meta) return res.status(404).json({ error: `Commission ${cid} does not exist.` });
+        if (meta.data.salesmanId !== salesmanId) {
+          return res.status(400).json({ error: 'Commission entries must belong to the selected salesman.' });
+        }
+        if (meta.data.status !== 'approved') {
+          return res.status(400).json({
+            error: `Commission ${cid} is ${meta.data.status}; only approved commissions can be paid.`,
+          });
+        }
+        computedTotal += Number(meta.data.commissionAmount || 0);
+      }
 
       const now = new Date().toISOString();
       const payoutId = `pay_sls_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
       const payoutNumber = `PAY-SLS-${Math.floor(100000 + Math.random() * 900000)}`;
-      let computedTotal = 0;
 
-      const payoutPayload = await runTransaction(db, async (tx) => {
-        for (const cid of ledgerEntryIds) {
-          const snap = await tx.get(doc(db, 'commissionLedger', cid));
-          if (!snap.exists()) throw new Error(`Commission ${cid} does not exist.`);
-          const cData = snap.data();
-          if (cData.salesmanId !== salesmanId) {
-            throw new Error('Commission entries must belong to the selected salesman.');
-          }
-          if (cData.status !== 'approved') {
-            throw new Error(`Commission ${cid} is ${cData.status}; only approved commissions can be paid.`);
-          }
-          computedTotal += Number(cData.commissionAmount || 0);
-        }
-
-        const payload = stripUndefined({
-          id: payoutId,
-          payoutNumber,
-          salesmanId,
-          salesmanUid: member.uid,
-          salesmanName: member.fullName,
-          salesmanEmail: member.email,
-          ledgerEntryIds,
-          totalAmount: computedTotal,
-          method,
-          accountTitle,
-          accountNumber,
-          bankName: bankName || undefined,
-          transactionReference,
-          notes: notes || undefined,
-          status: 'processed',
-          processedBy: verifiedUser.email,
-          processedAt: now,
-          createdAt: now,
-        });
-
-        tx.set(doc(db, 'commissionPayouts', payoutId), payload);
-        for (const cid of ledgerEntryIds) {
-          tx.update(doc(db, 'commissionLedger', cid), {
-            status: 'paid',
-            payoutId,
-            paidAt: now,
-            updatedAt: now,
-          });
-        }
-        return payload;
+      const payoutPayload = stripUndefined({
+        id: payoutId,
+        payoutNumber,
+        salesmanId,
+        salesmanUid: member.uid,
+        salesmanName: member.fullName,
+        salesmanEmail: member.email,
+        ledgerEntryIds,
+        totalAmount: computedTotal,
+        method,
+        accountTitle,
+        accountNumber,
+        bankName: bankName || undefined,
+        transactionReference,
+        notes: notes || undefined,
+        status: 'processed',
+        processedBy: verifiedUser.email,
+        processedAt: now,
+        createdAt: now,
       });
 
+      await restCommitWrites(
+        [
+          { type: 'create', pathSegments: ['commissionPayouts', payoutId], data: payoutPayload },
+          ...entryMetas.map((meta, idx) => ({
+            type: 'update' as const,
+            pathSegments: ['commissionLedger', ledgerEntryIds[idx]],
+            data: {
+              status: 'paid',
+              payoutId,
+              paidAt: now,
+              updatedAt: now,
+            },
+            expectedUpdateTime: meta!.updateTime,
+          })),
+        ],
+        verifiedUser.idToken
+      );
+
       const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-      await setDoc(doc(db, 'salesAuditLogs', slogId), {
-        id: slogId,
-        actorUid: verifiedUser.uid,
-        actorEmail: verifiedUser.email,
-        actorRole: 'super_admin',
-        action: 'Recorded Commission Payout',
-        entityType: 'payout',
-        entityId: payoutId,
-        details: `Paid Rs. ${computedTotal} to ${member.fullName} (${payoutNumber}, TID: ${transactionReference})`,
-        createdAt: now,
-      }).catch(() => {});
+      await restSetDoc(
+        ['salesAuditLogs', slogId],
+        {
+          id: slogId,
+          actorUid: verifiedUser.uid,
+          actorEmail: verifiedUser.email,
+          actorRole: 'super_admin',
+          action: 'Recorded Commission Payout',
+          entityType: 'payout',
+          entityId: payoutId,
+          details: `Paid Rs. ${computedTotal} to ${member.fullName} (${payoutNumber}, TID: ${transactionReference})`,
+          createdAt: now,
+        },
+        verifiedUser.idToken
+      ).catch(() => {});
 
       return res.status(201).json({ payout: payoutPayload });
     } catch (err: any) {
-      return res.status(400).json({ error: err?.message || 'Payout failed.' });
+      return res.status(err?.status || 400).json({ error: err?.message || 'Payout failed.' });
     }
   });
 
@@ -1234,47 +1351,55 @@ Format cleanly in markdown with:
       const memberId = sanitizeDocId(req.body?.memberId);
       if (!memberId) return res.status(400).json({ error: 'Valid memberId required.' });
 
-      const [memberSnap, allSnap, settingsSnap] = await Promise.all([
-        getDoc(doc(db, 'salesMembers', memberId)),
-        getDocs(collection(db, 'salesMembers')),
-        getDoc(doc(db, 'salesSettings', 'general')),
+      const [member, allMembers, settings] = await Promise.all([
+        restGetDoc<Record<string, any>>(['salesMembers', memberId], verifiedUser.idToken),
+        restListCollection<Record<string, any>>(['salesMembers'], verifiedUser.idToken),
+        restGetDoc<Record<string, any>>(['salesSettings', 'general'], verifiedUser.idToken).catch(() => null),
       ]);
-      if (!memberSnap.exists()) return res.status(404).json({ error: 'Salesman not found.' });
+      if (!member) return res.status(404).json({ error: 'Salesman not found.' });
 
-      const member = memberSnap.data();
-      const existingCodes = new Set(allSnap.docs.map((d) => String(d.data()?.referralCode || '').toUpperCase()));
+      const existingCodes = new Set(allMembers.map((m) => String(m.referralCode || '').toUpperCase()));
       const cleanName = String(member.fullName || 'REP').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'REP';
       let newCode = `SAL-${cleanName}-${Math.floor(1000 + Math.random() * 9000)}`;
-      while (existingCodes.has(newCode)) {
+      for (let i = 0; i < 20 && existingCodes.has(newCode); i++) {
         newCode = `SAL-${cleanName}-${Math.floor(1000 + Math.random() * 9000)}`;
       }
-      const portalBase = settingsSnap.exists() ? String(settingsSnap.data()?.portalBaseUrl || 'https://sbkhush.com') : 'https://sbkhush.com';
-      const newLink = `${portalBase.replace(/\/+$/, '')}/r/${encodeURIComponent(newCode)}`;
+      const portalBase = String(settings?.portalBaseUrl || 'https://sbkhush.com').replace(/\/+$/, '');
+      const newLink = `${portalBase}/r/${encodeURIComponent(newCode)}`;
       const now = new Date().toISOString();
 
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'salesMembers', memberId), {
-        referralCode: newCode,
-        referralLink: newLink,
-        updatedAt: now,
-      });
-      if (member.referralCode) {
-        batch.delete(doc(db, 'salesReferralIndex', member.referralCode));
+      const ops: Parameters<typeof restCommitWrites>[0] = [
+        {
+          type: 'update',
+          pathSegments: ['salesMembers', memberId],
+          data: {
+            referralCode: newCode,
+            referralLink: newLink,
+            updatedAt: now,
+          },
+        },
+        {
+          type: 'set',
+          pathSegments: ['salesReferralIndex', newCode],
+          data: {
+            referralCode: newCode,
+            salesmanId: memberId,
+            salesmanUid: member.uid || null,
+            salesmanName: member.fullName,
+            accountStatus: member.accountStatus,
+            qrScanCount: member.qrScanCount || 0,
+            updatedAt: now,
+          },
+        },
+      ];
+      if (member.referralCode && member.referralCode !== newCode) {
+        ops.push({ type: 'delete', pathSegments: ['salesReferralIndex', String(member.referralCode)] });
       }
-      batch.set(doc(db, 'salesReferralIndex', newCode), {
-        referralCode: newCode,
-        salesmanId: memberId,
-        salesmanUid: member.uid || null,
-        salesmanName: member.fullName,
-        accountStatus: member.accountStatus,
-        qrScanCount: member.qrScanCount || 0,
-        updatedAt: now,
-      });
-      await batch.commit();
+      await restCommitWrites(ops, verifiedUser.idToken);
 
       return res.json({ referralCode: newCode, referralLink: newLink });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Failed to regenerate referral code.' });
+      return res.status(err?.status || 500).json({ error: err?.message || 'Failed to regenerate referral code.' });
     }
   });
 
@@ -1310,6 +1435,105 @@ Format cleanly in markdown with:
     }
   });
 
+  // Super Admin ONLY: Send or resend Firebase Auth invite/password-setup email (guarantees Auth user exists)
+  app.post('/api/super-admin/sales/invite', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    if (!(await isAuthorizedSuperAdmin(verifiedUser))) {
+      return res.status(403).json({ error: 'Forbidden: Super Admin access required.' });
+    }
+    try {
+      const memberId = req.body?.memberId ? sanitizeDocId(req.body.memberId) : '';
+      let targetEmail = String(req.body?.email || '').trim().toLowerCase();
+      let displayName = 'SB Khush Sales Representative';
+
+      if (memberId) {
+        const member = await restGetDoc<Record<string, any>>(['salesMembers', memberId], verifiedUser.idToken);
+        if (!member) {
+          return res.status(404).json({ error: 'Sales member not found.' });
+        }
+        targetEmail = String(member.email || targetEmail).trim().toLowerCase();
+        displayName = String(member.fullName || displayName);
+      }
+
+      if (!targetEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+        return res.status(400).json({ error: 'A valid email address is required.' });
+      }
+      if (targetEmail === SUPER_ADMIN_EMAIL) {
+        return res.status(403).json({ error: 'Cannot trigger sales portal invites for the Super Admin account.' });
+      }
+      if (!firebaseConfig.apiKey) {
+        return res.status(500).json({ error: 'Firebase Auth API key is not configured.' });
+      }
+
+      let authAccountReady = false;
+      const signUpRes = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: targetEmail,
+            password: crypto.randomBytes(20).toString('hex'),
+            displayName,
+            returnSecureToken: false,
+          }),
+        }
+      );
+      const signUpData = (await signUpRes.json().catch(() => ({}))) as any;
+      if (signUpRes.ok || signUpData?.error?.message === 'EMAIL_EXISTS') {
+        authAccountReady = true;
+      } else {
+        return res.status(400).json({
+          error: `Firebase Auth account setup failed: ${signUpData?.error?.message || 'Unknown error'}`,
+        });
+      }
+
+      const resetRes = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestType: 'PASSWORD_RESET',
+            email: targetEmail,
+          }),
+        }
+      );
+      if (!resetRes.ok) {
+        const resetErr = (await resetRes.json().catch(() => ({}))) as any;
+        return res.status(400).json({
+          error: `Invite email dispatch failed: ${resetErr?.error?.message || 'Unable to send reset email.'}`,
+        });
+      }
+
+      if (memberId) {
+        const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+        await restSetDoc(
+          ['salesAuditLogs', slogId],
+          {
+            id: slogId,
+            actorUid: verifiedUser.uid,
+            actorEmail: verifiedUser.email,
+            actorRole: 'super_admin',
+            action: 'Sent Portal Access Reset',
+            entityType: 'sales_member',
+            entityId: memberId,
+            details: `Triggered Firebase Authentication invite/reset email to ${targetEmail}`,
+            createdAt: new Date().toISOString(),
+          },
+          verifiedUser.idToken
+        ).catch(() => {});
+      }
+
+      return res.json({ ok: true, authAccountReady, email: targetEmail });
+    } catch (err: any) {
+      return res.status(err?.status || 500).json({ error: err?.message || 'Could not dispatch reset email.' });
+    }
+  });
+
   // Super Admin ONLY: Create or update sales member cleanly (never permits super_admin assignment)
   app.post('/api/super-admin/sales/members', async (req, res) => {
     const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
@@ -1327,12 +1551,15 @@ Format cleanly in markdown with:
       return digits;
     };
 
+    let createdAuthIdToken: string | null = null;
+
     try {
       const rawMemberId = req.body?.memberId ? sanitizeDocId(req.body.memberId) : '';
       const requestedRole = String(req.body?.role || 'salesman').trim();
       if (requestedRole === 'super_admin' || !ALLOWED_SERVER_SALES_ROLES.includes(requestedRole)) {
         return res.status(403).json({
-          error: 'Forbidden: sales team accounts cannot hold super_admin role. Allowed: salesman, senior_salesman, sales_manager, referral_agent.',
+          error:
+            'Forbidden: sales team accounts cannot hold super_admin role. Allowed: salesman, senior_salesman, sales_manager, referral_agent.',
         });
       }
 
@@ -1340,20 +1567,18 @@ Format cleanly in markdown with:
 
       // UPDATE EXISTING SALES MEMBER
       if (rawMemberId) {
-        const memberRef = doc(db, 'salesMembers', rawMemberId);
-        const existingSnap = await getDoc(memberRef);
-        if (!existingSnap.exists()) {
+        const existingData = await restGetDoc<Record<string, any>>(['salesMembers', rawMemberId], verifiedUser.idToken);
+        if (!existingData) {
           return res.status(404).json({ error: 'Sales member not found.' });
         }
-        const existingData = existingSnap.data();
         const prevRole = existingData?.role;
 
         if (req.body?.phone) {
           const nextNormPhone = normalizePhoneServer(req.body.phone);
           if (nextNormPhone) {
-            const allSnap = await getDocs(collection(db, 'salesMembers'));
-            const phoneClash = allSnap.docs.find(
-              (d) => d.id !== rawMemberId && normalizePhoneServer(d.data()?.phone) === nextNormPhone
+            const allMembers = await restListCollection<Record<string, any>>(['salesMembers'], verifiedUser.idToken);
+            const phoneClash = allMembers.find(
+              (m) => m.id !== rawMemberId && normalizePhoneServer(m.phone) === nextNormPhone
             );
             if (phoneClash) {
               return res.status(409).json({ error: 'Another sales member already uses this phone number.' });
@@ -1384,11 +1609,15 @@ Format cleanly in markdown with:
           payoutDetails: req.body?.payoutDetails !== undefined ? req.body.payoutDetails : undefined,
           updatedAt: now,
         });
-        await updateDoc(memberRef, patch);
+
+        await restCommitWrites(
+          [{ type: 'update', pathSegments: ['salesMembers', rawMemberId], data: patch }],
+          verifiedUser.idToken
+        );
 
         if (existingData?.referralCode && (patch.accountStatus !== undefined || patch.fullName !== undefined)) {
-          await setDoc(
-            doc(db, 'salesReferralIndex', String(existingData.referralCode)),
+          await restSetDoc(
+            ['salesReferralIndex', String(existingData.referralCode)],
             {
               referralCode: existingData.referralCode,
               salesmanId: rawMemberId,
@@ -1398,24 +1627,29 @@ Format cleanly in markdown with:
               qrScanCount: existingData.qrScanCount || 0,
               updatedAt: now,
             },
-            { merge: true }
+            verifiedUser.idToken,
+            true
           ).catch(() => {});
         }
 
         const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-        await setDoc(doc(db, 'salesAuditLogs', slogId), {
-          id: slogId,
-          actorUid: verifiedUser.uid,
-          actorEmail: verifiedUser.email,
-          actorRole: 'super_admin',
-          action: 'Updated Sales Member Profile/Role',
-          entityType: 'sales_member',
-          entityId: rawMemberId,
-          previousValue: String(prevRole || ''),
-          newValue: requestedRole,
-          details: `Super Admin updated ${rawMemberId} (${requestedRole})`,
-          createdAt: now,
-        }).catch(() => {});
+        await restSetDoc(
+          ['salesAuditLogs', slogId],
+          {
+            id: slogId,
+            actorUid: verifiedUser.uid,
+            actorEmail: verifiedUser.email,
+            actorRole: 'super_admin',
+            action: 'Updated Sales Member Profile/Role',
+            entityType: 'sales_member',
+            entityId: rawMemberId,
+            previousValue: String(prevRole || ''),
+            newValue: requestedRole,
+            details: `Super Admin updated ${rawMemberId} (${requestedRole})`,
+            createdAt: now,
+          },
+          verifiedUser.idToken
+        ).catch(() => {});
 
         return res.json({ ok: true, mode: 'updated', memberId: rawMemberId, role: requestedRole });
       }
@@ -1427,17 +1661,21 @@ Format cleanly in markdown with:
       const cleanCity = String(req.body?.city || 'Karachi').trim() || 'Karachi';
 
       if (!cleanFullName || cleanFullName.length < 2) {
-        return res.status(400).json({ error: 'Full name is required.' });
+        return res.status(400).json({ error: 'Full name is required (at least 2 characters).' });
       }
       if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
         return res.status(400).json({ error: 'A valid email address is required.' });
+      }
+      if (cleanEmail === SUPER_ADMIN_EMAIL) {
+        return res.status(403).json({
+          error: 'Security Policy Violation: the Super Admin account cannot be registered as a sales member.',
+        });
       }
       if (!cleanPhone || normalizePhoneServer(cleanPhone).length < 10) {
         return res.status(400).json({ error: 'A valid mobile phone number is required.' });
       }
 
-      const allSnap = await getDocs(collection(db, 'salesMembers'));
-      const existingMembers = allSnap.docs.map((d) => ({ ...(d.data() as any), id: d.id }));
+      const existingMembers = await restListCollection<Record<string, any>>(['salesMembers'], verifiedUser.idToken);
       if (existingMembers.some((m) => String(m.email || '').trim().toLowerCase() === cleanEmail)) {
         return res.status(409).json({ error: `A sales account with email ${cleanEmail} already exists.` });
       }
@@ -1446,8 +1684,16 @@ Format cleanly in markdown with:
         return res.status(409).json({ error: `A sales account with phone number ${cleanPhone} already exists.` });
       }
 
-      const settingsSnap = await getDoc(doc(db, 'salesSettings', 'general')).catch(() => null);
-      const portalBaseUrl = String(settingsSnap?.data()?.portalBaseUrl || 'https://sbkhush.com').replace(/\/+$/, '');
+      // Resolve authoritative manager metadata if assignedManagerId provided
+      const assignedManagerId = req.body?.assignedManagerId ? sanitizeDocId(req.body.assignedManagerId) : undefined;
+      const managerRecord = assignedManagerId ? existingMembers.find((m) => m.id === assignedManagerId) : undefined;
+      const resolvedManagerUid = managerRecord?.uid || req.body?.assignedManagerUid || undefined;
+      const resolvedManagerName = managerRecord?.fullName || req.body?.assignedManagerName || undefined;
+
+      const settings = await restGetDoc<Record<string, any>>(['salesSettings', 'general'], verifiedUser.idToken).catch(
+        () => null
+      );
+      const portalBaseUrl = String(settings?.portalBaseUrl || 'https://sbkhush.com').replace(/\/+$/, '');
 
       const existingIds = new Set(existingMembers.map((m) => String(m.employeeId || '').toUpperCase()));
       let seq = existingMembers.length + 1;
@@ -1460,7 +1706,13 @@ Format cleanly in markdown with:
       const existingCodes = new Set(existingMembers.map((m) => String(m.referralCode || '').toUpperCase()));
       const prefixName = cleanFullName.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'REP';
       let referralCode = `SAL-${prefixName}-${Math.floor(1000 + Math.random() * 9000)}`;
-      for (let i = 0; i < 20 && existingCodes.has(referralCode); i++) {
+      for (let i = 0; i < 20; i++) {
+        if (!existingCodes.has(referralCode)) {
+          const indexClash = await restGetDoc(['salesReferralIndex', referralCode], verifiedUser.idToken).catch(
+            () => null
+          );
+          if (!indexClash) break;
+        }
         referralCode = `SAL-${prefixName}-${Math.floor(1000 + Math.random() * 9000)}`;
       }
       const referralLink = `${portalBaseUrl}/r/${encodeURIComponent(referralCode)}`;
@@ -1481,34 +1733,39 @@ Format cleanly in markdown with:
                 email: cleanEmail,
                 password: crypto.randomBytes(20).toString('hex'),
                 displayName: cleanFullName,
-                returnSecureToken: false,
+                returnSecureToken: true,
               }),
             }
           );
           const signUpData = (await signUpRes.json().catch(() => ({}))) as any;
           if (signUpRes.ok && signUpData?.localId) {
             provisionedUid = String(signUpData.localId);
+            createdAuthIdToken = signUpData?.idToken ? String(signUpData.idToken) : null;
             authProvisioned = true;
           } else if (signUpData?.error?.message === 'EMAIL_EXISTS') {
             authProvisioned = true;
+          } else {
+            resetEmailWarning = `Auth provisioning note (${signUpData?.error?.message || signUpRes.status}).`;
           }
 
-          const resetRes = await fetch(
-            `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                requestType: 'PASSWORD_RESET',
-                email: cleanEmail,
-              }),
+          if (authProvisioned) {
+            const resetRes = await fetch(
+              `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  requestType: 'PASSWORD_RESET',
+                  email: cleanEmail,
+                }),
+              }
+            );
+            if (resetRes.ok) {
+              resetEmailSent = true;
+            } else {
+              const resetErr = (await resetRes.json().catch(() => ({}))) as any;
+              resetEmailWarning = resetErr?.error?.message || 'Invite email dispatch returned an error.';
             }
-          );
-          if (resetRes.ok) {
-            resetEmailSent = true;
-          } else {
-            const resetErr = (await resetRes.json().catch(() => ({}))) as any;
-            resetEmailWarning = resetErr?.error?.message || 'Invite email dispatch returned an error.';
           }
         } catch (authErr: any) {
           resetEmailWarning = authErr?.message || 'Could not reach Firebase Auth invite service.';
@@ -1527,9 +1784,9 @@ Format cleanly in markdown with:
         address: req.body?.address ? String(req.body.address).trim() : undefined,
         profilePicture: req.body?.profilePicture ? String(req.body.profilePicture).trim() : undefined,
         role: requestedRole,
-        assignedManagerId: req.body?.assignedManagerId || undefined,
-        assignedManagerUid: req.body?.assignedManagerUid || undefined,
-        assignedManagerName: req.body?.assignedManagerName || undefined,
+        assignedManagerId,
+        assignedManagerUid: resolvedManagerUid,
+        assignedManagerName: resolvedManagerName,
         teamId: req.body?.teamId || undefined,
         teamName: req.body?.teamName || undefined,
         territory: String(req.body?.territory || cleanCity).trim(),
@@ -1552,32 +1809,58 @@ Format cleanly in markdown with:
         updatedAt: now,
       });
 
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'salesMembers', id), memberPayload);
-      batch.set(doc(db, 'salesReferralIndex', referralCode), {
-        referralCode,
-        salesmanId: id,
-        salesmanUid: provisionedUid || null,
-        salesmanName: cleanFullName,
-        accountStatus: memberPayload.accountStatus,
-        qrScanCount: 0,
-        updatedAt: now,
-      });
-      await batch.commit();
+      try {
+        await restCommitWrites(
+          [
+            { type: 'create', pathSegments: ['salesMembers', id], data: memberPayload },
+            {
+              type: 'set',
+              pathSegments: ['salesReferralIndex', referralCode],
+              data: {
+                referralCode,
+                salesmanId: id,
+                salesmanUid: provisionedUid || null,
+                salesmanName: cleanFullName,
+                accountStatus: memberPayload.accountStatus,
+                qrScanCount: 0,
+                updatedAt: now,
+              },
+            },
+          ],
+          verifiedUser.idToken
+        );
+      } catch (commitErr) {
+        // Roll back newly provisioned Auth account if Firestore write fails so retry doesn't leave an orphan
+        if (createdAuthIdToken && firebaseConfig.apiKey) {
+          await fetch(
+            `https://identitytoolkit.googleapis.com/v1/accounts:delete?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ idToken: createdAuthIdToken }),
+            }
+          ).catch(() => {});
+        }
+        throw commitErr;
+      }
 
       const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-      await setDoc(doc(db, 'salesAuditLogs', slogId), {
-        id: slogId,
-        actorUid: verifiedUser.uid,
-        actorEmail: verifiedUser.email,
-        actorRole: 'super_admin',
-        action: 'Created Salesman Account',
-        entityType: 'sales_member',
-        entityId: id,
-        newValue: requestedRole,
-        details: `Created ${cleanFullName} (${employeeId}, ${requestedRole}) · Referral Code: ${referralCode}`,
-        createdAt: now,
-      }).catch(() => {});
+      await restSetDoc(
+        ['salesAuditLogs', slogId],
+        {
+          id: slogId,
+          actorUid: verifiedUser.uid,
+          actorEmail: verifiedUser.email,
+          actorRole: 'super_admin',
+          action: 'Created Salesman Account',
+          entityType: 'sales_member',
+          entityId: id,
+          newValue: requestedRole,
+          details: `Created ${cleanFullName} (${employeeId}, ${requestedRole}) · Referral Code: ${referralCode}`,
+          createdAt: now,
+        },
+        verifiedUser.idToken
+      ).catch(() => {});
 
       return res.json({
         ok: true,
@@ -1588,7 +1871,7 @@ Format cleanly in markdown with:
         resetEmailWarning,
       });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Failed to save sales member.' });
+      return res.status(err?.status || 500).json({ error: err?.message || 'Failed to save sales member.' });
     }
   });
 
@@ -1611,61 +1894,72 @@ Format cleanly in markdown with:
         return res.status(400).json({ error: 'Valid leadIds and targetSalesmanId are required.' });
       }
 
-      const targetSnap = await getDoc(doc(db, 'salesMembers', targetSalesmanId));
-      if (!targetSnap.exists()) {
+      const targetRep = await restGetDoc<Record<string, any>>(['salesMembers', targetSalesmanId], verifiedUser.idToken);
+      if (!targetRep) {
         return res.status(404).json({ error: 'Target representative not found.' });
       }
-      const targetRep = targetSnap.data();
       if (role !== 'super_admin' && targetRep.assignedManagerUid !== verifiedUser.uid) {
         return res.status(403).json({
           error: 'Forbidden: Sales Managers can only assign leads to representatives in their own authorized team.',
         });
       }
 
-      const now = new Date().toISOString();
-      for (const lid of leadIds) {
-        const leadSnap = await getDoc(doc(db, 'salesLeads', lid));
-        if (!leadSnap.exists()) {
+      const leadMetas = await Promise.all(
+        leadIds.map((lid) => restGetDocWithMeta<Record<string, any>>(['salesLeads', lid], verifiedUser.idToken))
+      );
+
+      for (let i = 0; i < leadIds.length; i++) {
+        const lid = leadIds[i];
+        const meta = leadMetas[i];
+        if (!meta) {
           return res.status(404).json({ error: `Lead ${lid} not found.` });
         }
-        const leadData = leadSnap.data();
-        if (role !== 'super_admin' && leadData.assignedManagerUid && leadData.assignedManagerUid !== verifiedUser.uid) {
+        if (role !== 'super_admin' && meta.data.assignedManagerUid && meta.data.assignedManagerUid !== verifiedUser.uid) {
           return res.status(403).json({
             error: `Forbidden: Lead ${lid} belongs to another manager team and cannot be accessed or reassigned.`,
           });
         }
       }
 
-      const batch = writeBatch(db);
-      for (const lid of leadIds) {
-        batch.update(doc(db, 'salesLeads', lid), {
-          assignedSalesmanId: targetSnap.id,
-          assignedSalesmanUid: targetRep.uid || null,
-          assignedSalesmanName: targetRep.fullName,
-          assignedManagerId: targetRep.assignedManagerId || null,
-          assignedManagerUid: targetRep.assignedManagerUid || verifiedUser.uid,
-          status: 'Assigned',
-          updatedAt: now,
-        });
-      }
-      await batch.commit();
+      const now = new Date().toISOString();
+      await restCommitWrites(
+        leadIds.map((lid, idx) => ({
+          type: 'update' as const,
+          pathSegments: ['salesLeads', lid],
+          data: {
+            assignedSalesmanId: targetRep.id,
+            assignedSalesmanUid: targetRep.uid || null,
+            assignedSalesmanName: targetRep.fullName,
+            assignedManagerId: targetRep.assignedManagerId || null,
+            assignedManagerUid: targetRep.assignedManagerUid || verifiedUser.uid,
+            status: 'Assigned',
+            updatedAt: now,
+          },
+          expectedUpdateTime: leadMetas[idx]!.updateTime,
+        })),
+        verifiedUser.idToken
+      );
 
       const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-      await setDoc(doc(db, 'salesAuditLogs', slogId), {
-        id: slogId,
-        actorUid: verifiedUser.uid,
-        actorEmail: verifiedUser.email,
-        actorRole: role === 'super_admin' ? 'super_admin' : 'sales_manager',
-        action: 'Manager Assigned Team Leads',
-        entityType: 'sales_lead',
-        entityId: targetSnap.id,
-        details: `Assigned ${leadIds.length} lead(s) within authorized team to ${targetRep.fullName}`,
-        createdAt: now,
-      }).catch(() => {});
+      await restSetDoc(
+        ['salesAuditLogs', slogId],
+        {
+          id: slogId,
+          actorUid: verifiedUser.uid,
+          actorEmail: verifiedUser.email,
+          actorRole: role === 'super_admin' ? 'super_admin' : 'sales_manager',
+          action: 'Manager Assigned Team Leads',
+          entityType: 'sales_lead',
+          entityId: targetRep.id,
+          details: `Assigned ${leadIds.length} lead(s) within authorized team to ${targetRep.fullName}`,
+          createdAt: now,
+        },
+        verifiedUser.idToken
+      ).catch(() => {});
 
       return res.json({ ok: true, assignedCount: leadIds.length });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Team lead assignment failed.' });
+      return res.status(err?.status || 500).json({ error: err?.message || 'Team lead assignment failed.' });
     }
   });
 
@@ -1688,14 +1982,17 @@ Format cleanly in markdown with:
         return res.status(400).json({ error: 'Valid team rep, positive bonus amount, and justification are required.' });
       }
       if (req.body?.status && req.body.status !== 'pending') {
-        return res.status(403).json({ error: 'Forbidden: managers cannot self-approve bonuses; Super Admin approval is required.' });
+        return res.status(403).json({
+          error: 'Forbidden: managers cannot self-approve bonuses; Super Admin approval is required.',
+        });
       }
 
-      const targetSnap = await getDoc(doc(db, 'salesMembers', salesmanId));
-      if (!targetSnap.exists()) return res.status(404).json({ error: 'Representative not found.' });
-      const targetRep = targetSnap.data();
+      const targetRep = await restGetDoc<Record<string, any>>(['salesMembers', salesmanId], verifiedUser.idToken);
+      if (!targetRep) return res.status(404).json({ error: 'Representative not found.' });
       if (targetRep.assignedManagerUid !== verifiedUser.uid || targetRep.uid === verifiedUser.uid) {
-        return res.status(403).json({ error: 'Forbidden: can only recommend bonuses for reps assigned to your own team.' });
+        return res.status(403).json({
+          error: 'Forbidden: can only recommend bonuses for reps assigned to your own team.',
+        });
       }
 
       const now = new Date().toISOString();
@@ -1705,7 +2002,7 @@ Format cleanly in markdown with:
         managerId: managerMember.id,
         managerUid: verifiedUser.uid,
         managerName: managerMember.fullName,
-        salesmanId: targetSnap.id,
+        salesmanId: targetRep.id,
         salesmanUid: targetRep.uid || undefined,
         salesmanName: targetRep.fullName,
         recommendedAmount: Math.round(amount),
@@ -1715,24 +2012,28 @@ Format cleanly in markdown with:
         createdAt: now,
         updatedAt: now,
       });
-      await setDoc(doc(db, 'salesBonusRecommendations', recId), payload);
+      await restSetDoc(['salesBonusRecommendations', recId], payload, verifiedUser.idToken);
 
       const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-      await setDoc(doc(db, 'salesAuditLogs', slogId), {
-        id: slogId,
-        actorUid: verifiedUser.uid,
-        actorEmail: verifiedUser.email,
-        actorRole: 'sales_manager',
-        action: 'Recommended Team Bonus',
-        entityType: 'bonus_recommendation',
-        entityId: recId,
-        details: `Recommended Rs. ${Math.round(amount)} bonus for ${targetRep.fullName} (${periodKey}) — pending Super Admin approval`,
-        createdAt: now,
-      }).catch(() => {});
+      await restSetDoc(
+        ['salesAuditLogs', slogId],
+        {
+          id: slogId,
+          actorUid: verifiedUser.uid,
+          actorEmail: verifiedUser.email,
+          actorRole: 'sales_manager',
+          action: 'Recommended Team Bonus',
+          entityType: 'bonus_recommendation',
+          entityId: recId,
+          details: `Recommended Rs. ${Math.round(amount)} bonus for ${targetRep.fullName} (${periodKey}) — pending Super Admin approval`,
+          createdAt: now,
+        },
+        verifiedUser.idToken
+      ).catch(() => {});
 
       return res.status(201).json({ recommendation: payload });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Failed to submit bonus recommendation.' });
+      return res.status(err?.status || 500).json({ error: err?.message || 'Failed to submit bonus recommendation.' });
     }
   });
 
@@ -1750,27 +2051,34 @@ Format cleanly in markdown with:
         return res.status(400).json({ error: 'Valid recId and decision (approved/rejected) required.' });
       }
 
+      const recMeta = await restGetDocWithMeta<Record<string, any>>(
+        ['salesBonusRecommendations', recId],
+        verifiedUser.idToken
+      );
+      if (!recMeta) return res.status(404).json({ error: 'Recommendation not found.' });
+      const cur = recMeta.data;
+      if (cur.status !== 'pending') {
+        return res.status(400).json({ error: `Recommendation already ${cur.status}.` });
+      }
+
       const now = new Date().toISOString();
-      await runTransaction(db, async (tx) => {
-        const ref = doc(db, 'salesBonusRecommendations', recId);
-        const snap = await tx.get(ref);
-        if (!snap.exists()) throw new Error('Recommendation not found.');
-        const cur = snap.data();
-        if (cur.status !== 'pending') {
-          throw new Error(`Recommendation already ${cur.status}.`);
-        }
-        const patch: Record<string, any> = {
-          status: decision,
-          reviewedBy: verifiedUser.email,
-          reviewedAt: now,
-          updatedAt: now,
-        };
-        if (decision === 'rejected') {
-          patch.rejectionReason = reason || 'Declined by Super Admin.';
-        } else {
-          const ledgerId = `comm_bon_${recId}`;
-          patch.commissionLedgerId = ledgerId;
-          tx.set(doc(db, 'commissionLedger', ledgerId), stripUndefined({
+      const patch: Record<string, any> = {
+        status: decision,
+        reviewedBy: verifiedUser.email,
+        reviewedAt: now,
+        updatedAt: now,
+      };
+      const ops: Parameters<typeof restCommitWrites>[0] = [];
+
+      if (decision === 'rejected') {
+        patch.rejectionReason = reason || 'Declined by Super Admin.';
+      } else {
+        const ledgerId = `comm_bon_${recId}`;
+        patch.commissionLedgerId = ledgerId;
+        ops.push({
+          type: 'create',
+          pathSegments: ['commissionLedger', ledgerId],
+          data: stripUndefined({
             id: ledgerId,
             salesmanId: cur.salesmanId,
             salesmanUid: cur.salesmanUid,
@@ -1791,27 +2099,39 @@ Format cleanly in markdown with:
             approvedAt: now,
             createdAt: now,
             updatedAt: now,
-          }));
-        }
-        tx.update(ref, patch);
+          }),
+        });
+      }
+
+      ops.push({
+        type: 'update',
+        pathSegments: ['salesBonusRecommendations', recId],
+        data: patch,
+        expectedUpdateTime: recMeta.updateTime,
       });
 
+      await restCommitWrites(ops, verifiedUser.idToken);
+
       const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-      await setDoc(doc(db, 'salesAuditLogs', slogId), {
-        id: slogId,
-        actorUid: verifiedUser.uid,
-        actorEmail: verifiedUser.email,
-        actorRole: 'super_admin',
-        action: `Bonus Recommendation ${decision}`,
-        entityType: 'bonus_recommendation',
-        entityId: recId,
-        details: `${decision.toUpperCase()} bonus recommendation ${recId}`,
-        createdAt: now,
-      }).catch(() => {});
+      await restSetDoc(
+        ['salesAuditLogs', slogId],
+        {
+          id: slogId,
+          actorUid: verifiedUser.uid,
+          actorEmail: verifiedUser.email,
+          actorRole: 'super_admin',
+          action: `Bonus Recommendation ${decision}`,
+          entityType: 'bonus_recommendation',
+          entityId: recId,
+          details: `${decision.toUpperCase()} bonus recommendation ${recId}`,
+          createdAt: now,
+        },
+        verifiedUser.idToken
+      ).catch(() => {});
 
       return res.json({ ok: true });
     } catch (err: any) {
-      return res.status(400).json({ error: err?.message || 'Bonus decision failed.' });
+      return res.status(err?.status || 400).json({ error: err?.message || 'Bonus decision failed.' });
     }
   });
 
@@ -1857,10 +2177,10 @@ Format cleanly in markdown with:
         updatedAt: now,
       });
 
-      await setDoc(doc(db, 'salesExpenses', expId), payload);
+      await restSetDoc(['salesExpenses', expId], payload, verifiedUser.idToken);
       return res.status(201).json({ expense: payload });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Failed to submit expense.' });
+      return res.status(err?.status || 500).json({ error: err?.message || 'Failed to submit expense.' });
     }
   });
 
@@ -1877,37 +2197,51 @@ Format cleanly in markdown with:
       if (!expenseId || !['approved', 'rejected'].includes(decision)) {
         return res.status(400).json({ error: 'Valid expenseId and decision required.' });
       }
+
+      const expMeta = await restGetDocWithMeta<Record<string, any>>(['salesExpenses', expenseId], verifiedUser.idToken);
+      if (!expMeta) return res.status(404).json({ error: 'Expense not found.' });
+      if (expMeta.data.status !== 'pending') {
+        return res.status(400).json({ error: `Expense already ${expMeta.data.status}.` });
+      }
+
       const now = new Date().toISOString();
-      await runTransaction(db, async (tx) => {
-        const ref = doc(db, 'salesExpenses', expenseId);
-        const snap = await tx.get(ref);
-        if (!snap.exists()) throw new Error('Expense not found.');
-        if (snap.data()?.status !== 'pending') {
-          throw new Error(`Expense already ${snap.data()?.status}.`);
-        }
-        tx.update(ref, stripUndefined({
-          status: decision,
-          rejectionReason: decision === 'rejected' ? reason || 'Rejected by Super Admin.' : undefined,
-          reviewedBy: verifiedUser.email,
-          reviewedAt: now,
-          updatedAt: now,
-        }));
-      });
+      await restCommitWrites(
+        [
+          {
+            type: 'update',
+            pathSegments: ['salesExpenses', expenseId],
+            data: stripUndefined({
+              status: decision,
+              rejectionReason: decision === 'rejected' ? reason || 'Rejected by Super Admin.' : undefined,
+              reviewedBy: verifiedUser.email,
+              reviewedAt: now,
+              updatedAt: now,
+            }),
+            expectedUpdateTime: expMeta.updateTime,
+          },
+        ],
+        verifiedUser.idToken
+      );
+
       const slogId = `slog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-      await setDoc(doc(db, 'salesAuditLogs', slogId), {
-        id: slogId,
-        actorUid: verifiedUser.uid,
-        actorEmail: verifiedUser.email,
-        actorRole: 'super_admin',
-        action: `Expense ${decision}`,
-        entityType: 'sales_expense',
-        entityId: expenseId,
-        details: `${decision.toUpperCase()} expense ${expenseId}`,
-        createdAt: now,
-      }).catch(() => {});
+      await restSetDoc(
+        ['salesAuditLogs', slogId],
+        {
+          id: slogId,
+          actorUid: verifiedUser.uid,
+          actorEmail: verifiedUser.email,
+          actorRole: 'super_admin',
+          action: `Expense ${decision}`,
+          entityType: 'sales_expense',
+          entityId: expenseId,
+          details: `${decision.toUpperCase()} expense ${expenseId}`,
+          createdAt: now,
+        },
+        verifiedUser.idToken
+      ).catch(() => {});
       return res.json({ ok: true });
     } catch (err: any) {
-      return res.status(400).json({ error: err?.message || 'Expense decision failed.' });
+      return res.status(err?.status || 400).json({ error: err?.message || 'Expense decision failed.' });
     }
   });
 
@@ -1923,45 +2257,45 @@ Format cleanly in markdown with:
     }
     try {
       if (role === 'referral_agent' && salesMember) {
-        const [attrs, comms] = await Promise.all([
-          getDocs(query(collection(db, 'referralAttributions'), where('salesmanUid', '==', verifiedUser.uid))),
-          getDocs(query(collection(db, 'commissionLedger'), where('salesmanUid', '==', verifiedUser.uid))),
+        const [referrals, comms] = await Promise.all([
+          restQueryWhereEqual('referralAttributions', 'salesmanUid', verifiedUser.uid, verifiedUser.idToken),
+          restQueryWhereEqual('commissionLedger', 'salesmanUid', verifiedUser.uid, verifiedUser.idToken),
         ]);
         return res.json({
           role: 'referral_agent',
-          referrals: attrs.docs.map((d) => d.data()),
-          rewards: comms.docs.map((d) => d.data()).filter((c: any) => c.status === 'approved' || c.status === 'paid'),
+          referrals,
+          rewards: comms.filter((c: any) => c.status === 'approved' || c.status === 'paid'),
         });
       }
       if (role === 'salesman' && salesMember) {
-        const [leads, refs, comms, exps] = await Promise.all([
-          getDocs(query(collection(db, 'salesLeads'), where('assignedSalesmanUid', '==', verifiedUser.uid))),
-          getDocs(query(collection(db, 'referralAttributions'), where('salesmanUid', '==', verifiedUser.uid))),
-          getDocs(query(collection(db, 'commissionLedger'), where('salesmanUid', '==', verifiedUser.uid))),
-          getDocs(query(collection(db, 'salesExpenses'), where('salesmanUid', '==', verifiedUser.uid))),
+        const [leads, referrals, commissions, expenses] = await Promise.all([
+          restQueryWhereEqual('salesLeads', 'assignedSalesmanUid', verifiedUser.uid, verifiedUser.idToken),
+          restQueryWhereEqual('referralAttributions', 'salesmanUid', verifiedUser.uid, verifiedUser.idToken),
+          restQueryWhereEqual('commissionLedger', 'salesmanUid', verifiedUser.uid, verifiedUser.idToken),
+          restQueryWhereEqual('salesExpenses', 'salesmanUid', verifiedUser.uid, verifiedUser.idToken),
         ]);
         return res.json({
           role: 'salesman',
-          leads: leads.docs.map((d) => d.data()),
-          referrals: refs.docs.map((d) => d.data()),
-          commissions: comms.docs.map((d) => d.data()),
-          expenses: exps.docs.map((d) => d.data()),
+          leads,
+          referrals,
+          commissions,
+          expenses,
         });
       }
       if (role === 'sales_manager' && salesMember) {
         const [teamMembers, teamLeads] = await Promise.all([
-          getDocs(query(collection(db, 'salesMembers'), where('assignedManagerUid', '==', verifiedUser.uid))),
-          getDocs(query(collection(db, 'salesLeads'), where('assignedManagerUid', '==', verifiedUser.uid))),
+          restQueryWhereEqual('salesMembers', 'assignedManagerUid', verifiedUser.uid, verifiedUser.idToken),
+          restQueryWhereEqual('salesLeads', 'assignedManagerUid', verifiedUser.uid, verifiedUser.idToken),
         ]);
         return res.json({
           role: 'sales_manager',
-          teamMembers: teamMembers.docs.map((d) => d.data()),
-          teamLeads: teamLeads.docs.map((d) => d.data()),
+          teamMembers,
+          teamLeads,
         });
       }
       return res.json({ role: 'super_admin' });
     } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'Failed to load scoped summary.' });
+      return res.status(err?.status || 500).json({ error: err?.message || 'Failed to load scoped summary.' });
     }
   });
 

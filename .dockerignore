@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.env
+.env.local
+*.log
+npm-debug.log*
+coverage
+walkthrough.md
+functions/lib
+functions/node_modules

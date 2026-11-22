@@ -1097,6 +1097,101 @@ describe('SB Khush Production Transformation, Public Separation, Demo Audit & Mo
     expect(firestoreRules).toContain("'privacy-policy'");
     expect(firestoreRules).toContain("'terms-and-conditions'");
   });
-});
 
+  it('encodes and decodes Firestore v1 REST values & documents cleanly including nested maps and arrays', async () => {
+    const {
+      encodeFirestoreValue,
+      encodeFirestoreFields,
+      decodeFirestoreValue,
+      decodeFirestoreDoc,
+    } = await import('../src/utils/firestoreRestServer');
+
+    expect(encodeFirestoreValue(null)).toEqual({ nullValue: null });
+    expect(encodeFirestoreValue(true)).toEqual({ booleanValue: true });
+    expect(encodeFirestoreValue(42)).toEqual({ integerValue: '42' });
+    expect(encodeFirestoreValue(3.14)).toEqual({ doubleValue: 3.14 });
+    expect(encodeFirestoreValue('SB Khush')).toEqual({ stringValue: 'SB Khush' });
+
+    const sample = {
+      id: 'sm_1',
+      employeeId: 'SBK-SLS-001',
+      monthlyTarget: 50000,
+      rate: 15.5,
+      active: true,
+      tags: ['karachi', 'retail'],
+      payoutDetails: {
+        method: 'bank_transfer',
+        bankName: 'Meezan Bank',
+        nullableNote: null,
+      },
+      ignoredUndefined: undefined,
+    };
+
+    const fields = encodeFirestoreFields(sample);
+    expect(fields.ignoredUndefined).toBeUndefined();
+    expect(decodeFirestoreValue(fields.payoutDetails)).toEqual({
+      method: 'bank_transfer',
+      bankName: 'Meezan Bank',
+      nullableNote: null,
+    });
+
+    const decoded = decodeFirestoreDoc({
+      name: 'projects/test/databases/db/documents/salesMembers/sm_1',
+      fields,
+    });
+    expect(decoded).toEqual({
+      id: 'sm_1',
+      employeeId: 'SBK-SLS-001',
+      monthlyTarget: 50000,
+      rate: 15.5,
+      active: true,
+      tags: ['karachi', 'retail'],
+      payoutDetails: {
+        method: 'bank_transfer',
+        bankName: 'Meezan Bank',
+        nullableNote: null,
+      },
+    });
+  });
+
+  it('enforces salesperson creation RBAC, validation, SBK-SLS IDs, and caller-authenticated REST writes with Auth rollback', async () => {
+    const { createSalesMember, generateEmployeeId } = await import('../src/services/salesService');
+    const serverSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'server.ts'), 'utf-8');
+    const firestoreRules = fs.readFileSync(path.join(WORKSPACE_ROOT, 'firestore.rules'), 'utf-8');
+
+    expect(generateEmployeeId([{ employeeId: 'SBK-SLS-001' }, { employeeId: 'SBK-SLS-002' }])).toBe('SBK-SLS-003');
+
+    const basePayload = {
+      fullName: 'Ali Raza',
+      email: 'ali.sales@sbkhush.com',
+      phone: '03001234567',
+      city: 'Lahore',
+      role: 'salesman' as const,
+      territory: 'Lahore Central',
+      industryFocus: 'all' as const,
+      joiningDate: '2026-11-22',
+      employmentStatus: 'full_time' as const,
+      monthlyTarget: 50000,
+      yearlyTarget: 600000,
+      commissionPlanId: 'tier-standard',
+      commissionPlanName: 'Standard',
+      accountStatus: 'invited' as const,
+    };
+
+    await expect(createSalesMember({ ...basePayload, role: 'super_admin' as any })).rejects.toThrow(
+      /Security Policy Violation/
+    );
+    await expect(createSalesMember({ ...basePayload, email: 'hasanaamir815@gmail.com' })).rejects.toThrow(
+      /Super Admin account cannot be registered/
+    );
+    await expect(createSalesMember({ ...basePayload, phone: '123' })).rejects.toThrow(/valid mobile phone/);
+
+    // Verify backend uses caller-authenticated REST API, exposes invite route, and rolls back Auth orphans
+    expect(serverSrc).toContain("app.post('/api/super-admin/sales/invite'");
+    expect(serverSrc).toContain('restCommitWrites');
+    expect(serverSrc).toContain('accounts:delete');
+    expect(firestoreRules).toContain('isAllowedSalesRole(incoming().role)');
+    expect(firestoreRules).toContain("admins/$(request.auth.uid)");
+  });
+});
 
