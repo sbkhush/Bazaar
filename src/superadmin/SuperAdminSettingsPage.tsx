@@ -21,6 +21,7 @@ import {
   DEFAULT_PLATFORM_PRIVACY_POLICY,
   DEFAULT_PLATFORM_TERMS,
 } from '../config/brand';
+import { buildApiUrl, isBackendApiAvailable } from '../config/api';
 
 interface ApiHealthReport {
   ok: boolean;
@@ -47,20 +48,27 @@ export const SuperAdminSettingsPage: React.FC = () => {
   const runDiagnostics = async () => {
     setDiagLoading(true);
     try {
+      const backendAvailable = isBackendApiAvailable();
       const [sh, apiRes] = await Promise.all([
         checkStorageHealth(),
-        fetch('/api/health')
-          .then(async (r) => {
-            const ct = r.headers.get('content-type') || '';
-            if (r.ok && ct.includes('application/json')) {
-              return (await r.json()) as ApiHealthReport;
-            }
-            return { ok: false, message: 'Static SPA hosting active (Express API not running on this origin).' };
-          })
-          .catch(() => ({
-            ok: false,
-            message: 'Static SPA hosting active (Express API not reachable from this origin).',
-          })),
+        backendAvailable
+          ? fetch(buildApiUrl('/api/health'))
+              .then(async (r) => {
+                const ct = r.headers.get('content-type') || '';
+                if (r.ok && ct.includes('application/json')) {
+                  return (await r.json()) as ApiHealthReport;
+                }
+                return { ok: false, message: 'Express backend endpoint did not return JSON.' };
+              })
+              .catch(() => ({
+                ok: false,
+                message: 'Express API backend unreachable at configured URL.',
+              }))
+          : Promise.resolve({
+              ok: false,
+              message:
+                'Static GitHub Pages hosting active. Firebase Auth, Firestore, and Storage work directly; set VITE_API_BASE_URL at build time to connect an external Express backend.',
+            }),
       ]);
       setStorageHealth(sh);
       setApiHealth(apiRes);
@@ -600,6 +608,11 @@ export const SuperAdminSettingsPage: React.FC = () => {
             <p className="font-mono text-[11px] text-slate-600">
               Bucket: {storageHealth?.bucketName || 'checking...'}
             </p>
+            {storageHealth?.corsOrigin && (
+              <p className="font-mono text-[11px] text-slate-500">
+                Current Origin: {storageHealth.corsOrigin}
+              </p>
+            )}
             <p className="text-slate-600">{storageHealth?.message || 'Probing Firebase Storage endpoint...'}</p>
           </div>
 

@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { DEFAULT_SHOP_ID } from '../data/seedData';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { BRAND } from '../config/brand';
+import { formatFirebaseAuthError } from '../utils/authErrors';
 
 export const LoginPage: React.FC = () => {
   const {
@@ -59,7 +60,7 @@ export const LoginPage: React.FC = () => {
     try {
       await loginWithEmail(email.trim(), password);
     } catch (err: any) {
-      setError(err?.message || 'Invalid email or password.');
+      setError(formatFirebaseAuthError(err, 'Invalid email or password.'));
     } finally {
       setSubmitting(false);
     }
@@ -71,7 +72,7 @@ export const LoginPage: React.FC = () => {
     try {
       await loginWithGoogle();
     } catch (err: any) {
-      setError(err?.message || 'Google sign-in failed.');
+      setError(formatFirebaseAuthError(err, 'Google sign-in failed.'));
     } finally {
       setSubmitting(false);
     }
@@ -87,7 +88,7 @@ export const LoginPage: React.FC = () => {
       setResetSent(true);
       setError(null);
     } catch (err: any) {
-      setError(err?.message || 'Could not send reset link.');
+      setError(formatFirebaseAuthError(err, 'Could not send reset link.'));
     }
   };
 

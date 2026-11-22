@@ -49,6 +49,7 @@ import {
 } from '../types';
 import { parseCsvRows } from '../utils/csvUtils';
 import { isAllowedSalesRole } from './roleGuard';
+import { buildApiUrl, isBackendApiAvailable } from '../config/api';
 
 export const DEFAULT_COMMISSION_PLANS: CommissionRuleTier[] = [
   {
@@ -196,9 +197,12 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 }
 
 async function trySalesApi<T>(path: string, method: 'GET' | 'POST' = 'POST', body?: unknown): Promise<T | null> {
+  if (!isBackendApiAvailable()) {
+    return null;
+  }
   try {
     const headers = await getAuthHeaders();
-    const res = await fetch(path, {
+    const res = await fetch(buildApiUrl(path), {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,

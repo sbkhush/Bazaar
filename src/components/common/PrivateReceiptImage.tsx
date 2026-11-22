@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { Loader2, ShieldAlert, Lock } from 'lucide-react';
 import { auth, db } from '../../firebase/config';
+import { buildApiUrl, isBackendApiAvailable } from '../../config/api';
 
 interface PrivateReceiptImageProps {
   src?: string;
@@ -47,10 +48,10 @@ export const PrivateReceiptImage: React.FC<PrivateReceiptImageProps> = ({
       try {
         const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
 
-        // 1. Try authenticated Express API stream if running
-        if (token) {
+        // 1. Try authenticated Express API stream if Express backend is reachable
+        if (token && isBackendApiAvailable()) {
           try {
-            const res = await fetch(src, {
+            const res = await fetch(buildApiUrl(src), {
               headers: { Authorization: `Bearer ${token}` },
             });
             const ct = res.headers.get('content-type') || '';

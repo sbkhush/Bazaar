@@ -18,6 +18,7 @@ import { auth } from '../firebase/config';
 import { PAKISTAN_CITIES, isValidPakistaniPhone } from '../data/seedData';
 import { submitReferralPartnerApplication } from '../services/salesService';
 import { BrandLogo } from '../components/common/BrandLogo';
+import { formatFirebaseAuthError, validateEmailAndPasswordInput } from '../utils/authErrors';
 
 export const ReferralRegisterPage: React.FC = () => {
   const {
@@ -69,7 +70,7 @@ export const ReferralRegisterPage: React.FC = () => {
       await loginWithGoogle();
       await refreshSalesMember();
     } catch (err: any) {
-      setError(err?.message || 'Google sign-in failed.');
+      setError(formatFirebaseAuthError(err, 'Google sign-in failed.'));
     } finally {
       setSubmitting(false);
     }
@@ -99,11 +100,11 @@ export const ReferralRegisterPage: React.FC = () => {
     setSubmitting(true);
     try {
       let uid = currentUser?.uid;
+      let resolvedEmail = cleanEmail;
       if (!uid) {
-        if (password.length < 6) {
-          throw new Error('Password must be at least 6 characters.');
-        }
-        await registerWithEmail(cleanName, cleanEmail, password, cleanPhone);
+        const validated = validateEmailAndPasswordInput(cleanEmail, password);
+        resolvedEmail = validated.email;
+        await registerWithEmail(cleanName, validated.email, validated.password, cleanPhone);
         uid = auth.currentUser?.uid;
         if (!uid) {
           throw new Error('Account created — please sign in and retry.');
@@ -113,7 +114,7 @@ export const ReferralRegisterPage: React.FC = () => {
       const member = await submitReferralPartnerApplication({
         uid,
         fullName: cleanName,
-        email: cleanEmail,
+        email: resolvedEmail,
         phone: cleanPhone,
         city,
         territory: territory.trim() || city,
@@ -121,7 +122,7 @@ export const ReferralRegisterPage: React.FC = () => {
       await refreshSalesMember();
       setSubmittedCode(member.referralCode);
     } catch (err: any) {
-      setError(err?.message || 'Unable to submit partner application.');
+      setError(formatFirebaseAuthError(err, 'Unable to submit partner application.'));
     } finally {
       setSubmitting(false);
     }

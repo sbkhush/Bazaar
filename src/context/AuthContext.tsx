@@ -39,6 +39,7 @@ import {
   getAuthorizedHomePath,
   resolveAuthorizedPortalRole,
 } from '../services/roleGuard';
+import { formatFirebaseAuthError, validateEmailAndPasswordInput } from '../utils/authErrors';
 
 export interface AuthDiagnostics {
   emailVerified: boolean;
@@ -73,7 +74,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updateUserAddresses: (addresses: UserAddress[]) => Promise<void>;
-  updateProfileDetails: (details: { displayName: string; phoneNumber?: string }) => Promise<void>;
+  updateProfileDetails: (details: { displayName: string; phoneNumber?: string; photoURL?: string }) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -316,6 +317,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           uid: user.uid,
           email: user.email || '',
           displayName: user.displayName || user.email?.split('@')[0] || 'User',
+          photoURL: user.photoURL || undefined,
           role: defaultRole,
           isBlocked: false,
           addresses: [],
@@ -362,9 +364,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await checkSuperAdminPrivilege(user);
         await syncUserProfile(user);
         await claimPendingInvites(user);
-        await loadUserMemberships(user.uid);
+        const memberships = await loadUserMemberships(user.uid);
         const sm = await linkSalesMemberOnLogin(user.uid, user.email).catch(() => null);
         setSalesMember(sm);
+        if (memberships.length > 0 || sm) {
+          const claimsOk = await trySyncCustomClaims(user).catch(() => false);
+          if (claimsOk) {
+            setAuthDiagnostics((prev) => ({ ...prev, claimsSynced: true }));
+          }
+        }
       } else {
         setUserProfile(null);
         setIsSuperAdminVerified(false);
@@ -382,31 +390,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, [loadUserMemberships]);
 
+  const wrapAuthError = (err: any, fallback: string): Error => {
+    const wrapped = new Error(formatFirebaseAuthError(err, fallback));
+    if (err?.code) (wrapped as any).code = err.code;
+    return wrapped;
+  };
+
   const loginWithGoogle = async () => {
-    const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err: any) {
+      throw wrapAuthError(err, 'Google sign-in failed.');
+    }
   };
 
   const loginWithEmail = async (email: string, pass: string) => {
-    await signInWithEmailAndPassword(auth, email, pass);
+    const { email: cleanEmail, password } = validateEmailAndPasswordInput(email, pass);
+    try {
+      await signInWithEmailAndPassword(auth, cleanEmail, password);
+    } catch (err: any) {
+      throw wrapAuthError(err, 'Invalid email or password.');
+    }
   };
 
   const registerWithEmail = async (name: string, email: string, pass: string, phone?: string) => {
-    const cred = await createUserWithEmailAndPassword(auth, email, pass);
-    if (cred.user) {
-      await updateProfile(cred.user, { displayName: name });
-      const newProfile: UserProfile = {
-        uid: cred.user.uid,
-        email,
-        displayName: name,
-        phoneNumber: phone || undefined,
-        role: 'customer',
-        isBlocked: false,
-        addresses: [],
-        createdAt: new Date().toISOString(),
-      };
-      await setDoc(doc(db, 'users', cred.user.uid), stripUndefined(newProfile));
-      setUserProfile(newProfile);
+    const cleanName = name.trim();
+    if (!cleanName || cleanName.length < 2) {
+      throw new Error('Please enter your full name (at least 2 characters).');
+    }
+    const { email: cleanEmail, password } = validateEmailAndPasswordInput(email, pass);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+      if (cred.user) {
+        await updateProfile(cred.user, { displayName: cleanName });
+        const newProfile: UserProfile = {
+          uid: cred.user.uid,
+          email: cleanEmail,
+          displayName: cleanName,
+          phoneNumber: phone?.trim() || undefined,
+          role: 'customer',
+          isBlocked: false,
+          addresses: [],
+          createdAt: new Date().toISOString(),
+        };
+        await setDoc(doc(db, 'users', cred.user.uid), stripUndefined(newProfile));
+        setUserProfile(newProfile);
+      }
+    } catch (err: any) {
+      throw wrapAuthError(err, 'Account registration failed.');
     }
   };
 
@@ -415,7 +447,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resetPassword = async (email: string) => {
-    await sendPasswordResetEmail(auth, email);
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      throw new Error('Please enter a valid email address first.');
+    }
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+    } catch (err: any) {
+      throw wrapAuthError(err, 'Could not send password reset email.');
+    }
   };
 
   const resendVerificationEmail = async () => {
@@ -436,21 +476,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const updateProfileDetails = async (details: { displayName: string; phoneNumber?: string }) => {
+  const updateProfileDetails = async (details: { displayName: string; phoneNumber?: string; photoURL?: string }) => {
     if (!currentUser) return;
     const cleanName = details.displayName.trim();
     const cleanPhone = details.phoneNumber?.trim() || undefined;
+    const cleanPhoto = details.photoURL !== undefined ? details.photoURL.trim() || undefined : userProfile?.photoURL;
+    const authUpdate: { displayName?: string; photoURL?: string | null } = {};
     if (cleanName && cleanName !== currentUser.displayName) {
-      await updateProfile(currentUser, { displayName: cleanName });
+      authUpdate.displayName = cleanName;
+    }
+    if (details.photoURL !== undefined && cleanPhoto !== (currentUser.photoURL || undefined)) {
+      authUpdate.photoURL = cleanPhoto || '';
+    }
+    if (Object.keys(authUpdate).length > 0) {
+      await updateProfile(currentUser, authUpdate).catch(() => {});
     }
     const updates = stripUndefined({
       displayName: cleanName,
       phoneNumber: cleanPhone,
+      photoURL: cleanPhoto,
       updatedAt: new Date().toISOString(),
     });
     await setDoc(doc(db, 'users', currentUser.uid), updates, { merge: true });
     if (userProfile) {
-      setUserProfile({ ...userProfile, displayName: cleanName, phoneNumber: cleanPhone });
+      setUserProfile({ ...userProfile, displayName: cleanName, phoneNumber: cleanPhone, photoURL: cleanPhoto });
     }
   };
 

@@ -240,10 +240,11 @@ service cloud.firestore {
 
     // Private Subscription Payment Receipts (Never public; Super Admin & uploading owner only)
     match /platform_payment_receipts/{receiptId} {
-      allow get, list: if isValidId(receiptId) && (
+      allow get: if isValidId(receiptId) && (
         isSuperAdmin() ||
         (isSignedIn() && resource.data.ownerId == request.auth.uid)
       );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.ownerId == request.auth.uid);
       allow create: if isValidId(receiptId) && isSignedIn() &&
         incoming().keys().hasAll(['id', 'shopId', 'ownerId', 'contentType', 'base64Data', 'createdAt']) &&
         incoming().ownerId == request.auth.uid &&
@@ -350,8 +351,11 @@ service cloud.firestore {
       allow delete: if isValidId(userId) && isSuperAdmin();
 
       match /shopMemberships/{shopId} {
-        allow read: if isValidId(userId) && isValidId(shopId) && (
+        allow get: if isValidId(userId) && isValidId(shopId) && (
           (isSignedIn() && request.auth.uid == userId) || isSuperAdmin() || isShopAdmin(shopId)
+        );
+        allow list: if isValidId(userId) && (
+          (isSignedIn() && request.auth.uid == userId) || isSuperAdmin() || (isSignedIn() && isShopAdmin(resource.data.shopId))
         );
         allow create, update: if isValidId(userId) && isValidId(shopId) && isSignedIn() && (
           isSuperAdmin() ||
@@ -494,12 +498,14 @@ service cloud.firestore {
 
       // Shop Carts
       match /carts/{cartId} {
-        allow read, write: if isValidId(cartId) && ((isSignedIn() && request.auth.uid == cartId) || isShopMember(shopId));
+        allow get, create, update, delete: if isValidId(cartId) && ((isSignedIn() && request.auth.uid == cartId) || isShopMember(shopId));
+        allow list: if isShopMember(shopId);
       }
 
       // Shop Wishlists
       match /wishlists/{wishlistId} {
-        allow read, write: if isValidId(wishlistId) && ((isSignedIn() && request.auth.uid == wishlistId) || isShopMember(shopId));
+        allow get, create, update, delete: if isValidId(wishlistId) && ((isSignedIn() && request.auth.uid == wishlistId) || isShopMember(shopId));
+        allow list: if isShopMember(shopId);
       }
 
       // Shop Reviews
@@ -514,7 +520,12 @@ service cloud.firestore {
 
       // Shop Orders — BLOCK public & guest reads to protect customer PII!
       match /orders/{orderId} {
-        allow get, list: if isValidId(orderId) && (
+        allow get: if isValidId(orderId) && (
+          hasShopPermission(shopId, 'orders') ||
+          isShopMember(shopId) ||
+          (isSignedIn() && resource.data.userId == request.auth.uid)
+        );
+        allow list: if (
           hasShopPermission(shopId, 'orders') ||
           isShopMember(shopId) ||
           (isSignedIn() && resource.data.userId == request.auth.uid)
@@ -563,13 +574,15 @@ service cloud.firestore {
 
       // Shop Inventory Logs
       match /inventory_logs/{logId} {
-        allow read, write: if isValidId(logId) && hasShopPermission(shopId, 'inventory');
+        allow get, create, update, delete: if isValidId(logId) && hasShopPermission(shopId, 'inventory');
+        allow list: if hasShopPermission(shopId, 'inventory');
       }
 
       // Shop Contact Messages
       match /contact_messages/{messageId} {
         allow create: if isValidId(messageId) && isValidContactMessage(incoming());
-        allow read, update, delete: if isValidId(messageId) && isShopMember(shopId);
+        allow get, update, delete: if isValidId(messageId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
       }
 
       // Shop Newsletter Subscribers (public email signup, tenant read/manage only)
@@ -581,12 +594,17 @@ service cloud.firestore {
           incoming().email.size() >= 5 &&
           incoming().email.size() <= 150 &&
           incoming().email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
-        allow read, update, delete: if isValidId(subId) && isShopMember(shopId);
+        allow get, update, delete: if isValidId(subId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
       }
 
       // Shop Private Checkout Payment Receipts (Create-only during checkout; NEVER public read)
       match /payment_receipts/{receiptId} {
-        allow get, list: if isValidId(receiptId) && (
+        allow get: if isValidId(receiptId) && (
+          isShopMember(shopId) ||
+          (isSignedIn() && resource.data.uploaderUid == request.auth.uid)
+        );
+        allow list: if (
           isShopMember(shopId) ||
           (isSignedIn() && resource.data.uploaderUid == request.auth.uid)
         );
@@ -602,7 +620,13 @@ service cloud.firestore {
 
       // Shop Customers Directory
       match /customers/{customerId} {
-        allow read: if isValidId(customerId) && (
+        allow get: if isValidId(customerId) && (
+          hasShopPermission(shopId, 'customers') ||
+          hasShopPermission(shopId, 'pos') ||
+          hasShopPermission(shopId, 'khata') ||
+          isShopMember(shopId)
+        );
+        allow list: if (
           hasShopPermission(shopId, 'customers') ||
           hasShopPermission(shopId, 'pos') ||
           hasShopPermission(shopId, 'khata') ||
@@ -681,11 +705,13 @@ service cloud.firestore {
             incoming().message is string && incoming().message.size() <= 240
           )
         );
-        allow read, update, delete: if isValidId(notifId) && isShopMember(shopId);
+        allow get, update, delete: if isValidId(notifId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
       }
 
       match /activity_logs/{logId} {
-        allow read: if isValidId(logId) && isShopMember(shopId);
+        allow get: if isValidId(logId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
         allow create: if isValidId(logId) && isShopMember(shopId) && incoming().actorId == request.auth.uid;
         allow update, delete: if isValidId(logId) && isShopAdmin(shopId);
       }
@@ -888,9 +914,10 @@ service cloud.firestore {
 
     // Authorized business expenses: salesmen submit own as pending only; NEVER self-approve
     match /salesExpenses/{expenseId} {
-      allow get, list: if isValidId(expenseId) && (
+      allow get: if isValidId(expenseId) && (
         isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid)
       );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid);
       allow create: if isValidId(expenseId) && (
         isSuperAdmin() || (
           isSignedIn() &&
@@ -905,9 +932,10 @@ service cloud.firestore {
 
     // Team bonus recommendations: Sales Manager submits ONLY for own team member as pending; Super Admin approves
     match /salesBonusRecommendations/{recId} {
-      allow get, list: if isValidId(recId) && (
+      allow get: if isValidId(recId) && (
         isSuperAdmin() || (isSignedIn() && resource.data.managerUid == request.auth.uid)
       );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.managerUid == request.auth.uid);
       allow create: if isValidId(recId) && (
         isSuperAdmin() || (
           isSignedIn() &&
@@ -923,7 +951,8 @@ service cloud.firestore {
 
     // Approved sales collateral: readable by active sales members & referral agents; Super Admin write only
     match /salesMaterials/{materialId} {
-      allow get, list: if isSuperAdmin() || hasSalesClaimRole(['salesman', 'senior_salesman', 'sales_manager', 'referral_agent']);
+      allow get: if isValidId(materialId) && (isSuperAdmin() || hasSalesClaimRole(['salesman', 'senior_salesman', 'sales_manager', 'referral_agent']));
+      allow list: if isSuperAdmin() || hasSalesClaimRole(['salesman', 'senior_salesman', 'sales_manager', 'referral_agent']);
       allow create, update, delete: if isValidId(materialId) && isSuperAdmin();
     }
 

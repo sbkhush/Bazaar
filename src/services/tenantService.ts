@@ -51,6 +51,7 @@ import {
   deriveTrackingTokenHash,
   deriveTrackingDocId,
 } from '../utils/trackingCrypto';
+import { buildApiUrl, isBackendApiAvailable } from '../config/api';
 import {
   normalizeAndValidateSocialLinks,
   normalizeOptionalHttpUrl,
@@ -439,9 +440,9 @@ export async function createShopOrder(
   const signedInUid = auth.currentUser?.uid;
   const effectiveUserId = signedInUid || 'guest';
 
-  if (effectiveUserId === 'guest') {
+  if (effectiveUserId === 'guest' && isBackendApiAvailable()) {
     try {
-      const response = await fetch('/api/orders/create', {
+      const response = await fetch(buildApiUrl('/api/orders/create'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...orderData, shopId, userId: 'guest', idempotencyKey: idemKey || undefined }),
@@ -704,15 +705,17 @@ export async function trackShopOrder(shopId: string, ref: string, token?: string
     } catch {}
 
     // Server backend fallback if running Node API
-    try {
-      const res = await fetch(
-        `/api/orders/track?shopId=${encodeURIComponent(shopId)}&ref=${encodeURIComponent(upperRef)}&token=${encodeURIComponent(cleanToken)}`
-      );
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        return (await res.json()) as Order;
-      }
-    } catch {}
+    if (isBackendApiAvailable()) {
+      try {
+        const res = await fetch(
+          buildApiUrl(`/api/orders/track?shopId=${encodeURIComponent(shopId)}&ref=${encodeURIComponent(upperRef)}&token=${encodeURIComponent(cleanToken)}`)
+        );
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          return (await res.json()) as Order;
+        }
+      } catch {}
+    }
   }
 
   return null;

@@ -5,8 +5,10 @@ import {
   deleteObject,
   getMetadata,
 } from 'firebase/storage';
-import { doc, getDoc, setDoc, updateDoc, increment } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { doc, getDoc, updateDoc, increment, setDoc } from 'firebase/firestore';
 import { storage, db, auth } from '../firebase/config';
+import { buildApiUrl, isBackendApiAvailable } from '../config/api';
 
 export type StorageFolder =
   | 'logo'
@@ -15,7 +17,8 @@ export type StorageFolder =
   | 'categories'
   | 'pages'
   | 'payments'
-  | 'subscription';
+  | 'subscription'
+  | 'profile';
 
 export interface UploadProgressOptions {
   shopId: string;
@@ -46,6 +49,8 @@ export interface StorageHealthReport {
   bucketName: string;
   status: 'healthy' | 'bucket_missing' | 'permission_denied' | 'network_error';
   message: string;
+  corsOrigin?: string;
+  claimsPresent?: boolean;
   checkedAt: string;
 }
 
@@ -100,23 +105,40 @@ export function evaluateStorageQuota(
 
 export function mapFirebaseStorageError(err: any): string {
   const code = String(err?.code || '');
+  const rawMessage = String(err?.message || '');
+  const lower = rawMessage.toLowerCase();
+
+  if (
+    code === 'storage/unknown' ||
+    lower.includes('cors') ||
+    lower.includes('preflight') ||
+    lower.includes('failed to fetch') ||
+    lower.includes('networkerror') ||
+    lower.includes('xmlhttprequest')
+  ) {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://sbkhush.github.io';
+    return `Upload blocked by network or Firebase Storage CORS policy for origin ${origin}. Ensure cors.json is applied to the bucket via Google Cloud CLI. (${code || 'CORS_OR_NETWORK'})`;
+  }
+
   switch (code) {
     case 'storage/bucket-not-found':
-      return 'Firebase Storage bucket is not provisioned or configured. Check Firebase Console -> Storage.';
+      return 'Firebase Storage bucket is not provisioned or configured. Check Firebase Console -> Storage. (storage/bucket-not-found)';
     case 'storage/unauthorized':
-      return 'Upload denied by Firebase Storage rules. Sign out/in to refresh your tenant permissions or verify storage.rules and Cloud Functions claims.';
+      return 'Upload denied by Firebase Storage rules. Sign out and back in to refresh your tenant permissions or verify storage.rules and Cloud Functions claims. (storage/unauthorized)';
     case 'storage/unauthenticated':
-      return 'Please sign in again before uploading images.';
+      return 'Please sign in again before uploading images. (storage/unauthenticated)';
     case 'storage/quota-exceeded':
-      return 'Firebase Storage bucket quota exceeded. Contact platform administrator.';
+      return 'Firebase Storage bucket quota exceeded. Contact platform administrator. (storage/quota-exceeded)';
     case 'storage/retry-limit-exceeded':
-      return 'Upload timed out due to unstable network connection. Please click Retry.';
+      return 'Upload timed out due to unstable network or CORS preflight blocking. Check Storage CORS configuration and retry. (storage/retry-limit-exceeded)';
     case 'storage/canceled':
-      return 'Upload was canceled.';
+      return 'Upload was canceled. (storage/canceled)';
     case 'storage/invalid-format':
-      return 'Unsupported image file format.';
+      return 'Unsupported image file format. (storage/invalid-format)';
     default:
-      return err?.message || 'Failed to upload image to Firebase Storage.';
+      return rawMessage
+        ? `${rawMessage}${code ? ` (${code})` : ''}`
+        : 'Failed to upload image to Firebase Storage.';
   }
 }
 
@@ -327,8 +349,12 @@ export async function uploadShopImage(
         onProgress
       );
     } catch (firstErr: any) {
-      // Force refresh custom claims once on permission error in case staff/shop claim was just issued
+      // Force refresh custom claims via callable & ID token once on permission error
       if (firstErr?.code === 'storage/unauthorized' && auth.currentUser) {
+        try {
+          const fn = httpsCallable(getFunctions(auth.app), 'syncMyCustomClaims');
+          await fn();
+        } catch {}
         await auth.currentUser.getIdToken(true).catch(() => {});
         downloadUrl = await runResumableStorageUpload(
           storagePath,
@@ -428,41 +454,43 @@ export async function uploadCheckoutPaymentProof(
   const contentType = processedBlob.type || file.type || 'image/webp';
   const fileName = sanitizeFileName(file.name);
 
-  // 1. Prefer server-side private upload endpoint when Express API is available
-  try {
-    const response = await fetch('/api/uploads/payment-proof', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        shopId,
-        orderSessionId,
-        contentType,
-        fileName,
-        base64Data,
-      }),
-    });
-    const ct = response.headers.get('content-type') || '';
-    if (response.ok && ct.includes('application/json')) {
-      const payload = await response.json();
-      onProgress?.(100);
-      return {
-        url: payload.receiptUrl,
-        storagePath: payload.receiptId,
-        bytes: compressedBytes,
-        originalBytes,
-        savedPercent,
-        isPrivateReceipt: true,
-      };
+  // 1. Prefer server-side private upload endpoint when Express backend is configured/available
+  if (isBackendApiAvailable()) {
+    try {
+      const response = await fetch(buildApiUrl('/api/uploads/payment-proof'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopId,
+          orderSessionId,
+          contentType,
+          fileName,
+          base64Data,
+        }),
+      });
+      const ct = response.headers.get('content-type') || '';
+      if (response.ok && ct.includes('application/json')) {
+        const payload = await response.json();
+        onProgress?.(100);
+        return {
+          url: payload.receiptUrl,
+          storagePath: payload.receiptId,
+          bytes: compressedBytes,
+          originalBytes,
+          savedPercent,
+          isPrivateReceipt: true,
+        };
+      }
+      if (response.status >= 400 && response.status < 500 && ct.includes('application/json')) {
+        const errJson = await response.json();
+        throw new Error(errJson.error || 'Payment proof validation rejected.');
+      }
+    } catch (apiErr: any) {
+      if (apiErr?.message && apiErr.message.includes('validation')) {
+        throw apiErr;
+      }
+      // Static SPA host fallback: write directly to Firestore private subcollection readable ONLY by Shop Members/Super Admin
     }
-    if (response.status >= 400 && response.status < 500 && ct.includes('application/json')) {
-      const errJson = await response.json();
-      throw new Error(errJson.error || 'Payment proof validation rejected.');
-    }
-  } catch (apiErr: any) {
-    if (apiErr?.message && apiErr.message.includes('validation')) {
-      throw apiErr;
-    }
-    // Static SPA host fallback: write directly to Firestore private subcollection readable ONLY by Shop Members/Super Admin
   }
 
   const receiptId = `rcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -623,62 +651,66 @@ export async function deleteStorageImageByUrl(url?: string, shopId?: string): Pr
   }
 }
 
+/**
+ * Non-destructive Firebase Storage configuration & auth claim readiness check.
+ * Avoids synthetic file probes (e.g. ping.webp) that trigger spurious 403/404 browser console errors.
+ */
 export async function checkStorageHealth(): Promise<StorageHealthReport> {
   const bucketName = String(storage?.app?.options?.storageBucket || '');
   const checkedAt = new Date().toISOString();
+  const corsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://sbkhush.github.io';
+
   if (!bucketName) {
     return {
       configured: false,
       bucketName: 'unconfigured',
       status: 'bucket_missing',
       message: 'storageBucket missing in Firebase config.',
+      corsOrigin,
+      claimsPresent: false,
       checkedAt,
     };
   }
 
   try {
-    await getMetadata(ref(storage, 'shops/__health_probe__/ping.webp'));
-    return {
-      configured: true,
-      bucketName,
-      status: 'healthy',
-      message: `Connected cleanly to ${bucketName}`,
-      checkedAt,
-    };
-  } catch (err: any) {
-    const code = String(err?.code || '');
-    if (code === 'storage/object-not-found') {
-      return {
-        configured: true,
-        bucketName,
-        status: 'healthy',
-        message: `Connected cleanly to ${bucketName}`,
-        checkedAt,
-      };
-    }
-    if (code === 'storage/bucket-not-found') {
-      return {
-        configured: false,
-        bucketName,
-        status: 'bucket_missing',
-        message: `Bucket ${bucketName} not found in Firebase project.`,
-        checkedAt,
-      };
-    }
-    if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
+    const tokenResult = auth.currentUser
+      ? await auth.currentUser.getIdTokenResult().catch(() => null)
+      : null;
+    const claims = tokenResult?.claims || {};
+    const hasSuperClaim = claims.super_admin === true;
+    const hasShopClaims = Boolean(claims.shops && Object.keys(claims.shops).length > 0);
+    const claimsPresent = hasSuperClaim || hasShopClaims;
+
+    if (!auth.currentUser) {
       return {
         configured: true,
         bucketName,
         status: 'permission_denied',
-        message: `Bucket ${bucketName} reachable (rules require tenant claims for write).`,
+        message: `Bucket ${bucketName} configured. Sign in as Super Admin or shop staff to upload.`,
+        corsOrigin,
+        claimsPresent: false,
         checkedAt,
       };
     }
+
+    return {
+      configured: true,
+      bucketName,
+      status: 'healthy',
+      message: claimsPresent
+        ? `Bucket ${bucketName} configured & custom claims active for origin ${corsOrigin}.`
+        : `Bucket ${bucketName} configured for ${corsOrigin}. Ensure cors.json is applied on GCP if browser preflight fails.`,
+      corsOrigin,
+      claimsPresent,
+      checkedAt,
+    };
+  } catch (err: any) {
     return {
       configured: true,
       bucketName,
       status: 'network_error',
-      message: err?.message || 'Could not reach Firebase Storage endpoint.',
+      message: err?.message || 'Could not inspect Firebase Storage configuration.',
+      corsOrigin,
       checkedAt,
     };
   }

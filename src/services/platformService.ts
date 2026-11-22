@@ -713,12 +713,57 @@ export async function registerNewShop(input: {
   }
 }
 
+export function buildShopPublicUpsertPayload(
+  shopId: string,
+  shop: Partial<Shop> | null | undefined,
+  status: ShopStatus,
+  updatedAt: string
+): ShopPublic {
+  const baseSlug = sanitizeShopSlug(shop?.slug || shopId) || sanitizeShopSlug(shopId) || 'store';
+  const base = toShopPublic({
+    id: shopId,
+    slug: baseSlug,
+    name: shop?.name || shopId,
+    ownerId: shop?.ownerId || '',
+    ownerName: shop?.ownerName || '',
+    ownerEmail: shop?.ownerEmail || '',
+    ownerPhone: shop?.ownerPhone || '',
+    city: shop?.city || 'Pakistan',
+    address: shop?.address || '',
+    businessType: shop?.businessType,
+    logoUrl: shop?.logoUrl,
+    status,
+    subscription: shop?.subscription || {
+      planId: 'free-starter',
+      planName: 'Starter Free',
+      status: 'active',
+      billingCycle: 'monthly',
+      pricePaid: 0,
+      startDate: updatedAt,
+      expiryDate: updatedAt,
+    },
+    usage: shop?.usage || { productsCount: 0, ordersCount: 0, storageBytes: 0, staffCount: 1 },
+    createdAt: shop?.createdAt || updatedAt,
+    updatedAt,
+  });
+  return {
+    ...base,
+    id: shopId,
+    slug: baseSlug,
+    name: shop?.name || shopId,
+    status,
+    updatedAt,
+  };
+}
+
 export async function updateShopStatus(shopId: string, status: ShopStatus): Promise<void> {
   const now = new Date().toISOString();
   try {
+    const existingShop = await getShopById(shopId);
+    const shopPublicPayload = buildShopPublicUpsertPayload(shopId, existingShop, status, now);
     const batch = writeBatch(db);
     batch.update(doc(db, 'shops', shopId), { status, updatedAt: now });
-    batch.set(doc(db, 'shops_public', shopId), { status, updatedAt: now }, { merge: true });
+    batch.set(doc(db, 'shops_public', shopId), shopPublicPayload, { merge: true });
     await batch.commit();
     if (status === 'active') {
       const { verifyReferralAttributionOnShopActivation } = await import('./salesService');
@@ -760,13 +805,15 @@ export async function assignShopSubscription(
   };
 
   try {
+    const existingShop = await getShopById(shopId);
+    const shopPublicPayload = buildShopPublicUpsertPayload(shopId, existingShop, 'active', startDate);
     const batch = writeBatch(db);
     batch.update(doc(db, 'shops', shopId), {
       subscription: stripUndefined(subscription),
       status: 'active',
       updatedAt: startDate,
     });
-    batch.set(doc(db, 'shops_public', shopId), { status: 'active', updatedAt: startDate }, { merge: true });
+    batch.set(doc(db, 'shops_public', shopId), shopPublicPayload, { merge: true });
     await batch.commit();
     await logPlatformActivity(
       'Updated Shop Plan',
@@ -831,6 +878,8 @@ export async function deleteShopComplete(shopId: string): Promise<void> {
       'pages',
       'carts',
       'wishlists',
+      'payment_receipts',
+      'newsletter_subscribers',
     ];
 
     for (const sub of subcollections) {
@@ -976,7 +1025,8 @@ export async function approvePlatformPayment(paymentId: string): Promise<void> {
         updatedAt: nowIso,
       });
 
-      tx.set(shopPubRef, { status: 'active', updatedAt: nowIso }, { merge: true });
+      const shopPublicPayload = buildShopPublicUpsertPayload(payment.shopId, shopData, 'active', nowIso);
+      tx.set(shopPubRef, shopPublicPayload, { merge: true });
       logMsg = `Approved Rs. ${payment.amount} for ${payment.shopName} (${payment.planName})`;
     });
 

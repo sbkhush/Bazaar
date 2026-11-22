@@ -6,6 +6,7 @@ COPY package*.json ./
 RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 COPY . .
+ENV VITE_BASE_PATH="/"
 RUN npm run build
 
 FROM node:22-slim

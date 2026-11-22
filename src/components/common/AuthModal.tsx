@@ -3,6 +3,7 @@ import { X, Mail, Lock, User, Phone, LogIn, UserPlus, KeyRound, AlertCircle, Loa
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
 import { useToast } from './Toast';
+import { formatFirebaseAuthError } from '../../utils/authErrors';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -58,15 +59,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
     } catch (err: any) {
       console.error(err);
-      let msg = err.message || 'Authentication failed';
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-        msg = 'Invalid email or password.';
-      } else if (err.code === 'auth/email-already-in-use') {
-        msg = 'An account with this email already exists.';
-      } else if (err.code === 'auth/weak-password') {
-        msg = 'Password should be at least 6 characters.';
-      }
-      setError(msg);
+      setError(formatFirebaseAuthError(err, 'Authentication failed'));
     } finally {
       setLoading(false);
     }
@@ -81,7 +74,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onClose();
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Google sign in failed');
+      setError(formatFirebaseAuthError(err, 'Google sign in failed'));
     } finally {
       setLoading(false);
     }

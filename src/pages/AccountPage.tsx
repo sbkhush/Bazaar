@@ -32,6 +32,7 @@ import {
 } from '../data/seedData';
 import { useToast } from '../components/common/Toast';
 import { AuthModal } from '../components/common/AuthModal';
+import { ImageUploader } from '../components/common/ImageUploader';
 
 export const AccountPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -50,6 +51,7 @@ export const AccountPage: React.FC = () => {
 
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editPhotoUrl, setEditPhotoUrl] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
 
   const [addressModalOpen, setAddressModalOpen] = useState(false);
@@ -68,6 +70,7 @@ export const AccountPage: React.FC = () => {
   useEffect(() => {
     setEditName(userProfile?.displayName || currentUser?.displayName || '');
     setEditPhone(userProfile?.phoneNumber || '');
+    setEditPhotoUrl(userProfile?.photoURL || currentUser?.photoURL || '');
   }, [userProfile, currentUser]);
 
   useEffect(() => {
@@ -123,6 +126,7 @@ export const AccountPage: React.FC = () => {
       await updateProfileDetails({
         displayName: editName.trim(),
         phoneNumber: editPhone.trim(),
+        photoURL: editPhotoUrl.trim(),
       });
       showToast('Profile details updated!', 'success');
     } catch {
@@ -285,9 +289,17 @@ export const AccountPage: React.FC = () => {
     <div className="max-w-7xl mx-auto px-4 py-6 sm:py-8">
       <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 text-white p-5 sm:p-8 rounded-3xl shadow-lg mb-6 sm:mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex items-center gap-4 min-w-0">
-          <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center font-black text-xl sm:text-2xl text-white shrink-0">
-            {currentUser.displayName ? currentUser.displayName[0].toUpperCase() : 'U'}
-          </div>
+          {userProfile?.photoURL || currentUser.photoURL ? (
+            <img
+              src={userProfile?.photoURL || currentUser.photoURL || ''}
+              alt={userProfile?.displayName || currentUser.displayName || 'User'}
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl object-cover border border-white/25 shrink-0"
+            />
+          ) : (
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center font-black text-xl sm:text-2xl text-white shrink-0">
+              {currentUser.displayName ? currentUser.displayName[0].toUpperCase() : 'U'}
+            </div>
+          )}
           <div className="min-w-0">
             <h1 className="text-lg sm:text-xl font-bold truncate">
               {userProfile?.displayName || currentUser.displayName || 'Customer'}
@@ -648,6 +660,14 @@ export const AccountPage: React.FC = () => {
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
               />
             </div>
+            <ImageUploader
+              shopId={shopId || 'profile'}
+              folder="profile"
+              subPath={currentUser.uid}
+              images={editPhotoUrl ? [editPhotoUrl] : []}
+              onChange={(imgs) => setEditPhotoUrl(imgs[0] || '')}
+              label="Profile Photo"
+            />
             <button
               type="submit"
               disabled={savingProfile}
