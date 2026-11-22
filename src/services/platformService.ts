@@ -460,6 +460,7 @@ export async function registerNewShop(input: {
   billingCycle: BillingCycle;
   referralCode?: string;
   referralSource?: 'referral_link' | 'qr_scan' | 'manual_assisted' | 'code_entry';
+  referralCapturedAt?: string;
   leadId?: string;
   paymentProof?: {
     method: 'easypaisa' | 'jazzcash' | 'bank_transfer';
@@ -701,6 +702,7 @@ export async function registerNewShop(input: {
         industry: businessType,
         leadId: input.leadId,
         source: input.referralSource || 'code_entry',
+        capturedAt: input.referralCapturedAt,
       }).catch((e) => console.warn('Referral attribution note:', e));
     }
 

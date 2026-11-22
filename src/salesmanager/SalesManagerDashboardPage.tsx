@@ -50,6 +50,7 @@ export const SalesManagerDashboardPage: React.FC = () => {
   }, [pathname]);
 
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [teamMembers, setTeamMembers] = useState<SalesMember[]>([]);
   const [teamLeads, setTeamLeads] = useState<SalesLead[]>([]);
   const [teamActivities, setTeamActivities] = useState<SalesActivity[]>([]);
@@ -71,6 +72,7 @@ export const SalesManagerDashboardPage: React.FC = () => {
   const loadData = async () => {
     if (!currentUser?.uid) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const uid = currentUser.uid;
       const [members, leads, recs] = await Promise.all([
@@ -90,6 +92,8 @@ export const SalesManagerDashboardPage: React.FC = () => {
       ]);
       setTeamActivities(acts);
       setTeamTargets(tgts);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Unable to load regional sales team workspace.');
     } finally {
       setLoading(false);
     }
@@ -98,8 +102,6 @@ export const SalesManagerDashboardPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [currentUser?.uid]);
-
-  if (!currentUser || !salesMember) return null;
 
   const teamStats = useMemo(() => {
     const converted = teamLeads.filter((l) => l.status === 'Converted').length;
@@ -117,6 +119,8 @@ export const SalesManagerDashboardPage: React.FC = () => {
       totalTarget,
     };
   }, [teamMembers, teamLeads, teamActivities]);
+
+  if (!currentUser || !salesMember) return null;
 
   const handleAssignLead = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -196,6 +200,21 @@ export const SalesManagerDashboardPage: React.FC = () => {
     return (
       <div className="bg-white border border-slate-200 rounded-2xl p-12 flex justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-[#065F46]" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="bg-white border border-rose-200 rounded-2xl p-8 text-center space-y-3">
+        <p className="text-sm font-bold text-rose-700">{loadError}</p>
+        <button
+          type="button"
+          onClick={loadData}
+          className="px-4 py-2 rounded-xl bg-[#065F46] text-white text-xs font-bold hover:bg-emerald-900"
+        >
+          Retry Loading Team Data
+        </button>
       </div>
     );
   }

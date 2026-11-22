@@ -24,9 +24,6 @@ import { Product, Category } from '../../types';
 import {
   formatPKR,
   FALLBACK_PRODUCT_IMAGE,
-  DEFAULT_SHOP_ID,
-  INITIAL_PRODUCTS,
-  INITIAL_CATEGORIES,
 } from '../../data/seedData';
 import { SafeImage } from './SafeImage';
 
@@ -58,20 +55,8 @@ export const Header: React.FC = () => {
     Promise.all([getShopProducts(shopId), getShopCategories(shopId)])
       .then(([prods, cats]) => {
         if (!active) return;
-        const resolvedProds =
-          prods.length > 0
-            ? prods
-            : shopId === DEFAULT_SHOP_ID
-            ? INITIAL_PRODUCTS
-            : [];
-        const resolvedCats =
-          cats.length > 0
-            ? cats
-            : shopId === DEFAULT_SHOP_ID
-            ? INITIAL_CATEGORIES
-            : [];
-        setAllProducts(resolvedProds);
-        setCategories(resolvedCats);
+        setAllProducts(prods);
+        setCategories(cats);
       })
       .catch(console.warn);
     return () => {

@@ -6,6 +6,8 @@ import {
   AlertTriangle,
   Sliders,
   X,
+  Download,
+  Upload,
 } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
@@ -17,9 +19,11 @@ import { calculateInventoryValuation } from '../services/retailService';
 import { Product, StockMovement, StockMovementType } from '../types';
 import { formatPKR } from '../data/seedData';
 import { useAuth } from '../context/AuthContext';
+import { CsvImportModal } from '../components/common/CsvImportModal';
+import { downloadCsvFile } from '../utils/csvUtils';
 
 export const ShopInventoryPage: React.FC = () => {
-  const { shopId, isReadOnly } = useDashboard();
+  const { shopId, shop, isReadOnly } = useDashboard();
   const { currentUser } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
@@ -29,6 +33,7 @@ export const ShopInventoryPage: React.FC = () => {
   const [moveQty, setMoveQty] = useState(1);
   const [moveNote, setMoveNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [csvModalOpen, setCsvModalOpen] = useState(false);
 
   const loadData = async () => {
     if (!shopId) return;
@@ -100,13 +105,96 @@ export const ShopInventoryPage: React.FC = () => {
   const lowStockCount = activeProds.filter((p) => p.stock > 0 && p.stock <= (p.minStockAlert ?? 5)).length;
   const outOfStockCount = activeProds.filter((p) => p.stock <= 0).length;
 
+  const exportStockCsv = () => {
+    downloadCsvFile(
+      `${shop?.slug || shopId}-inventory-stock-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['title', 'sku', 'barcode', 'stock', 'minStockAlert', 'unit', 'costPricePKR', 'sellPricePKR'],
+      products.map((p) => [
+        p.title,
+        p.sku,
+        p.barcode || '',
+        p.stock,
+        p.minStockAlert ?? 5,
+        p.unit || 'pcs',
+        p.purchasePrice ?? '',
+        p.salePrice ?? p.regularPrice,
+      ])
+    );
+  };
+
+  const handleImportAdjustments = async (rows: Record<string, string>[]) => {
+    if (isReadOnly) throw new Error('Read-only mode.');
+    let imported = 0;
+    let skipped = 0;
+    for (const r of rows) {
+      const sku = (r.sku || '').trim().toLowerCase();
+      const barcode = (r.barcode || '').trim().toLowerCase();
+      const deltaRaw = Number(r.delta ?? r.quantitychange ?? r.adjustment ?? r.quantity ?? 0);
+      if (!Number.isFinite(deltaRaw) || deltaRaw === 0) {
+        skipped++;
+        continue;
+      }
+      const match = products.find(
+        (p) =>
+          (sku && (p.sku || '').trim().toLowerCase() === sku) ||
+          (barcode && (p.barcode || '').trim().toLowerCase() === barcode)
+      );
+      if (!match) {
+        skipped++;
+        continue;
+      }
+      const rawType = (r.type || '').trim().toLowerCase();
+      const validTypes: StockMovementType[] = ['stock_in', 'stock_out', 'damaged', 'wastage', 'opening', 'adjustment'];
+      const movementType: StockMovementType = validTypes.includes(rawType as StockMovementType)
+        ? (rawType as StockMovementType)
+        : deltaRaw > 0
+        ? 'stock_in'
+        : 'adjustment';
+      await adjustShopStock(
+        shopId,
+        match.id,
+        deltaRaw,
+        (r.reason || 'CSV Stock Adjustment').trim(),
+        currentUser?.email || 'Admin',
+        movementType
+      );
+      imported++;
+    }
+    await loadData();
+    return {
+      imported,
+      skipped,
+      notes: skipped > 0 ? 'Unmatched SKU/barcode rows or zero-delta rows were skipped.' : undefined,
+    };
+  };
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-extrabold text-slate-900">Inventory &amp; Stock Movements</h2>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Track live quantities, low-stock thresholds, inventory valuation, damaged/wastage, and audit movements.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-extrabold text-slate-900">Inventory &amp; Stock Movements</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Track live quantities, low-stock thresholds, inventory valuation, damaged/wastage, and audit movements.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 self-start">
+          <button
+            type="button"
+            onClick={exportStockCsv}
+            className="px-3.5 py-2 border border-slate-300 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold flex items-center gap-1.5"
+          >
+            <Download className="w-3.5 h-3.5" /> Export Stock CSV
+          </button>
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={() => setCsvModalOpen(true)}
+              className="px-3.5 py-2 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+            >
+              <Upload className="w-3.5 h-3.5" /> Import Adjustments CSV
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Valuation Summary Cards */}
@@ -328,6 +416,17 @@ export const ShopInventoryPage: React.FC = () => {
           </form>
         </div>
       )}
+      <CsvImportModal
+        isOpen={csvModalOpen}
+        onClose={() => setCsvModalOpen(false)}
+        title="Import Stock Adjustments CSV"
+        subtitle="Match products by SKU or barcode and apply signed delta adjustments (+ to add, - to deduct)."
+        expectedHeaders={['sku', 'barcode', 'delta', 'type', 'reason']}
+        requiredHeaders={['delta']}
+        sampleFilename={`${shop?.slug || shopId}-stock-adjustments-sample.csv`}
+        sampleRows={[[products[0]?.sku || 'SKU-001', products[0]?.barcode || '', 10, 'stock_in', 'Warehouse restock']]}
+        onImport={handleImportAdjustments}
+      />
     </div>
   );
 };

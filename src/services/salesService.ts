@@ -264,8 +264,8 @@ export async function getSalesAuditLogs(maxItems = 150): Promise<SalesAuditLog[]
     const q = query(collection(db, 'salesAuditLogs'), orderBy('createdAt', 'desc'), limit(maxItems));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as SalesAuditLog), id: d.id }));
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesAuditLogs');
   }
 }
 
@@ -305,8 +305,8 @@ export async function getSalesNotifications(recipientSalesmanId: string, recipie
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesNotification), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesNotifications');
   }
 }
 
@@ -649,6 +649,78 @@ export async function createSalesMember(input: {
   }
 }
 
+export async function submitReferralPartnerApplication(input: {
+  uid: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  city: string;
+  territory?: string;
+}): Promise<SalesMember> {
+  const cleanUid = input.uid.trim();
+  const cleanName = input.fullName.trim();
+  const cleanEmail = input.email.trim().toLowerCase();
+  const cleanPhone = input.phone.trim();
+  if (!cleanUid) throw new Error('Authentication session required to submit application.');
+  if (cleanEmail === 'hasanaamir815@gmail.com') {
+    throw new Error('Super Admin email cannot register as an affiliate partner.');
+  }
+
+  const memberId = `sm_ref_${cleanUid}`;
+  const existingSnap = await getDoc(doc(db, 'salesMembers', memberId)).catch(() => null);
+  if (existingSnap?.exists()) {
+    return { ...(existingSnap.data() as SalesMember), id: existingSnap.id };
+  }
+
+  const settings = await getSalesSettings();
+  const defaultPlan = settings.commissionPlans[0] || DEFAULT_COMMISSION_PLANS[0];
+  const uidTag = cleanUid.slice(0, 6).toUpperCase();
+  const employeeId = `SBK-REF-${uidTag}`;
+
+  const cleanPrefix = cleanName.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'PART';
+  let referralCode = `REF-${cleanPrefix}-${cleanUid.slice(-4).toUpperCase()}`;
+  const collisionSnap = await getDoc(doc(db, 'salesReferralIndex', referralCode)).catch(() => null);
+  if (collisionSnap?.exists()) {
+    referralCode = `REF-${cleanPrefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+  }
+
+  const now = new Date().toISOString();
+  const member = stripUndef<SalesMember>({
+    id: memberId,
+    uid: cleanUid,
+    employeeId,
+    fullName: cleanName,
+    email: cleanEmail,
+    phone: cleanPhone,
+    city: input.city.trim() || 'Karachi',
+    role: 'referral_agent',
+    territory: input.territory?.trim() || input.city.trim() || 'Digital',
+    industryFocus: 'all',
+    joiningDate: now.slice(0, 10),
+    employmentStatus: 'contract',
+    monthlyTarget: 0,
+    yearlyTarget: 0,
+    commissionPlanId: defaultPlan.id,
+    commissionPlanName: defaultPlan.name,
+    accountStatus: 'pending_approval',
+    referralCode,
+    referralLink: buildReferralLink(referralCode, settings.portalBaseUrl),
+    qrScanCount: 0,
+    inviteStatus: 'pending',
+    invitedAt: now,
+    createdBy: cleanUid,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  try {
+    await setDoc(doc(db, 'salesMembers', memberId), member);
+    return member;
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.CREATE, `salesMembers/${memberId}`);
+  }
+}
+
 export async function updateSalesMember(memberId: string, patch: Partial<SalesMember>): Promise<void> {
   if (patch.role !== undefined && !isAllowedSalesRole(patch.role)) {
     throw new Error('Security Policy Violation: sales team accounts can never be assigned super_admin role.');
@@ -861,8 +933,8 @@ export async function getSalesMembersForManager(managerUid: string): Promise<Sal
     const q = query(collection(db, 'salesMembers'), where('assignedManagerUid', '==', managerUid));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as SalesMember), id: d.id }));
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesMembers');
   }
 }
 
@@ -875,8 +947,8 @@ export async function getSalesLeadsForSalesman(salesmanId: string, uid?: string)
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesLead), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesLeads');
   }
 }
 
@@ -888,8 +960,8 @@ export async function getSalesLeadsForManager(managerMemberIdOrUid: string, isUi
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesLead), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesLeads');
   }
 }
 
@@ -1176,8 +1248,8 @@ export async function getAllSalesActivities(): Promise<SalesActivity[]> {
     const q = query(collection(db, 'salesActivities'), orderBy('activityDateTime', 'desc'), limit(250));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as SalesActivity), id: d.id }));
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesActivities');
   }
 }
 
@@ -1190,8 +1262,8 @@ export async function getSalesActivitiesBySalesman(salesmanId: string, uid?: str
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesActivity), id: d.id }))
       .sort((a, b) => new Date(b.activityDateTime).getTime() - new Date(a.activityDateTime).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesActivities');
   }
 }
 
@@ -1246,8 +1318,8 @@ export async function getAllSalesTargets(): Promise<SalesTarget[]> {
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesTarget), id: d.id }))
       .sort((a, b) => b.periodKey.localeCompare(a.periodKey));
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesTargets');
   }
 }
 
@@ -1258,8 +1330,8 @@ export async function getSalesTargetsForMember(salesmanId: string, uid?: string)
       : query(collection(db, 'salesTargets'), where('salesmanId', '==', salesmanId));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as SalesTarget), id: d.id }));
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesTargets');
   }
 }
 
@@ -1320,8 +1392,8 @@ export async function getReferralsForSalesman(salesmanId: string, uid?: string):
     return snap.docs
       .map((d) => ({ ...(d.data() as ReferralAttribution), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'referralAttributions');
   }
 }
 
@@ -1365,23 +1437,87 @@ export async function getReferralCodeOwner(referralCode: string): Promise<Public
   }
 }
 
+export function clearStoredReferralContext(): void {
+  try {
+    localStorage.removeItem('sbkhush_ref_code');
+    localStorage.removeItem('sbkhush_ref_source');
+    localStorage.removeItem('sbkhush_ref_captured_at');
+    localStorage.removeItem('bazaarpk_ref_code');
+    localStorage.removeItem('bazaarpk_ref_source');
+  } catch {}
+}
+
+export function getStoredReferralContext(
+  windowDays: number = DEFAULT_SALES_SETTINGS.attributionWindowDays
+): {
+  code: string;
+  source: 'qr_scan' | 'referral_link' | 'code_entry';
+  capturedAt?: string;
+  expired: boolean;
+} {
+  try {
+    const code = (
+      localStorage.getItem('sbkhush_ref_code') ||
+      localStorage.getItem('bazaarpk_ref_code') ||
+      ''
+    )
+      .trim()
+      .toUpperCase();
+    if (!code) {
+      return { code: '', source: 'code_entry', expired: false };
+    }
+    const rawSource =
+      localStorage.getItem('sbkhush_ref_source') || localStorage.getItem('bazaarpk_ref_source');
+    const source: 'qr_scan' | 'referral_link' | 'code_entry' =
+      rawSource === 'qr_scan' || rawSource === 'referral_link' ? rawSource : 'code_entry';
+    const capturedAt = localStorage.getItem('sbkhush_ref_captured_at') || undefined;
+    if (capturedAt) {
+      const capturedMs = Date.parse(capturedAt);
+      const maxAgeMs = Math.max(1, windowDays) * 24 * 60 * 60 * 1000;
+      if (Number.isFinite(capturedMs) && Date.now() - capturedMs > maxAgeMs) {
+        clearStoredReferralContext();
+        return { code: '', source: 'code_entry', expired: true };
+      }
+    }
+    return { code, source, capturedAt, expired: false };
+  } catch {
+    return { code: '', source: 'code_entry', expired: false };
+  }
+}
+
 export async function trackQrScan(referralCode: string, source: 'qr_scan' | 'referral_link' = 'qr_scan'): Promise<PublicReferralOwner | null> {
   const cleanCode = referralCode.trim().toUpperCase();
   if (!cleanCode) return null;
   try {
+    const nowIso = new Date().toISOString();
+    const todayYmd = nowIso.slice(0, 10);
+    const dedupKey = `sbkhush_qr_scanned_${cleanCode}_${todayYmd}`;
+    let alreadyScannedToday = false;
+
     try {
       localStorage.setItem('sbkhush_ref_code', cleanCode);
       localStorage.setItem('sbkhush_ref_source', source);
+      localStorage.setItem('sbkhush_ref_captured_at', nowIso);
       localStorage.setItem('bazaarpk_ref_code', cleanCode);
       localStorage.setItem('bazaarpk_ref_source', source);
+      alreadyScannedToday = localStorage.getItem(dedupKey) === '1';
     } catch {}
 
-    const apiRes = await trySalesApi<{ owner: PublicReferralOwner | null }>(
+    if (alreadyScannedToday) {
+      return await getReferralCodeOwner(cleanCode);
+    }
+
+    const apiRes = await trySalesApi<{ owner: PublicReferralOwner | null; deduplicated?: boolean }>(
       '/api/sales/qr/track',
       'POST',
       { referralCode: cleanCode, source }
     ).catch(() => null);
-    if (apiRes?.owner) return apiRes.owner;
+    if (apiRes?.owner) {
+      try {
+        localStorage.setItem(dedupKey, '1');
+      } catch {}
+      return apiRes.owner;
+    }
 
     const owner = await getReferralCodeOwner(cleanCode);
     if (owner && owner.accountStatus === 'active') {
@@ -1391,8 +1527,11 @@ export async function trackQrScan(referralCode: string, source: 'qr_scan' | 'ref
         salesmanId: owner.salesmanId,
         referralCode: cleanCode,
         source,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
       }).catch(() => {});
+      try {
+        localStorage.setItem(dedupKey, '1');
+      } catch {}
     }
     return owner;
   } catch {
@@ -1405,8 +1544,8 @@ export async function getAllSalesQrEvents(): Promise<SalesQrEvent[]> {
     const q = query(collection(db, 'salesQrEvents'), orderBy('createdAt', 'desc'), limit(200));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as SalesQrEvent), id: d.id }));
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesQrEvents');
   }
 }
 
@@ -1422,9 +1561,20 @@ export async function recordReferralAttribution(input: {
   industry?: BusinessType;
   leadId?: string;
   source?: ReferralAttribution['source'];
+  capturedAt?: string;
 }): Promise<ReferralAttribution | null> {
   const cleanCode = input.referralCode.trim().toUpperCase();
   if (!cleanCode) return null;
+
+  const settings = await getSalesSettings();
+  const windowDays = Math.max(1, Number(settings.attributionWindowDays) || 30);
+  if (input.capturedAt) {
+    const capturedMs = Date.parse(input.capturedAt);
+    if (Number.isFinite(capturedMs) && Date.now() - capturedMs > windowDays * 24 * 60 * 60 * 1000) {
+      clearStoredReferralContext();
+      return null;
+    }
+  }
 
   const apiRes = await trySalesApi<{ attribution: ReferralAttribution | null }>(
     '/api/sales/referrals/record',
@@ -1433,10 +1583,7 @@ export async function recordReferralAttribution(input: {
   ).catch(() => null);
   if (apiRes?.attribution) return apiRes.attribution;
 
-  const [salesman, settings] = await Promise.all([
-    getReferralCodeOwner(cleanCode),
-    getSalesSettings(),
-  ]);
+  const salesman = await getReferralCodeOwner(cleanCode);
   if (!salesman || salesman.accountStatus !== 'active') {
     return null;
   }
@@ -1697,8 +1844,8 @@ export async function getCommissionsForSalesman(salesmanId: string, uid?: string
     return snap.docs
       .map((d) => ({ ...(d.data() as CommissionLedgerEntry), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'commissionLedger');
   }
 }
 
@@ -1918,8 +2065,8 @@ export async function getPayoutsForSalesman(salesmanId: string, uid?: string): P
     return snap.docs
       .map((d) => ({ ...(d.data() as CommissionPayout), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'commissionPayouts');
   }
 }
 
@@ -2299,8 +2446,8 @@ export async function getBonusRecommendationsForManager(managerUid: string): Pro
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesBonusRecommendation), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesBonusRecommendations');
   }
 }
 
@@ -2310,8 +2457,8 @@ export async function getAllBonusRecommendations(): Promise<SalesBonusRecommenda
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesBonusRecommendation), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesBonusRecommendations');
   }
 }
 
@@ -2426,8 +2573,8 @@ export async function getSalesExpensesForMember(salesmanUid: string): Promise<Sa
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesExpense), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesExpenses');
   }
 }
 
@@ -2437,8 +2584,8 @@ export async function getAllSalesExpenses(): Promise<SalesExpense[]> {
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesExpense), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesExpenses');
   }
 }
 
@@ -2485,8 +2632,8 @@ export async function getApprovedSalesMaterials(): Promise<SalesMaterial[]> {
       .map((d) => ({ ...(d.data() as SalesMaterial), id: d.id }))
       .filter((m) => m.isActive !== false)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } catch {
-    return [];
+  } catch (err) {
+    return handleFirestoreError(err, OperationType.LIST, 'salesMaterials');
   }
 }
 

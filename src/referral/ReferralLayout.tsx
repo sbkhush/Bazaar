@@ -31,6 +31,9 @@ export const ReferralLayout: React.FC = () => {
   }
 
   if (!isReferralAgent || !salesMember) {
+    if (salesMember?.role === 'referral_agent' && salesMember.accountStatus === 'pending_approval') {
+      return <Navigate to="/referral/login" replace />;
+    }
     return <Navigate to={authorizedHomePath} replace />;
   }
 

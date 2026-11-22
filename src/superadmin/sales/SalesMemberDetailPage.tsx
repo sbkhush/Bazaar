@@ -55,6 +55,7 @@ export const SalesMemberDetailPage: React.FC = () => {
   const { showToast } = useToast();
 
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [member, setMember] = useState<SalesMember | null>(null);
   const [leads, setLeads] = useState<SalesLead[]>([]);
   const [referrals, setReferrals] = useState<ReferralAttribution[]>([]);
@@ -69,6 +70,7 @@ export const SalesMemberDetailPage: React.FC = () => {
   const loadProfile = async () => {
     if (!memberId) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const m = await getSalesMemberById(memberId);
       setMember(m);
@@ -76,8 +78,8 @@ export const SalesMemberDetailPage: React.FC = () => {
         const [l, r, allShops, allPays, c, p, a, qrUrl] = await Promise.all([
           getSalesLeadsForSalesman(m.id),
           getReferralsForSalesman(m.id),
-          getAllShopsAdmin().catch(() => []),
-          getAllPlatformPayments().catch(() => []),
+          getAllShopsAdmin(),
+          getAllPlatformPayments(),
           getCommissionsForSalesman(m.id),
           getPayoutsForSalesman(m.id),
           getSalesActivitiesBySalesman(m.id),
@@ -93,6 +95,8 @@ export const SalesMemberDetailPage: React.FC = () => {
         setActivities(a);
         setQrDataUrl(qrUrl);
       }
+    } catch (err: any) {
+      setLoadError(err?.message || 'Unable to load salesman profile data from Firestore.');
     } finally {
       setLoading(false);
     }
@@ -106,6 +110,26 @@ export const SalesMemberDetailPage: React.FC = () => {
     return (
       <div className="p-12 flex justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-[#065F46]" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="bg-rose-50 border border-rose-200 rounded-2xl p-8 text-center space-y-3">
+        <p className="text-sm font-bold text-rose-800">{loadError}</p>
+        <div className="flex justify-center gap-3">
+          <button
+            type="button"
+            onClick={loadProfile}
+            className="px-4 py-2 rounded-xl bg-rose-700 text-white text-xs font-bold hover:bg-rose-800"
+          >
+            Retry
+          </button>
+          <Link to="/super-admin/sales/members" className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+            Back to All Salesmen
+          </Link>
+        </div>
       </div>
     );
   }

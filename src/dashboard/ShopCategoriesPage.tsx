@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Trash2, Edit2, Loader2, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Edit2, Loader2, AlertCircle, Download, Upload } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
   getShopCategories,
@@ -9,14 +9,17 @@ import {
 import { Category } from '../types';
 import { FALLBACK_PRODUCT_IMAGE } from '../data/seedData';
 import { ImageUploader } from '../components/common/ImageUploader';
+import { CsvImportModal } from '../components/common/CsvImportModal';
+import { downloadCsvFile } from '../utils/csvUtils';
 
 export const ShopCategoriesPage: React.FC = () => {
-  const { shopId, isReadOnly } = useDashboard();
+  const { shopId, shop, isReadOnly } = useDashboard();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<Category> | null>(null);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [csvModalOpen, setCsvModalOpen] = useState(false);
 
   const loadCats = async () => {
     if (!shopId) return;
@@ -61,6 +64,46 @@ export const ShopCategoriesPage: React.FC = () => {
     }
   };
 
+  const exportCsv = () => {
+    downloadCsvFile(
+      `${shop?.slug || shopId}-categories-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['name', 'slug', 'description', 'order'],
+      categories.map((c) => [c.name, c.slug, c.description || '', c.order || 1])
+    );
+  };
+
+  const handleImportCsv = async (rows: Record<string, string>[]) => {
+    if (isReadOnly) throw new Error('Read-only mode.');
+    const existingNames = new Set(categories.map((c) => c.name.trim().toLowerCase()));
+    const existingSlugs = new Set(categories.map((c) => c.slug.trim().toLowerCase()));
+    let imported = 0;
+    let skipped = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const name = (r.name || r.categoryname || '').trim();
+      if (!name) {
+        skipped++;
+        continue;
+      }
+      const slug = (r.slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-')).replace(/^-|-$/g, '');
+      if (existingNames.has(name.toLowerCase()) || existingSlugs.has(slug.toLowerCase())) {
+        skipped++;
+        continue;
+      }
+      await saveShopCategory(shopId, {
+        name,
+        slug,
+        description: r.description || '',
+        order: Number(r.order) || categories.length + imported + 1,
+      });
+      existingNames.add(name.toLowerCase());
+      existingSlugs.add(slug.toLowerCase());
+      imported++;
+    }
+    await loadCats();
+    return { imported, skipped };
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -68,15 +111,33 @@ export const ShopCategoriesPage: React.FC = () => {
           <h2 className="text-xl font-extrabold text-slate-900">Categories Management</h2>
           <p className="text-xs text-slate-500 mt-0.5">Organize storefront navigation and collections.</p>
         </div>
-        {!isReadOnly && (
+        <div className="flex flex-wrap gap-2 self-start">
           <button
             type="button"
-            onClick={() => setEditing({ name: '', description: '', imageUrl: '', order: categories.length + 1 })}
-            className="px-4 py-2.5 bg-[#065F46] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 self-start"
+            onClick={exportCsv}
+            className="px-3.5 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-1.5"
           >
-            <Plus className="w-4 h-4" /> Add Category
+            <Download className="w-4 h-4" /> Export CSV
           </button>
-        )}
+          {!isReadOnly && (
+            <>
+              <button
+                type="button"
+                onClick={() => setCsvModalOpen(true)}
+                className="px-3.5 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-1.5"
+              >
+                <Upload className="w-4 h-4" /> Import CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing({ name: '', description: '', imageUrl: '', order: categories.length + 1 })}
+                className="px-4 py-2.5 bg-[#065F46] text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" /> Add Category
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {errorMsg && (
@@ -168,6 +229,17 @@ export const ShopCategoriesPage: React.FC = () => {
           </form>
         </div>
       )}
+      <CsvImportModal
+        isOpen={csvModalOpen}
+        onClose={() => setCsvModalOpen(false)}
+        title="Import Storefront Categories CSV"
+        subtitle="Duplicate category names or slugs are skipped automatically."
+        expectedHeaders={['name', 'slug', 'description', 'order']}
+        requiredHeaders={['name']}
+        sampleFilename={`${shop?.slug || shopId}-categories-sample.csv`}
+        sampleRows={[['Beverages', 'beverages', 'Teas, coffees and juices', 1]]}
+        onImport={handleImportCsv}
+      />
     </div>
   );
 };

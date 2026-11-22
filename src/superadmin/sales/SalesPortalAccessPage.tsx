@@ -18,6 +18,7 @@ import { SalesMember, SalesSettings, SalesMaterial } from '../../types';
 export const SalesPortalAccessPage: React.FC = () => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [members, setMembers] = useState<SalesMember[]>([]);
   const [settings, setSettings] = useState<SalesSettings | null>(null);
   const [materials, setMaterials] = useState<SalesMaterial[]>([]);
@@ -31,18 +32,26 @@ export const SalesPortalAccessPage: React.FC = () => {
   const [savingMat, setSavingMat] = useState(false);
 
   const loadData = async () => {
-    const [m, s, mats] = await Promise.all([
-      getAllSalesMembers().catch(() => []),
-      getSalesSettings(),
-      getApprovedSalesMaterials().catch(() => []),
-    ]);
-    setMembers(m);
-    setSettings(s);
-    setMaterials(mats);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [m, s, mats] = await Promise.all([
+        getAllSalesMembers(),
+        getSalesSettings(),
+        getApprovedSalesMaterials(),
+      ]);
+      setMembers(m);
+      setSettings(s);
+      setMaterials(mats);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Unable to load portal access directory from Firestore.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    loadData().finally(() => setLoading(false));
+    loadData();
   }, []);
 
   const portalUrl = buildSalesmanPortalLoginUrl(settings?.portalBaseUrl);
@@ -105,6 +114,19 @@ export const SalesPortalAccessPage: React.FC = () => {
           </Link>
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
         <div className="flex items-start gap-3">

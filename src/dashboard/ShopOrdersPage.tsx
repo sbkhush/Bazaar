@@ -22,6 +22,7 @@ import {
   getFulfillmentLabel,
 } from '../data/seedData';
 import { PrivateReceiptImage } from '../components/common/PrivateReceiptImage';
+import { downloadCsvFile } from '../utils/csvUtils';
 
 const STATUSES: OrderStatus[] = [
   'Pending',
@@ -121,27 +122,22 @@ export const ShopOrdersPage: React.FC = () => {
   };
 
   const exportCsv = () => {
-    const headers = ['OrderNumber', 'Date', 'Customer', 'Phone', 'City', 'Fulfillment', 'Payment', 'PaymentStatus', 'OrderStatus', 'TotalPKR'];
-    const rows = filtered.map((o) => [
-      o.orderNumber,
-      o.createdAt,
-      `"${o.customer.name}"`,
-      o.customer.phone,
-      o.customer.city,
-      o.fulfillmentMethod || 'delivery',
-      o.paymentMethod,
-      o.paymentStatus,
-      o.orderStatus,
-      o.total,
-    ]);
-    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${shop?.slug || shopId}-orders.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsvFile(
+      `${shop?.slug || shopId}-orders-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['OrderNumber', 'Date', 'Customer', 'Phone', 'City', 'Fulfillment', 'Payment', 'PaymentStatus', 'OrderStatus', 'TotalPKR'],
+      filtered.map((o) => [
+        o.orderNumber,
+        o.createdAt,
+        o.customer.name,
+        o.customer.phone,
+        o.customer.city,
+        o.fulfillmentMethod || 'delivery',
+        o.paymentMethod,
+        o.paymentStatus,
+        o.orderStatus,
+        o.total,
+      ])
+    );
   };
 
   return (

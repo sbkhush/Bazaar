@@ -8,17 +8,27 @@ import { ReferralAttribution, Shop } from '../../types';
 
 export const SalesRegistrationsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [referrals, setReferrals] = useState<ReferralAttribution[]>([]);
   const [shops, setShops] = useState<Shop[]>([]);
   const [search, setSearch] = useState('');
 
+  const loadData = async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [r, s] = await Promise.all([getAllReferralAttributions(), getAllShopsAdmin()]);
+      setReferrals(r);
+      setShops(s);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Unable to load attributed shop registrations from Firestore.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    Promise.all([getAllReferralAttributions().catch(() => []), getAllShopsAdmin().catch(() => [])])
-      .then(([r, s]) => {
-        setReferrals(r);
-        setShops(s);
-      })
-      .finally(() => setLoading(false));
+    loadData();
   }, []);
 
   const shopMap = useMemo(() => new Map(shops.map((s) => [s.id, s])), [shops]);
@@ -55,6 +65,19 @@ export const SalesRegistrationsPage: React.FC = () => {
           />
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
         {loading ? (

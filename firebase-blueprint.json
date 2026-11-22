@@ -248,7 +248,7 @@
         "phone": { "type": "string" },
         "city": { "type": "string" },
         "role": { "type": "string", "enum": ["salesman", "senior_salesman", "sales_manager", "referral_agent"] },
-        "accountStatus": { "type": "string", "enum": ["active", "inactive", "suspended", "invited"] },
+        "accountStatus": { "type": "string", "enum": ["active", "inactive", "suspended", "invited", "pending_approval"] },
         "referralCode": { "type": "string" },
         "commissionPlanId": { "type": "string" }
       },

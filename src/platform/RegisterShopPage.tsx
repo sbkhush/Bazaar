@@ -24,7 +24,11 @@ import {
   getSubscriptionPlans,
   registerNewShop,
 } from '../services/platformService';
-import { getReferralCodeOwner } from '../services/salesService';
+import {
+  clearStoredReferralContext,
+  getReferralCodeOwner,
+  getStoredReferralContext,
+} from '../services/salesService';
 import { ImageUploader } from '../components/common/ImageUploader';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { BRAND } from '../config/brand';
@@ -69,11 +73,7 @@ export const RegisterShopPage: React.FC = () => {
   const [referralCode, setReferralCode] = useState(() => {
     const paramRef = searchParams.get('ref');
     if (paramRef) return paramRef.trim().toUpperCase();
-    try {
-      return localStorage.getItem('sbkhush_ref_code') || localStorage.getItem('bazaarpk_ref_code') || '';
-    } catch {
-      return '';
-    }
+    return getStoredReferralContext().code;
   });
   const [referralOwnerName, setReferralOwnerName] = useState<string | null>(null);
   const [leadId] = useState(() => searchParams.get('leadId') || '');
@@ -178,15 +178,14 @@ export const RegisterShopPage: React.FC = () => {
       }
 
       let referralSource: 'referral_link' | 'qr_scan' | 'manual_assisted' | 'code_entry' = 'code_entry';
-      try {
-        const storedSource =
-          localStorage.getItem('sbkhush_ref_source') || localStorage.getItem('bazaarpk_ref_source');
-        if (storedSource === 'qr_scan' || storedSource === 'referral_link') {
-          referralSource = storedSource;
-        } else if (leadId) {
-          referralSource = 'manual_assisted';
-        }
-      } catch {}
+      let referralCapturedAt: string | undefined;
+      const storedCtx = getStoredReferralContext();
+      if (!storedCtx.expired && storedCtx.code && storedCtx.code === referralCode.trim().toUpperCase()) {
+        referralSource = storedCtx.source;
+        referralCapturedAt = storedCtx.capturedAt;
+      } else if (leadId) {
+        referralSource = 'manual_assisted';
+      }
 
       const newShop = await registerNewShop({
         ownerId: uid,
@@ -202,6 +201,7 @@ export const RegisterShopPage: React.FC = () => {
         billingCycle,
         referralCode: referralCode.trim() ? referralCode.trim().toUpperCase() : undefined,
         referralSource: referralCode.trim() ? referralSource : undefined,
+        referralCapturedAt,
         leadId: leadId || undefined,
         paymentProof:
           isPaidPlan && submitPaymentNow
@@ -214,12 +214,7 @@ export const RegisterShopPage: React.FC = () => {
             : undefined,
       });
 
-      try {
-        localStorage.removeItem('sbkhush_ref_code');
-        localStorage.removeItem('sbkhush_ref_source');
-        localStorage.removeItem('bazaarpk_ref_code');
-        localStorage.removeItem('bazaarpk_ref_source');
-      } catch {}
+      clearStoredReferralContext();
 
       await refreshMemberships();
       setActiveShopId(newShop.id);

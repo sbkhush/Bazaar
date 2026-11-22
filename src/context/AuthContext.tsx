@@ -8,8 +8,10 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   sendPasswordResetEmail,
+  sendEmailVerification,
   updateProfile,
 } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   collection,
   doc,
@@ -38,6 +40,13 @@ import {
   resolveAuthorizedPortalRole,
 } from '../services/roleGuard';
 
+export interface AuthDiagnostics {
+  emailVerified: boolean;
+  platformAdminSynced: boolean;
+  claimsSynced: boolean;
+  warning?: string;
+}
+
 interface AuthContextType {
   currentUser: FirebaseUser | null;
   userProfile: UserProfile | null;
@@ -45,6 +54,8 @@ interface AuthContextType {
   isAdmin: boolean;
   isSuperAdmin: boolean;
   isBlocked: boolean;
+  authDiagnostics: AuthDiagnostics;
+  resendVerificationEmail: () => Promise<void>;
   salesMember: SalesMember | null;
   isSalesman: boolean;
   isSalesManager: boolean;
@@ -74,11 +85,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSuperAdminVerified, setIsSuperAdminVerified] = useState(false);
+  const [authDiagnostics, setAuthDiagnostics] = useState<AuthDiagnostics>({
+    emailVerified: false,
+    platformAdminSynced: false,
+    claimsSynced: false,
+  });
   const [salesMember, setSalesMember] = useState<SalesMember | null>(null);
   const [shopMemberships, setShopMemberships] = useState<ShopMembership[]>([]);
   const [activeShopId, setActiveShopIdState] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('bazaarpk_active_shop_id');
+      const current = localStorage.getItem('sbkhush_active_shop_id');
+      if (current) return current;
+      const legacy = localStorage.getItem('bazaarpk_active_shop_id');
+      if (legacy) {
+        localStorage.setItem('sbkhush_active_shop_id', legacy);
+        return legacy;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -87,19 +110,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const setActiveShopId = useCallback((shopId: string) => {
     setActiveShopIdState(shopId);
     try {
-      localStorage.setItem('bazaarpk_active_shop_id', shopId);
+      localStorage.setItem('sbkhush_active_shop_id', shopId);
+      localStorage.removeItem('bazaarpk_active_shop_id');
     } catch {}
   }, []);
+
+  const trySyncCustomClaims = async (user: FirebaseUser): Promise<boolean> => {
+    try {
+      const fn = httpsCallable(getFunctions(auth.app), 'syncMyCustomClaims');
+      await fn();
+      await user.getIdToken(true);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   const checkSuperAdminPrivilege = async (user: FirebaseUser | null) => {
     if (!user) {
       setIsSuperAdminVerified(false);
+      setAuthDiagnostics({
+        emailVerified: false,
+        platformAdminSynced: false,
+        claimsSynced: false,
+      });
+      return;
+    }
+
+    if (user.email === SUPER_ADMIN_EMAIL && !user.emailVerified) {
+      setIsSuperAdminVerified(false);
+      setAuthDiagnostics({
+        emailVerified: false,
+        platformAdminSynced: false,
+        claimsSynced: false,
+        warning:
+          'Super Admin email is not verified yet. Please verify your email address or sign in with verified Google to unlock Super Admin access.',
+      });
       return;
     }
 
     // Bootstrap verified super admin email & sync platform_admins/{uid}
     if (user.email === SUPER_ADMIN_EMAIL && user.emailVerified) {
       setIsSuperAdminVerified(true);
+      let syncedDoc = false;
       try {
         await setDoc(
           doc(db, 'platform_admins', user.uid),
@@ -111,7 +164,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           },
           { merge: true }
         );
+        syncedDoc = true;
       } catch {}
+      const claimsSynced = await trySyncCustomClaims(user);
+      setAuthDiagnostics({
+        emailVerified: true,
+        platformAdminSynced: syncedDoc,
+        claimsSynced,
+      });
       return;
     }
 
@@ -119,17 +179,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const platAdminSnap = await getDoc(doc(db, 'platform_admins', user.uid));
       if (platAdminSnap.exists()) {
         setIsSuperAdminVerified(true);
+        const claimsSynced = await trySyncCustomClaims(user);
+        setAuthDiagnostics({
+          emailVerified: Boolean(user.emailVerified),
+          platformAdminSynced: true,
+          claimsSynced,
+        });
         return;
       }
       // Also support legacy /admins/{uid} super_admin entry seamlessly
       const legacyAdminSnap = await getDoc(doc(db, 'admins', user.uid));
       if (legacyAdminSnap.exists() && legacyAdminSnap.data().role === 'super_admin') {
         setIsSuperAdminVerified(true);
+        const claimsSynced = await trySyncCustomClaims(user);
+        setAuthDiagnostics({
+          emailVerified: Boolean(user.emailVerified),
+          platformAdminSynced: true,
+          claimsSynced,
+        });
         return;
       }
       setIsSuperAdminVerified(false);
+      setAuthDiagnostics({
+        emailVerified: Boolean(user.emailVerified),
+        platformAdminSynced: false,
+        claimsSynced: false,
+      });
     } catch {
       setIsSuperAdminVerified(false);
+      setAuthDiagnostics({
+        emailVerified: Boolean(user.emailVerified),
+        platformAdminSynced: false,
+        claimsSynced: false,
+      });
     }
   };
 
@@ -286,6 +368,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         setUserProfile(null);
         setIsSuperAdminVerified(false);
+        setAuthDiagnostics({
+          emailVerified: false,
+          platformAdminSynced: false,
+          claimsSynced: false,
+        });
         setSalesMember(null);
         setShopMemberships([]);
       }
@@ -329,6 +416,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const resetPassword = async (email: string) => {
     await sendPasswordResetEmail(auth, email);
+  };
+
+  const resendVerificationEmail = async () => {
+    if (!auth.currentUser) throw new Error('Must be signed in to send verification email.');
+    await sendEmailVerification(auth.currentUser);
   };
 
   const updateUserAddresses = async (addresses: UserAddress[]) => {
@@ -394,6 +486,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAdmin,
         isSuperAdmin,
         isBlocked,
+        authDiagnostics,
+        resendVerificationEmail,
         salesMember,
         isSalesman,
         isSalesManager,

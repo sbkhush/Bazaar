@@ -731,6 +731,15 @@ service cloud.firestore {
       );
       // Strictly never allow super_admin role in salesMembers
       allow create: if isValidId(memberId) && isSuperAdmin() && isAllowedSalesRole(incoming().role);
+      // Self-service affiliate partner registration (strictly locked to caller UID & pending_approval referral_agent)
+      allow create: if isValidId(memberId) &&
+        isSignedIn() &&
+        memberId == ('sm_ref_' + request.auth.uid) &&
+        incoming().uid == request.auth.uid &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().role == 'referral_agent' &&
+        incoming().accountStatus == 'pending_approval' &&
+        incoming().inviteStatus == 'pending';
       allow delete: if isValidId(memberId) && isSuperAdmin();
       allow update: if isValidId(memberId) && (
         (isSuperAdmin() && (!('role' in incoming()) || isAllowedSalesRole(incoming().role))) || (

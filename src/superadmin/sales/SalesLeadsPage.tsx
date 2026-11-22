@@ -23,7 +23,8 @@ import {
   updateSalesLead,
 } from '../../services/salesService';
 import { BUSINESS_TYPE_OPTIONS, PAKISTAN_CITIES } from '../../data/seedData';
-import { buildCsvContent, downloadCsvFile } from '../../utils/csvUtils';
+import { downloadCsvFile } from '../../utils/csvUtils';
+import { CsvImportModal } from '../../components/common/CsvImportModal';
 import { useToast } from '../../components/common/Toast';
 import {
   BusinessType,
@@ -37,6 +38,7 @@ import {
 export const SalesLeadsPage: React.FC = () => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [leads, setLeads] = useState<SalesLead[]>([]);
   const [members, setMembers] = useState<SalesMember[]>([]);
   const [activities, setActivities] = useState<SalesActivity[]>([]);
@@ -69,9 +71,7 @@ export const SalesLeadsPage: React.FC = () => {
 
   // CSV Import modal
   const [importOpen, setImportOpen] = useState(false);
-  const [csvText, setCsvText] = useState('');
   const [importAssigneeId, setImportAssigneeId] = useState('');
-  const [importing, setImporting] = useState(false);
 
   // Lead Activity drawer
   const [activeLead, setActiveLead] = useState<SalesLead | null>(null);
@@ -83,15 +83,20 @@ export const SalesLeadsPage: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [l, m, a] = await Promise.all([
-        getAllSalesLeads().catch(() => []),
-        getAllSalesMembers().catch(() => []),
-        getAllSalesActivities().catch(() => []),
+        getAllSalesLeads(),
+        getAllSalesMembers(),
+        getAllSalesActivities(),
       ]);
       setLeads(l);
       setMembers(m);
       setActivities(a);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to load sales leads from Firestore.';
+      setLoadError(msg);
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -194,35 +199,22 @@ export const SalesLeadsPage: React.FC = () => {
     }
   };
 
-  const handleCsvFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setCsvText(String(reader.result || ''));
-    reader.readAsText(file);
-  };
-
-  const handleImportCsv = async () => {
-    if (!csvText.trim()) {
-      showToast('Paste CSV content or upload a CSV file first.', 'error');
-      return;
-    }
-    setImporting(true);
-    try {
-      const assignee = members.find((m) => m.id === importAssigneeId);
-      const res = await importLeadsFromCsvText(csvText, { assignTo: assignee, skipDuplicates: true });
-      showToast(
-        `Imported ${res.imported} lead(s). Skipped ${res.skippedDuplicates.length} duplicate(s).`,
-        'success'
-      );
-      setImportOpen(false);
-      setCsvText('');
-      await loadData();
-    } catch (err: any) {
-      showToast(err?.message || 'CSV import failed.', 'error');
-    } finally {
-      setImporting(false);
-    }
+  const handleImportCsv = async (_rows: Record<string, string>[], rawCsv: string) => {
+    const assignee = members.find((m) => m.id === importAssigneeId);
+    const res = await importLeadsFromCsvText(rawCsv, { assignTo: assignee, skipDuplicates: true });
+    showToast(
+      `Imported ${res.imported} lead(s). Skipped ${res.skippedDuplicates.length} duplicate(s).`,
+      'success'
+    );
+    await loadData();
+    return {
+      imported: res.imported,
+      skipped: res.skippedDuplicates.length,
+      notes:
+        res.skippedDuplicates.length > 0
+          ? 'Duplicate phone, email, or business+city matches were skipped.'
+          : undefined,
+    };
   };
 
   const handleStatusChange = async (leadId: string, nextStatus: SalesLeadStatus) => {
@@ -361,6 +353,19 @@ export const SalesLeadsPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -681,44 +686,34 @@ export const SalesLeadsPage: React.FC = () => {
       )}
 
       {/* CSV Import Modal */}
-      {importOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-xl w-full p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h2 className="text-base font-extrabold text-slate-900">Import Leads from CSV</h2>
-              <button type="button" onClick={() => setImportOpen(false)} className="text-slate-400">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="space-y-3 text-xs">
-              <p className="text-slate-600">
-                Required headers: <code>businessName,ownerName,phone,email,city,industry,notes</code>. Duplicate phone, email, or business+city matches are automatically skipped.
-              </p>
-              <input type="file" accept=".csv,text/csv" onChange={handleCsvFileUpload} className="block w-full text-xs" />
-              <textarea
-                rows={5}
-                value={csvText}
-                onChange={(e) => setCsvText(e.target.value)}
-                placeholder={'businessName,ownerName,phone,city,industry\nAl-Noor Kiryana,Usman Ali,03001122334,Lahore,general_store'}
-                className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono text-[11px]"
-              />
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Assign Imported Leads To (Optional)</label>
-                <select value={importAssigneeId} onChange={(e) => setImportAssigneeId(e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white">
-                  <option value="">Keep Unassigned</option>
-                  {members.map((m) => <option key={m.id} value={m.id}>{m.fullName} ({m.city})</option>)}
-                </select>
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setImportOpen(false)} className="px-4 py-2 rounded-xl border border-slate-200 font-semibold">Cancel</button>
-                <button type="button" onClick={handleImportCsv} disabled={importing} className="px-5 py-2 rounded-xl bg-[#065F46] text-white font-bold">
-                  {importing ? 'Importing...' : 'Run Import'}
-                </button>
-              </div>
-            </div>
+      <CsvImportModal
+        isOpen={importOpen}
+        onClose={() => setImportOpen(false)}
+        title="Import Leads from CSV"
+        subtitle="Duplicate phone, email, or business+city matches are automatically skipped."
+        expectedHeaders={['businessName', 'ownerName', 'phone', 'email', 'city', 'industry', 'notes']}
+        requiredHeaders={['businessName', 'phone']}
+        sampleFilename="sbkhush-leads-sample.csv"
+        sampleRows={[['Al-Noor Kiryana', 'Usman Ali', '03001122334', 'usman@alnoor.pk', 'Lahore', 'general_store', 'Main market store']]}
+        extraControls={
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Assign Imported Leads To (Optional)</label>
+            <select
+              value={importAssigneeId}
+              onChange={(e) => setImportAssigneeId(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white"
+            >
+              <option value="">Keep Unassigned</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.fullName} ({m.city})
+                </option>
+              ))}
+            </select>
           </div>
-        </div>
-      )}
+        }
+        onImport={handleImportCsv}
+      />
 
       {/* Lead Activity History Modal */}
       {activeLead && (

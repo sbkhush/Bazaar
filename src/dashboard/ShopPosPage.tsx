@@ -11,6 +11,7 @@ import {
   Loader2,
   X,
   Barcode,
+  Download,
 } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import { getShopProductsAdmin } from '../services/tenantService';
@@ -30,6 +31,7 @@ import {
 } from '../types';
 import { formatPKR, FALLBACK_PRODUCT_IMAGE } from '../data/seedData';
 import { PlanFeatureGate } from '../components/common/PlanFeatureGate';
+import { downloadCsvFile } from '../utils/csvUtils';
 
 export const ShopPosPage: React.FC = () => {
   const { shopId, shop, settings, isReadOnly } = useDashboard();
@@ -256,6 +258,25 @@ export const ShopPosPage: React.FC = () => {
     await loadPosData();
   };
 
+  const exportPosSalesCsv = () => {
+    downloadCsvFile(
+      `${shop?.slug || shopId}-pos-sales-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['InvoiceNumber', 'Date', 'Customer', 'Phone', 'PaymentMethod', 'SubtotalPKR', 'DiscountPKR', 'TotalPKR', 'Status', 'Reference'],
+      sales.map((s) => [
+        s.invoiceNumber,
+        s.createdAt,
+        s.customerName || 'Walk-in',
+        s.customerPhone || '',
+        s.paymentMethod,
+        s.subtotal,
+        s.discount,
+        s.total,
+        s.status,
+        s.paymentReference || '',
+      ])
+    );
+  };
+
   return (
     <PlanFeatureGate feature="pos">
       <div className="space-y-6">
@@ -268,19 +289,28 @@ export const ShopPosPage: React.FC = () => {
               Fast barcode search, cash/digital/split/Khata credit checkout, and 58mm/80mm thermal receipts.
             </p>
           </div>
-          <div className="inline-flex border border-slate-200 rounded-xl bg-white p-1 text-xs font-semibold">
-            {(['58mm', '80mm'] as const).map((fmt) => (
-              <button
-                key={fmt}
-                type="button"
-                onClick={() => setReceiptFormat(fmt)}
-                className={`px-3 py-1 rounded-lg ${
-                  receiptFormat === fmt ? 'bg-[#065F46] text-white' : 'text-slate-600'
-                }`}
-              >
-                {fmt} Receipt
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={exportPosSalesCsv}
+              className="px-3.5 py-1.5 border border-slate-300 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" /> Export Sales CSV
+            </button>
+            <div className="inline-flex border border-slate-200 rounded-xl bg-white p-1 text-xs font-semibold">
+              {(['58mm', '80mm'] as const).map((fmt) => (
+                <button
+                  key={fmt}
+                  type="button"
+                  onClick={() => setReceiptFormat(fmt)}
+                  className={`px-3 py-1 rounded-lg ${
+                    receiptFormat === fmt ? 'bg-[#065F46] text-white' : 'text-slate-600'
+                  }`}
+                >
+                  {fmt} Receipt
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 

@@ -23,28 +23,35 @@ export const ReferralDashboardPage: React.FC = () => {
   }, [pathname]);
 
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [referrals, setReferrals] = useState<ReferralAttribution[]>([]);
   const [rewards, setRewards] = useState<CommissionLedgerEntry[]>([]);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
+  const loadData = async () => {
     if (!currentUser?.uid || !salesMember?.id) return;
     setLoading(true);
-    Promise.all([
-      getReferralsForSalesman(salesMember.id, currentUser.uid),
-      getReferralRewardsForAgent(salesMember.id, currentUser.uid),
-      salesMember.referralLink ? generateQrDataUrl(salesMember.referralLink, 440) : Promise.resolve(''),
-    ])
-      .then(([r, rew, qr]) => {
-        setReferrals(r);
-        setRewards(rew);
-        setQrDataUrl(qr);
-      })
-      .finally(() => setLoading(false));
-  }, [currentUser?.uid, salesMember?.id, salesMember?.referralLink]);
+    setLoadError(null);
+    try {
+      const [r, rew, qr] = await Promise.all([
+        getReferralsForSalesman(salesMember.id, currentUser.uid),
+        getReferralRewardsForAgent(salesMember.id, currentUser.uid),
+        salesMember.referralLink ? generateQrDataUrl(salesMember.referralLink, 440) : Promise.resolve(''),
+      ]);
+      setReferrals(r);
+      setRewards(rew);
+      setQrDataUrl(qr);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Unable to load referral partner metrics.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  if (!currentUser || !salesMember) return null;
+  useEffect(() => {
+    loadData();
+  }, [currentUser?.uid, salesMember?.id, salesMember?.referralLink]);
 
   const eligibleRefs = useMemo(
     () => referrals.filter((r) => r.attributionStatus !== 'rejected_self_referral'),
@@ -55,6 +62,8 @@ export const ReferralDashboardPage: React.FC = () => {
     () => rewards.reduce((s, c) => s + Number(c.commissionAmount || 0), 0),
     [rewards]
   );
+
+  if (!currentUser || !salesMember) return null;
 
   const handleCopy = async () => {
     await navigator.clipboard?.writeText(salesMember.referralLink).catch(() => {});
@@ -67,6 +76,21 @@ export const ReferralDashboardPage: React.FC = () => {
     return (
       <div className="bg-white border border-slate-200 rounded-2xl p-12 flex justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-[#065F46]" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="bg-white border border-rose-200 rounded-2xl p-8 text-center space-y-3">
+        <p className="text-sm font-bold text-rose-700">{loadError}</p>
+        <button
+          type="button"
+          onClick={loadData}
+          className="px-4 py-2 rounded-xl bg-[#065F46] text-white text-xs font-bold hover:bg-emerald-900"
+        >
+          Retry
+        </button>
       </div>
     );
   }

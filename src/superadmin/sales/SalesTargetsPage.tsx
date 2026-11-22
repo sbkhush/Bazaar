@@ -21,6 +21,7 @@ import {
 export const SalesTargetsPage: React.FC = () => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [members, setMembers] = useState<SalesMember[]>([]);
   const [targets, setTargets] = useState<SalesTarget[]>([]);
   const [leads, setLeads] = useState<SalesLead[]>([]);
@@ -41,13 +42,14 @@ export const SalesTargetsPage: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [m, t, l, r, c] = await Promise.all([
-        getAllSalesMembers().catch(() => []),
-        getAllSalesTargets().catch(() => []),
-        getAllSalesLeads().catch(() => []),
-        getAllReferralAttributions().catch(() => []),
-        getAllCommissionLedger().catch(() => []),
+        getAllSalesMembers(),
+        getAllSalesTargets(),
+        getAllSalesLeads(),
+        getAllReferralAttributions(),
+        getAllCommissionLedger(),
       ]);
       setMembers(m);
       setTargets(t);
@@ -57,6 +59,10 @@ export const SalesTargetsPage: React.FC = () => {
       if (!selectedSalesmanId && m[0]) {
         setSelectedSalesmanId(m[0].id);
       }
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to load sales targets from Firestore.';
+      setLoadError(msg);
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -150,6 +156,19 @@ export const SalesTargetsPage: React.FC = () => {
           />
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center gap-2.5 text-xs text-emerald-900">
         <ShieldCheck className="w-4 h-4 text-[#065F46] shrink-0" />

@@ -11,6 +11,8 @@ import {
   writeBatch,
   increment,
   runTransaction,
+  orderBy,
+  limit,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
@@ -418,10 +420,22 @@ export async function deleteShopBanner(shopId: string, id: string): Promise<void
 // ORDERS & TOKENIZED NON-PII TRACKING
 // ====================================================
 
+const clientOrderIdempotencyCache = new Map<string, Order>();
+
 export async function createShopOrder(
   shopId: string,
   orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt'>
 ): Promise<Order> {
+  if (orderData.paymentMethod === 'online') {
+    throw new Error('Online card payments are not enabled. Please choose COD, EasyPaisa, JazzCash, or Bank Transfer.');
+  }
+
+  const idemKey = (orderData.idempotencyKey || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+  const cacheKey = idemKey ? `${shopId}:${idemKey}` : '';
+  if (cacheKey && clientOrderIdempotencyCache.has(cacheKey)) {
+    return clientOrderIdempotencyCache.get(cacheKey)!;
+  }
+
   const signedInUid = auth.currentUser?.uid;
   const effectiveUserId = signedInUid || 'guest';
 
@@ -430,22 +444,59 @@ export async function createShopOrder(
       const response = await fetch('/api/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...orderData, shopId, userId: 'guest' }),
+        body: JSON.stringify({ ...orderData, shopId, userId: 'guest', idempotencyKey: idemKey || undefined }),
       });
       const contentType = response.headers.get('content-type') || '';
       if (response.ok && contentType.includes('application/json')) {
         const serverOrder = await response.json();
         if (!serverOrder.requiresClientAuthWrite) {
+          if (cacheKey) clientOrderIdempotencyCache.set(cacheKey, serverOrder as Order);
           return serverOrder as Order;
         }
+      } else if (!response.ok && contentType.includes('application/json')) {
+        const errBody = await response.json().catch(() => null);
+        if (response.status === 400 && errBody?.error) {
+          throw new Error(errBody.error);
+        }
       }
-    } catch (apiErr) {
+    } catch (apiErr: any) {
+      if (apiErr?.message && /stock|unavailable|disabled|invalid|payment/i.test(apiErr.message)) {
+        throw apiErr;
+      }
       console.warn('Guest API order fallback to client Firestore:', apiErr);
     }
   }
 
+  const id = idemKey
+    ? `ord_${idemKey}`
+    : `ord_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+  // Pre-check existing order for signed-in idempotent retries
+  if (idemKey && effectiveUserId !== 'guest') {
+    const existingOrderSnap = await getDoc(doc(db, 'shops', shopId, 'orders', id)).catch(() => null);
+    if (existingOrderSnap?.exists()) {
+      const existingOrder = { ...(existingOrderSnap.data() as Order), id: existingOrderSnap.id, shopId };
+      if (cacheKey) clientOrderIdempotencyCache.set(cacheKey, existingOrder);
+      return existingOrder;
+    }
+  }
+
+  // Validate product availability & stock before writing order
+  for (const item of orderData.items || []) {
+    if (!item.productId) continue;
+    const prodSnap = await getDoc(doc(db, 'shops', shopId, 'products', item.productId)).catch(() => null);
+    if (prodSnap && prodSnap.exists()) {
+      const prod = prodSnap.data() as Product;
+      if (prod.isPublished === false || prod.status === 'archived') {
+        throw new Error(`Product "${prod.title || item.title}" is no longer available.`);
+      }
+      if (typeof prod.stock === 'number' && prod.stock < item.quantity) {
+        throw new Error(`Insufficient stock for "${prod.title || item.title}". Available: ${prod.stock}`);
+      }
+    }
+  }
+
   const orderNumber = `PK-${Math.floor(100000 + Math.random() * 900000)}`;
-  const id = `ord_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
   const now = new Date().toISOString();
   const trackingToken = generateTrackingToken();
   const trackingTokenHash = await deriveTrackingTokenHash(orderNumber, trackingToken);
@@ -458,6 +509,7 @@ export async function createShopOrder(
     orderNumber,
     trackingTokenHash,
     userId: effectiveUserId,
+    idempotencyKey: idemKey || undefined,
     paymentStatus: 'pending',
     orderStatus: 'Pending',
     createdAt: now,
@@ -506,7 +558,9 @@ export async function createShopOrder(
       createdAt: now,
     });
     await batch.commit();
-    return { ...fullOrder, trackingToken };
+    const created = { ...fullOrder, trackingToken };
+    if (cacheKey) clientOrderIdempotencyCache.set(cacheKey, created);
+    return created;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}/orders/${id}`);
   }
@@ -1010,6 +1064,22 @@ export async function loadShopUserWishlist(shopId: string, userId: string): Prom
 // ====================================================
 // REVIEWS, INVENTORY, CUSTOMERS, CONTACT MESSAGES
 // ====================================================
+
+export async function getShopRecentReviews(shopId: string, limitCount = 6): Promise<Review[]> {
+  try {
+    const q = query(
+      collection(db, 'shops', shopId, 'reviews'),
+      orderBy('createdAt', 'desc'),
+      limit(limitCount)
+    );
+    const snap = await getDocs(q);
+    const list: Review[] = [];
+    snap.forEach((d) => list.push({ ...(d.data() as Review), id: d.id, shopId }));
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
 
 export async function getShopProductReviews(shopId: string, productId: string): Promise<Review[]> {
   try {

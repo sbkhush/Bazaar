@@ -10,14 +10,27 @@ import { ReferralAttribution } from '../../types';
 export const SalesReferralsPage: React.FC = () => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [referrals, setReferrals] = useState<ReferralAttribution[]>([]);
   const [statusFilter, setStatusFilter] = useState('all');
 
+  const loadData = async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const list = await getAllReferralAttributions();
+      setReferrals(list);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to load referral attributions from Firestore.';
+      setLoadError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    getAllReferralAttributions()
-      .then(setReferrals)
-      .catch(() => [])
-      .finally(() => setLoading(false));
+    loadData();
   }, []);
 
   const filtered = useMemo(
@@ -74,6 +87,19 @@ export const SalesReferralsPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
         {loading ? (

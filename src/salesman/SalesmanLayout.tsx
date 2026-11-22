@@ -32,13 +32,21 @@ export const SalesmanLayout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<SalesNotification[]>([]);
+  const [notifError, setNotifError] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
+  const loadNotifications = () => {
     if (!currentUser?.uid || !salesMember?.id || !isSalesman) return;
+    setNotifError(null);
     getSalesNotifications(salesMember.id, currentUser.uid)
       .then(setNotifications)
-      .catch(() => setNotifications([]));
+      .catch((err: any) => {
+        setNotifError(err?.message || 'Unable to load notifications.');
+      });
+  };
+
+  useEffect(() => {
+    loadNotifications();
   }, [currentUser?.uid, salesMember?.id, isSalesman]);
 
   if (loading) {
@@ -226,7 +234,18 @@ export const SalesmanLayout: React.FC = () => {
                   </button>
                 </div>
                 <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
-                  {notifications.length === 0 ? (
+                  {notifError ? (
+                    <div className="p-4 text-center space-y-2">
+                      <p className="text-rose-700 font-semibold">{notifError}</p>
+                      <button
+                        type="button"
+                        onClick={loadNotifications}
+                        className="px-3 py-1 rounded-lg bg-[#065F46] text-white font-bold"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : notifications.length === 0 ? (
                     <p className="p-4 text-center text-slate-500">No notifications yet.</p>
                   ) : (
                     notifications.slice(0, 8).map((n) => (

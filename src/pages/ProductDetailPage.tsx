@@ -22,8 +22,6 @@ import { Product, Review } from '../types';
 import {
   formatPKR,
   FALLBACK_PRODUCT_IMAGE,
-  DEFAULT_SHOP_ID,
-  INITIAL_PRODUCTS,
 } from '../data/seedData';
 import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
@@ -63,10 +61,7 @@ export const ProductDetailPage: React.FC = () => {
     getShopProductById(shopId, id)
       .then((found) => {
         if (!active) return;
-        let resolved = found;
-        if (!resolved && shopId === DEFAULT_SHOP_ID) {
-          resolved = INITIAL_PRODUCTS.find((p) => p.id === id) || null;
-        }
+        const resolved = found;
         setProduct(resolved);
         if (resolved) {
           setSelectedImage(resolved.images[0] || FALLBACK_PRODUCT_IMAGE);
@@ -78,13 +73,7 @@ export const ProductDetailPage: React.FC = () => {
 
           getShopProducts(shopId, { category: resolved.category }).then((all) => {
             if (!active) return;
-            const pool =
-              all.length > 0
-                ? all
-                : shopId === DEFAULT_SHOP_ID
-                ? INITIAL_PRODUCTS.filter((p) => p.category === resolved!.category)
-                : [];
-            setRelatedProducts(pool.filter((item) => item.id !== resolved!.id).slice(0, 4));
+            setRelatedProducts(all.filter((item) => item.id !== resolved.id).slice(0, 4));
           });
 
           getShopProductReviews(shopId, resolved.id).then((revs) => {

@@ -482,6 +482,7 @@ export interface Order {
   paymentReference?: string;
   senderAccountNumber?: string;
   paymentProofImage?: string;
+  idempotencyKey?: string;
   createdAt: string;
   updatedAt?: string;
 }

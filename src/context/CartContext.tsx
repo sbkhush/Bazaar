@@ -39,8 +39,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { currentUser } = useAuth();
   const { shopId, settings: tenantSettings } = useTenant();
 
-  const cartStorageKey = `bazaarpk_cart_${shopId}`;
-  const couponStorageKey = `bazaarpk_coupon_${shopId}`;
+  const cartStorageKey = `sbkhush_cart_${shopId}`;
+  const couponStorageKey = `sbkhush_coupon_${shopId}`;
+  const legacyCartKey = `bazaarpk_cart_${shopId}`;
+  const legacyCouponKey = `bazaarpk_coupon_${shopId}`;
 
   const [items, setItems] = useState<CartItem[]>([]);
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
@@ -48,18 +50,35 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
   const [fulfillmentMethod, setFulfillmentMethod] = useState<FulfillmentMethod>('delivery');
 
-  // Re-load cart when active shopId switches
+  // Re-load cart when active shopId switches (with one-time legacy key migration)
   useEffect(() => {
     try {
-      const savedCart = localStorage.getItem(cartStorageKey);
+      let savedCart = localStorage.getItem(cartStorageKey);
+      if (!savedCart) {
+        const legacy = localStorage.getItem(legacyCartKey);
+        if (legacy) {
+          localStorage.setItem(cartStorageKey, legacy);
+          localStorage.removeItem(legacyCartKey);
+          savedCart = legacy;
+        }
+      }
       setItems(savedCart ? JSON.parse(savedCart) : []);
-      const savedCoupon = localStorage.getItem(couponStorageKey);
+
+      let savedCoupon = localStorage.getItem(couponStorageKey);
+      if (!savedCoupon) {
+        const legacyCpn = localStorage.getItem(legacyCouponKey);
+        if (legacyCpn) {
+          localStorage.setItem(couponStorageKey, legacyCpn);
+          localStorage.removeItem(legacyCouponKey);
+          savedCoupon = legacyCpn;
+        }
+      }
       setAppliedCoupon(savedCoupon ? JSON.parse(savedCoupon) : null);
     } catch {
       setItems([]);
       setAppliedCoupon(null);
     }
-  }, [cartStorageKey, couponStorageKey]);
+  }, [cartStorageKey, couponStorageKey, legacyCartKey, legacyCouponKey]);
 
   useEffect(() => {
     if (tenantSettings) {

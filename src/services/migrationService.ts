@@ -10,10 +10,6 @@ import { db, auth } from '../firebase/config';
 import { MigrationResult, Shop, StaffMember, ShopMembership } from '../types';
 import {
   DEFAULT_SHOP_ID,
-  INITIAL_PRODUCTS,
-  INITIAL_CATEGORIES,
-  INITIAL_BANNERS,
-  INITIAL_COUPONS,
   INITIAL_SETTINGS,
   DEFAULT_SUBSCRIPTION_PLANS,
   DEFAULT_PLATFORM_SETTINGS,
@@ -33,8 +29,11 @@ async function verifySuperAdminCaller(uid?: string, email?: string | null): Prom
   if (email === SUPER_ADMIN_EMAIL && auth.currentUser?.emailVerified) {
     return;
   }
-  const adminSnap = await getDoc(doc(db, 'platform_admins', uid));
-  if (adminSnap.exists()) return;
+  const [adminSnap, legacyAdminSnap] = await Promise.all([
+    getDoc(doc(db, 'platform_admins', uid)).catch(() => null),
+    getDoc(doc(db, 'admins', uid)).catch(() => null),
+  ]);
+  if (adminSnap?.exists() || (legacyAdminSnap?.exists() && legacyAdminSnap.data()?.role === 'super_admin')) return;
   throw new Error('Forbidden: Super Admin privileges required to execute legacy migration.');
 }
 
@@ -62,7 +61,7 @@ export async function migrateLegacyBazaarPKToTenant(options?: {
   const now = new Date().toISOString();
   const currentUid = options?.ownerUid || auth.currentUser?.uid || '';
   const currentEmail = options?.ownerEmail || auth.currentUser?.email || SUPER_ADMIN_EMAIL;
-  const currentName = options?.ownerName || auth.currentUser?.displayName || 'BazaarPK Owner';
+  const currentName = options?.ownerName || auth.currentUser?.displayName || 'SB Khush Store Owner';
 
   const result: MigrationResult = {
     success: false,
@@ -158,23 +157,11 @@ export async function migrateLegacyBazaarPKToTenant(options?: {
     };
     result.backupJson = JSON.stringify(backupPayload, null, 2);
 
-    // 3. Prepare datasets (preserving legacy docs + exact image URLs; falling back to INITIAL_* if empty)
-    const productsToWrite =
-      legacyProducts.length > 0
-        ? legacyProducts
-        : INITIAL_PRODUCTS.map((p) => ({ id: p.id, data: p }));
-    const categoriesToWrite =
-      legacyCategories.length > 0
-        ? legacyCategories
-        : INITIAL_CATEGORIES.map((c) => ({ id: c.id, data: c }));
-    const bannersToWrite =
-      legacyBanners.length > 0
-        ? legacyBanners
-        : INITIAL_BANNERS.map((b) => ({ id: b.id, data: b }));
-    const couponsToWrite =
-      legacyCoupons.length > 0
-        ? legacyCoupons
-        : INITIAL_COUPONS.map((c) => ({ id: c.id, data: c }));
+    // 3. Prepare datasets directly from existing Firestore legacy collections (no synthetic demo fallback seeding)
+    const productsToWrite = legacyProducts;
+    const categoriesToWrite = legacyCategories;
+    const bannersToWrite = legacyBanners;
+    const couponsToWrite = legacyCoupons;
     const settingsDoc =
       legacySettings.find((s) => s.id === 'general')?.data || INITIAL_SETTINGS;
 

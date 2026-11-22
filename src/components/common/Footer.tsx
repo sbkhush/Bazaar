@@ -23,7 +23,6 @@ import { useTenant } from '../../context/TenantContext';
 import { useToast } from './Toast';
 import { getShopCategories, subscribeToShopNewsletter } from '../../services/tenantService';
 import { Category } from '../../types';
-import { DEFAULT_SHOP_ID, INITIAL_CATEGORIES } from '../../data/seedData';
 import { getConfiguredSocialLinks, SocialPlatformKey } from '../../utils/socialLinks';
 import { SafeImage } from './SafeImage';
 import { BRAND } from '../../config/brand';
@@ -60,13 +59,7 @@ export const Footer: React.FC = () => {
     getShopCategories(shopId)
       .then((cats) => {
         if (!active) return;
-        setCategories(
-          cats.length > 0
-            ? cats.slice(0, 6)
-            : shopId === DEFAULT_SHOP_ID
-            ? INITIAL_CATEGORIES.slice(0, 6)
-            : []
-        );
+        setCategories(cats.slice(0, 6));
       })
       .catch(() => {});
     return () => {

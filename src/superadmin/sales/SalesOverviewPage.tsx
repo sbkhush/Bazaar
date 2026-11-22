@@ -44,6 +44,7 @@ import {
 
 export const SalesOverviewPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [members, setMembers] = useState<SalesMember[]>([]);
   const [leads, setLeads] = useState<SalesLead[]>([]);
   const [referrals, setReferrals] = useState<ReferralAttribution[]>([]);
@@ -60,15 +61,16 @@ export const SalesOverviewPage: React.FC = () => {
 
   const loadAll = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [m, l, r, s, p, c, t] = await Promise.all([
-        getAllSalesMembers().catch(() => []),
-        getAllSalesLeads().catch(() => []),
-        getAllReferralAttributions().catch(() => []),
-        getAllShopsAdmin().catch(() => []),
-        getAllPlatformPayments().catch(() => []),
-        getAllCommissionLedger().catch(() => []),
-        getAllSalesTargets().catch(() => []),
+        getAllSalesMembers(),
+        getAllSalesLeads(),
+        getAllReferralAttributions(),
+        getAllShopsAdmin(),
+        getAllPlatformPayments(),
+        getAllCommissionLedger(),
+        getAllSalesTargets(),
       ]);
       setMembers(m);
       setLeads(l);
@@ -77,6 +79,8 @@ export const SalesOverviewPage: React.FC = () => {
       setPayments(p);
       setCommissions(c);
       setTargets(t);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Unable to load sales analytics from Firestore.');
     } finally {
       setLoading(false);
     }
@@ -116,6 +120,18 @@ export const SalesOverviewPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-center justify-between gap-3 text-xs">
+          <p className="font-bold text-rose-800">{loadError}</p>
+          <button
+            type="button"
+            onClick={loadAll}
+            className="px-3 py-1.5 rounded-lg bg-rose-700 text-white font-bold shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900">Sales Overview Dashboard</h1>

@@ -61,6 +61,7 @@ import { SalesManagerLoginPage } from './salesmanager/SalesManagerLoginPage';
 import { SalesManagerLayout } from './salesmanager/SalesManagerLayout';
 import { SalesManagerDashboardPage } from './salesmanager/SalesManagerDashboardPage';
 import { ReferralLoginPage } from './referral/ReferralLoginPage';
+import { ReferralRegisterPage } from './referral/ReferralRegisterPage';
 import { ReferralLayout } from './referral/ReferralLayout';
 import { ReferralDashboardPage } from './referral/ReferralDashboardPage';
 
@@ -331,6 +332,7 @@ export default function App() {
 
               {/* Layer 2D: Referral Agent Portal (Referral & Approved Rewards Only) */}
               <Route path="/referral/login" element={<ReferralLoginPage />} />
+              <Route path="/referral/register" element={<ReferralRegisterPage />} />
               <Route path="/referral" element={<ReferralLayout />}>
                 <Route index element={<ReferralDashboardPage />} />
                 <Route path="qr" element={<ReferralDashboardPage />} />

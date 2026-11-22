@@ -10,6 +10,7 @@ import { SalesActivity, SalesAuditLog, SalesMember } from '../../types';
 
 export const SalesActivityLogsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState<'activities' | 'audit'>('activities');
   const [activities, setActivities] = useState<SalesActivity[]>([]);
   const [auditLogs, setAuditLogs] = useState<SalesAuditLog[]>([]);
@@ -17,23 +18,27 @@ export const SalesActivityLogsPage: React.FC = () => {
   const [salesmanFilter, setSalesmanFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
 
+  const loadData = async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [a, logs, m] = await Promise.all([
+        getAllSalesActivities(),
+        getSalesAuditLogs(200),
+        getAllSalesMembers(),
+      ]);
+      setActivities(a);
+      setAuditLogs(logs);
+      setMembers(m);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Unable to load sales activity and audit logs from Firestore.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        const [a, logs, m] = await Promise.all([
-          getAllSalesActivities().catch(() => []),
-          getSalesAuditLogs(200).catch(() => []),
-          getAllSalesMembers().catch(() => []),
-        ]);
-        setActivities(a);
-        setAuditLogs(logs);
-        setMembers(m);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+    loadData();
   }, []);
 
   const filteredActivities = useMemo(
@@ -77,6 +82,19 @@ export const SalesActivityLogsPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {tab === 'activities' && (
         <div className="bg-white border border-slate-200 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">

@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Loader2,
   X,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   getAllSalesMembers,
@@ -117,7 +118,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
     try {
       const [m, t, s] = await Promise.all([
         getAllSalesMembers(),
-        getAllSalesTeams().catch(() => []),
+        getAllSalesTeams(),
         getSalesSettings(),
       ]);
       setMembers(m);
@@ -279,6 +280,20 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
     }
   };
 
+  const handleApproveMember = async (m: SalesMember) => {
+    try {
+      await updateSalesMember(m.id, {
+        accountStatus: 'active',
+        inviteStatus: 'accepted',
+        acceptedAt: new Date().toISOString(),
+      });
+      showToast(`Approved & activated referral partner ${m.fullName} (${m.referralCode}).`, 'success');
+      await loadData();
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to approve partner.', 'error');
+    }
+  };
+
   const handleSendReset = async (m: SalesMember) => {
     try {
       await sendSalesmanPortalReset(m.email, m.id);
@@ -395,6 +410,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
         >
           <option value="all">All Statuses</option>
           <option value="active">Active</option>
+          <option value="pending_approval">Pending Approval</option>
           <option value="invited">Invited</option>
           <option value="inactive">Inactive</option>
           <option value="suspended">Suspended</option>
@@ -493,16 +509,28 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
                         className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-bold capitalize ${
                           m.accountStatus === 'active'
                             ? 'bg-emerald-50 text-emerald-700'
+                            : m.accountStatus === 'pending_approval'
+                            ? 'bg-blue-50 text-blue-700'
                             : m.accountStatus === 'invited'
                             ? 'bg-amber-50 text-amber-700'
                             : 'bg-rose-50 text-rose-700'
                         }`}
                       >
-                        {m.accountStatus}
+                        {m.accountStatus.replace('_', ' ')}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
+                        {m.accountStatus === 'pending_approval' && (
+                          <button
+                            type="button"
+                            onClick={() => handleApproveMember(m)}
+                            title="Approve & Activate Partner"
+                            className="px-2.5 py-1 rounded-lg bg-[#065F46] hover:bg-emerald-900 text-white font-bold inline-flex items-center gap-1"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                          </button>
+                        )}
                         <Link
                           to={`/super-admin/sales/members/${m.id}`}
                           title="View Details"
@@ -785,6 +813,7 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white"
                   >
                     <option value="active">Active</option>
+                    <option value="pending_approval">Pending Approval</option>
                     <option value="invited">Invited (Claim Pending)</option>
                     <option value="inactive">Inactive</option>
                     <option value="suspended">Suspended</option>

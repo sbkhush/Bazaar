@@ -47,6 +47,7 @@ const REPORT_TABS: { id: ReportType; label: string }[] = [
 
 export const SalesReportsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [reportType, setReportType] = useState<ReportType>('salesman_performance');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -61,33 +62,37 @@ export const SalesReportsPage: React.FC = () => {
   const [commissions, setCommissions] = useState<CommissionLedgerEntry[]>([]);
   const [payouts, setPayouts] = useState<CommissionPayout[]>([]);
 
+  const loadData = async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [m, t, l, r, s, p, c, po] = await Promise.all([
+        getAllSalesMembers(),
+        getAllSalesTeams(),
+        getAllSalesLeads(),
+        getAllReferralAttributions(),
+        getAllShopsAdmin(),
+        getAllPlatformPayments(),
+        getAllCommissionLedger(),
+        getAllCommissionPayouts(),
+      ]);
+      setMembers(m);
+      setTeams(t);
+      setLeads(l);
+      setReferrals(r);
+      setShops(s);
+      setPayments(p);
+      setCommissions(c);
+      setPayouts(po);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Unable to load sales reports data from Firestore.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        const [m, t, l, r, s, p, c, po] = await Promise.all([
-          getAllSalesMembers().catch(() => []),
-          getAllSalesTeams().catch(() => []),
-          getAllSalesLeads().catch(() => []),
-          getAllReferralAttributions().catch(() => []),
-          getAllShopsAdmin().catch(() => []),
-          getAllPlatformPayments().catch(() => []),
-          getAllCommissionLedger().catch(() => []),
-          getAllCommissionPayouts().catch(() => []),
-        ]);
-        setMembers(m);
-        setTeams(t);
-        setLeads(l);
-        setReferrals(r);
-        setShops(s);
-        setPayments(p);
-        setCommissions(c);
-        setPayouts(po);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+    loadData();
   }, []);
 
   const inRange = (iso?: string) => {
@@ -304,6 +309,19 @@ export const SalesReportsPage: React.FC = () => {
           <Download className="w-3.5 h-3.5" /> Export CSV ({reportData.rows.length})
         </button>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Report Selector Tabs */}
       <div className="flex flex-wrap gap-1.5">

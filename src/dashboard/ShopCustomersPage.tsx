@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Loader2, Plus, BookOpen, X } from 'lucide-react';
+import { Search, Loader2, Plus, BookOpen, X, Download, Upload } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
   getShopCustomersWithKhata,
@@ -8,13 +8,16 @@ import {
 } from '../services/retailService';
 import { ShopCustomerSummary } from '../types';
 import { formatPKR, PAKISTAN_CITIES } from '../data/seedData';
+import { CsvImportModal } from '../components/common/CsvImportModal';
+import { downloadCsvFile } from '../utils/csvUtils';
 
 export const ShopCustomersPage: React.FC = () => {
-  const { shopId, isReadOnly, canUseFeature } = useDashboard();
+  const { shopId, shop, isReadOnly, canUseFeature } = useDashboard();
   const [customers, setCustomers] = useState<ShopCustomerSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
+  const [csvModalOpen, setCsvModalOpen] = useState(false);
   const [form, setForm] = useState({ name: '', phone: '', city: 'Karachi', email: '', address: '', notes: '' });
   const [saving, setSaving] = useState(false);
 
@@ -56,6 +59,61 @@ export const ShopCustomersPage: React.FC = () => {
     0
   );
 
+  const exportCsv = () => {
+    downloadCsvFile(
+      `${shop?.slug || shopId}-customers-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['name', 'phone', 'city', 'email', 'address', 'ordersCount', 'totalSpentPKR', 'khataDuePKR'],
+      filtered.map((c) => [
+        c.name,
+        c.phone,
+        c.city,
+        c.email || '',
+        c.address || '',
+        c.ordersCount,
+        c.totalSpent,
+        c.outstandingBalance || 0,
+      ])
+    );
+  };
+
+  const handleImportCsv = async (rows: Record<string, string>[]) => {
+    if (isReadOnly) throw new Error('Read-only mode.');
+    const existingPhones = new Set(
+      customers.map((c) => (c.phone || '').replace(/[\s-]/g, '')).filter(Boolean)
+    );
+    let imported = 0;
+    let skipped = 0;
+    for (const r of rows) {
+      const name = (r.name || r.fullname || r.customername || '').trim();
+      const phone = (r.phone || r.mobile || r.whatsapp || '').trim();
+      const cleanPhone = phone.replace(/[\s-]/g, '');
+      if (!name || cleanPhone.length < 7) {
+        skipped++;
+        continue;
+      }
+      if (existingPhones.has(cleanPhone)) {
+        skipped++;
+        continue;
+      }
+      await saveShopCustomerProfile(shopId, {
+        name,
+        phone,
+        city: r.city || 'Karachi',
+        email: r.email || '',
+        address: r.address || '',
+        notes: r.notes || '',
+      });
+      existingPhones.add(cleanPhone);
+      imported++;
+    }
+    loadCustomers();
+    return {
+      imported,
+      skipped,
+      notes: skipped > 0 ? 'Duplicate phone numbers or incomplete rows were skipped.' : undefined,
+    };
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -67,6 +125,13 @@ export const ShopCustomersPage: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap gap-2 self-start">
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="px-3.5 py-2 border border-slate-300 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold flex items-center gap-1.5"
+          >
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </button>
           {canUseFeature('khata') && (
             <Link
               to="/dashboard/khata"
@@ -77,13 +142,22 @@ export const ShopCustomersPage: React.FC = () => {
             </Link>
           )}
           {!isReadOnly && (
-            <button
-              type="button"
-              onClick={() => setModalOpen(true)}
-              className="px-4 py-2 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" /> Add Customer
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setCsvModalOpen(true)}
+                className="px-3.5 py-2 border border-slate-300 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold flex items-center gap-1.5"
+              >
+                <Upload className="w-3.5 h-3.5" /> Import CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalOpen(true)}
+                className="px-4 py-2 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" /> Add Customer
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -236,6 +310,17 @@ export const ShopCustomersPage: React.FC = () => {
           </form>
         </div>
       )}
+      <CsvImportModal
+        isOpen={csvModalOpen}
+        onClose={() => setCsvModalOpen(false)}
+        title="Import Customers CSV"
+        subtitle="Existing mobile numbers are automatically skipped to preserve Khata balances."
+        expectedHeaders={['name', 'phone', 'city', 'email', 'address', 'notes']}
+        requiredHeaders={['name', 'phone']}
+        sampleFilename={`${shop?.slug || shopId}-customers-sample.csv`}
+        sampleRows={[['Bilal Ahmed', '03001234567', 'Lahore', 'bilal@example.com', 'Model Town Block B', 'VIP customer']]}
+        onImport={handleImportCsv}
+      />
     </div>
   );
 };

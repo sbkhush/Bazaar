@@ -1,7 +1,7 @@
 import { BillingCycle, BusinessType } from './index';
 
 export type SalesMemberRole = 'salesman' | 'senior_salesman' | 'sales_manager' | 'referral_agent';
-export type SalesAccountStatus = 'active' | 'inactive' | 'suspended' | 'invited';
+export type SalesAccountStatus = 'active' | 'inactive' | 'suspended' | 'invited' | 'pending_approval';
 export type SalesEmploymentStatus = 'full_time' | 'part_time' | 'contract' | 'probation';
 
 export type SalesLeadStatus =

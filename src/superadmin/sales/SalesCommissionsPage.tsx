@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Coins, Check, XCircle, RotateCcw, RefreshCw, Loader2 } from 'lucide-react';
+import { Coins, Check, XCircle, RotateCcw, RefreshCw, Loader2, Download } from 'lucide-react';
 import {
   decideBonusRecommendation,
   decideSalesExpense,
@@ -13,10 +13,12 @@ import { getAllPlatformPayments } from '../../services/platformService';
 import { formatPKR } from '../../data/seedData';
 import { useToast } from '../../components/common/Toast';
 import { CommissionLedgerEntry, SalesBonusRecommendation, SalesExpense } from '../../types';
+import { downloadCsvFile } from '../../utils/csvUtils';
 
 export const SalesCommissionsPage: React.FC = () => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [entries, setEntries] = useState<CommissionLedgerEntry[]>([]);
   const [bonusRecs, setBonusRecs] = useState<SalesBonusRecommendation[]>([]);
@@ -31,15 +33,20 @@ export const SalesCommissionsPage: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [list, recs, exps] = await Promise.all([
-        getAllCommissionLedger().catch(() => []),
-        getAllBonusRecommendations().catch(() => []),
-        getAllSalesExpenses().catch(() => []),
+        getAllCommissionLedger(),
+        getAllBonusRecommendations(),
+        getAllSalesExpenses(),
       ]);
       setEntries(list);
       setBonusRecs(recs);
       setExpenses(exps);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to load commissions ledger from Firestore.';
+      setLoadError(msg);
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -108,6 +115,27 @@ export const SalesCommissionsPage: React.FC = () => {
     [entries, statusFilter]
   );
 
+  const exportCsv = () => {
+    downloadCsvFile(
+      `sbkhush-commissions-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['CommissionID', 'Salesman', 'Shop', 'Plan', 'BillingCycle', 'PaymentAmountPKR', 'RatePct', 'FlatBonusPKR', 'CommissionAmountPKR', 'Status', 'CreatedAt'],
+      filtered.map((c) => [
+        c.id,
+        c.salesmanName,
+        c.shopName,
+        c.planName,
+        c.billingCycle,
+        c.paymentAmount,
+        c.commissionRatePct,
+        c.flatBonusAmount || 0,
+        c.commissionAmount,
+        c.status,
+        c.createdAt,
+      ])
+    );
+    showToast(`Exported ${filtered.length} commission entry(s).`, 'success');
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -118,6 +146,13 @@ export const SalesCommissionsPage: React.FC = () => {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 flex items-center gap-1.5"
+          >
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </button>
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
@@ -141,6 +176,19 @@ export const SalesCommissionsPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
         {loading ? (

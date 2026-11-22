@@ -126,25 +126,46 @@ export const ReferralLoginPage: React.FC = () => {
 
         <div className="p-6 space-y-5 text-xs">
           {currentUser && !isReferralAgent && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2 text-amber-900">
-              <div className="flex items-start gap-2">
-                <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-extrabold">Referral Agent Account Required</p>
-                  <p className="text-[11px] mt-1">
-                    Signed in as <span className="font-semibold">{currentUser.email}</span>
-                    {salesMember ? ` (${salesMember.role.replace('_', ' ')})` : ''}.
-                  </p>
+            salesMember?.role === 'referral_agent' && salesMember.accountStatus === 'pending_approval' ? (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2 text-blue-950">
+                <div className="flex items-start gap-2">
+                  <ShieldAlert className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-extrabold">Pending Super Admin Approval</p>
+                    <p className="text-[11px] mt-1">
+                      Your referral partner application for <span className="font-semibold">{currentUser.email}</span> (Code: <span className="font-mono font-bold">{salesMember.referralCode}</span>) is awaiting Super Admin activation.
+                    </p>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => logout()}
+                  className="px-3 py-1.5 rounded-lg border border-blue-300 font-semibold"
+                >
+                  Sign Out
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => logout()}
-                className="px-3 py-1.5 rounded-lg border border-amber-300 font-semibold"
-              >
-                Sign Out
-              </button>
-            </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2 text-amber-900">
+                <div className="flex items-start gap-2">
+                  <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-extrabold">Referral Agent Account Required</p>
+                    <p className="text-[11px] mt-1">
+                      Signed in as <span className="font-semibold">{currentUser.email}</span>
+                      {salesMember ? ` (${salesMember.role.replace('_', ' ')})` : ''}.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => logout()}
+                  className="px-3 py-1.5 rounded-lg border border-amber-300 font-semibold"
+                >
+                  Sign Out
+                </button>
+              </div>
+            )
           )}
 
           {error && (
@@ -234,6 +255,13 @@ export const ReferralLoginPage: React.FC = () => {
               )}
             </button>
           </form>
+
+          <div className="pt-3 border-t border-slate-100 text-center text-[11px] text-slate-600">
+            Want to earn rewards by referring merchants?{' '}
+            <Link to="/referral/register" className="font-bold text-[#065F46] hover:underline">
+              Apply as Referral Partner
+            </Link>
+          </div>
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Truck, Loader2, X, Banknote } from 'lucide-react';
+import { Plus, Truck, Loader2, X, Banknote, Download, Upload } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
   getShopSuppliers,
@@ -9,9 +9,11 @@ import {
 import { Supplier } from '../types';
 import { formatPKR } from '../data/seedData';
 import { PlanFeatureGate } from '../components/common/PlanFeatureGate';
+import { CsvImportModal } from '../components/common/CsvImportModal';
+import { downloadCsvFile } from '../utils/csvUtils';
 
 export const ShopSuppliersPage: React.FC = () => {
-  const { shopId, isReadOnly } = useDashboard();
+  const { shopId, shop, isReadOnly } = useDashboard();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<Supplier> | null>(null);
@@ -19,6 +21,7 @@ export const ShopSuppliersPage: React.FC = () => {
   const [payAmount, setPayAmount] = useState('');
   const [payNotes, setPayNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [csvModalOpen, setCsvModalOpen] = useState(false);
 
   const loadSuppliers = async () => {
     if (!shopId) return;
@@ -67,6 +70,56 @@ export const ShopSuppliersPage: React.FC = () => {
     0
   );
 
+  const exportCsv = () => {
+    downloadCsvFile(
+      `${shop?.slug || shopId}-suppliers-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['name', 'phone', 'email', 'address', 'openingBalancePKR', 'currentPayableBalancePKR'],
+      suppliers.map((s) => [
+        s.name,
+        s.phone,
+        s.email || '',
+        s.address || '',
+        s.openingBalance || 0,
+        s.currentPayableBalance || 0,
+      ])
+    );
+  };
+
+  const handleImportCsv = async (rows: Record<string, string>[]) => {
+    if (isReadOnly) throw new Error('Read-only mode.');
+    const existingPhones = new Set(
+      suppliers.map((s) => (s.phone || '').replace(/[\s-]/g, '')).filter(Boolean)
+    );
+    const existingNames = new Set(suppliers.map((s) => s.name.trim().toLowerCase()));
+    let imported = 0;
+    let skipped = 0;
+    for (const r of rows) {
+      const name = (r.name || r.suppliername || r.company || '').trim();
+      const phone = (r.phone || r.mobile || '').trim();
+      const cleanPhone = phone.replace(/[\s-]/g, '');
+      if (!name || cleanPhone.length < 7) {
+        skipped++;
+        continue;
+      }
+      if (existingNames.has(name.toLowerCase()) || existingPhones.has(cleanPhone)) {
+        skipped++;
+        continue;
+      }
+      await saveShopSupplier(shopId, {
+        name,
+        phone,
+        email: r.email || '',
+        address: r.address || '',
+        openingBalance: Math.max(0, Number(r.openingbalance || r.openingbalancepkr) || 0),
+      });
+      existingNames.add(name.toLowerCase());
+      existingPhones.add(cleanPhone);
+      imported++;
+    }
+    await loadSuppliers();
+    return { imported, skipped };
+  };
+
   return (
     <PlanFeatureGate feature="suppliersPurchases">
       <div className="space-y-6">
@@ -79,17 +132,35 @@ export const ShopSuppliersPage: React.FC = () => {
               Total Supplier Payables Due: <strong className="text-rose-700">{formatPKR(totalPayables)}</strong>
             </p>
           </div>
-          {!isReadOnly && (
+          <div className="flex flex-wrap gap-2 self-start">
             <button
               type="button"
-              onClick={() =>
-                setEditing({ name: '', phone: '', email: '', address: '', openingBalance: 0 })
-              }
-              className="px-4 py-2.5 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 self-start"
+              onClick={exportCsv}
+              className="px-3.5 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-1.5"
             >
-              <Plus className="w-4 h-4" /> Add Supplier
+              <Download className="w-4 h-4" /> Export CSV
             </button>
-          )}
+            {!isReadOnly && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setCsvModalOpen(true)}
+                  className="px-3.5 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-1.5"
+                >
+                  <Upload className="w-4 h-4" /> Import CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEditing({ name: '', phone: '', email: '', address: '', openingBalance: 0 })
+                  }
+                  className="px-4 py-2.5 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" /> Add Supplier
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
@@ -296,6 +367,17 @@ export const ShopSuppliersPage: React.FC = () => {
             </form>
           </div>
         )}
+        <CsvImportModal
+          isOpen={csvModalOpen}
+          onClose={() => setCsvModalOpen(false)}
+          title="Import Suppliers CSV"
+          subtitle="Duplicate supplier names or mobile numbers are skipped."
+          expectedHeaders={['name', 'phone', 'email', 'address', 'openingBalance']}
+          requiredHeaders={['name', 'phone']}
+          sampleFilename={`${shop?.slug || shopId}-suppliers-sample.csv`}
+          sampleRows={[['Al-Madina Wholesale Traders', '03211234567', 'sales@almadina.pk', 'Akbari Mandi, Lahore', 0]]}
+          onImport={handleImportCsv}
+        />
       </div>
     </PlanFeatureGate>
   );

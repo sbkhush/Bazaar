@@ -1195,3 +1195,172 @@ describe('SB Khush Production Transformation, Public Separation, Demo Audit & Mo
   });
 });
 
+describe('Waves 1-3 Production Hardening: Portals, Zero-Demo Storefront, CSV Suite, Affiliate Onboarding & QR Dedup', () => {
+  it('places React hooks strictly before early returns and guards portal/sales dashboards with error banners', () => {
+    const portalFiles = [
+      'src/referral/ReferralDashboardPage.tsx',
+      'src/salesman/SalesmanDashboardPage.tsx',
+      'src/salesmanager/SalesManagerDashboardPage.tsx',
+      'src/salesman/SalesmanLayout.tsx',
+      'src/superadmin/sales/SalesOverviewPage.tsx',
+      'src/superadmin/sales/SalesMembersPage.tsx',
+      'src/superadmin/sales/SalesLeadsPage.tsx',
+      'src/superadmin/sales/SalesCommissionsPage.tsx',
+      'src/superadmin/sales/SalesPayoutsPage.tsx',
+    ];
+    for (const rel of portalFiles) {
+      const src = fs.readFileSync(path.join(WORKSPACE_ROOT, rel), 'utf-8');
+      const firstLoadingGuard = src.indexOf('if (loading)');
+      const lastUseMemoOrCallback = Math.max(src.lastIndexOf('useMemo('), src.lastIndexOf('useCallback('), src.lastIndexOf('useEffect('));
+      if (firstLoadingGuard !== -1 && lastUseMemoOrCallback !== -1) {
+        expect(lastUseMemoOrCallback).toBeLessThan(firstLoadingGuard);
+      }
+    }
+    const salesServiceSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/services/salesService.ts'), 'utf-8');
+    expect(salesServiceSrc).toContain("handleFirestoreError(err, OperationType.LIST, 'salesLeads')");
+    expect(salesServiceSrc).toContain("handleFirestoreError(err, OperationType.LIST, 'commissionLedger')");
+  });
+
+  it('eliminates INITIAL_* / DEFAULT_SHOP_ID live storefront catalog fallbacks, removes mock online card payments, and adds checkout idempotency', () => {
+    const storefrontFiles = [
+      'src/pages/HomePage.tsx',
+      'src/pages/ShopPage.tsx',
+      'src/pages/ProductDetailPage.tsx',
+      'src/pages/AccountPage.tsx',
+      'src/components/common/Header.tsx',
+      'src/components/common/Footer.tsx',
+    ];
+    for (const rel of storefrontFiles) {
+      const src = fs.readFileSync(path.join(WORKSPACE_ROOT, rel), 'utf-8');
+      expect(src).not.toContain('INITIAL_PRODUCTS');
+      expect(src).not.toContain('INITIAL_CATEGORIES');
+      expect(src).not.toContain('INITIAL_BANNERS');
+      expect(src).not.toContain('DEFAULT_SHOP_ID');
+    }
+    const migrationSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/services/migrationService.ts'), 'utf-8');
+    expect(migrationSrc).not.toContain('INITIAL_PRODUCTS');
+    expect(migrationSrc).not.toContain('INITIAL_CATEGORIES');
+    expect(migrationSrc).not.toContain('INITIAL_BANNERS');
+
+    const checkoutSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/pages/CheckoutPage.tsx'), 'utf-8');
+    const tenantServiceSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/services/tenantService.ts'), 'utf-8');
+    const serverSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'server.ts'), 'utf-8');
+    const homeSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/pages/HomePage.tsx'), 'utf-8');
+
+    expect(checkoutSrc).toContain('hasEnabledPaymentMethod');
+    expect(checkoutSrc).toContain('idempotencyKey: checkoutSessionId');
+    expect(checkoutSrc).not.toContain('cardNumber');
+    expect(checkoutSrc).not.toContain('cardCvv');
+
+    expect(tenantServiceSrc).toContain('ord_${idemKey}');
+    expect(tenantServiceSrc).toContain('getShopRecentReviews');
+    expect(tenantServiceSrc).toContain('Online card payments are not enabled');
+
+    expect(serverSrc).toContain('orderIdempotencyCache');
+    expect(serverSrc).toContain('ord_${cleanIdempotencyKey.slice(0, 80)}');
+    expect(homeSrc).toContain('getShopRecentReviews');
+  });
+
+  it('rolls out formula-safe CSV exports and reusable CsvImportModal across shop and sales admin modules', () => {
+    const csvModalFiles = [
+      'src/dashboard/ShopProductsPage.tsx',
+      'src/dashboard/ShopCategoriesPage.tsx',
+      'src/dashboard/ShopCustomersPage.tsx',
+      'src/dashboard/ShopSuppliersPage.tsx',
+      'src/dashboard/ShopInventoryPage.tsx',
+      'src/superadmin/sales/SalesLeadsPage.tsx',
+    ];
+    for (const rel of csvModalFiles) {
+      const src = fs.readFileSync(path.join(WORKSPACE_ROOT, rel), 'utf-8');
+      expect(src).toContain('CsvImportModal');
+      expect(src).toContain('downloadCsvFile');
+    }
+
+    const csvExportOnlyFiles = [
+      'src/dashboard/ShopOrdersPage.tsx',
+      'src/dashboard/ShopPosPage.tsx',
+      'src/superadmin/sales/SalesCommissionsPage.tsx',
+      'src/superadmin/sales/SalesPayoutsPage.tsx',
+    ];
+    for (const rel of csvExportOnlyFiles) {
+      const src = fs.readFileSync(path.join(WORKSPACE_ROOT, rel), 'utf-8');
+      expect(src).toContain('downloadCsvFile');
+    }
+  });
+
+  it('enforces pending_approval affiliate partner lifecycle, RBAC isolation, daily QR dedup, and attribution window expiry', async () => {
+    const {
+      resolveAuthorizedPortalRole,
+      canAccessPortalRoute,
+    } = await import('../src/services/roleGuard');
+    const {
+      getStoredReferralContext,
+      clearStoredReferralContext,
+    } = await import('../src/services/salesService');
+
+    // Pending approval partner must resolve to customer (no portal dashboard access)
+    expect(
+      resolveAuthorizedPortalRole({
+        isSuperAdmin: false,
+        salesMember: { role: 'referral_agent', accountStatus: 'pending_approval' },
+        shopMemberships: [],
+      })
+    ).toBe('customer');
+
+    // Active partner resolves cleanly to referral_agent and /referral/register stays reachable
+    expect(
+      resolveAuthorizedPortalRole({
+        isSuperAdmin: false,
+        salesMember: { role: 'referral_agent', accountStatus: 'active' },
+        shopMemberships: [],
+      })
+    ).toBe('referral_agent');
+    expect(canAccessPortalRoute('customer', '/referral/register')).toBe(true);
+    expect(canAccessPortalRoute('customer', '/referral')).toBe(false);
+
+    // Attribution window expiration check with isolated localStorage stub
+    const originalStorage = (globalThis as any).localStorage;
+    const store = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v); },
+      removeItem: (k: string) => { store.delete(k); },
+    };
+
+    try {
+      store.set('sbkhush_ref_code', 'REF-ALI-1234');
+      store.set('sbkhush_ref_source', 'qr_scan');
+      store.set('sbkhush_ref_captured_at', new Date(Date.now() - 5 * 86_400_000).toISOString());
+      const fresh = getStoredReferralContext(30);
+      expect(fresh.code).toBe('REF-ALI-1234');
+      expect(fresh.expired).toBe(false);
+
+      store.set('sbkhush_ref_captured_at', new Date(Date.now() - 45 * 86_400_000).toISOString());
+      const expired = getStoredReferralContext(30);
+      expect(expired.code).toBe('');
+      expect(expired.expired).toBe(true);
+      expect(store.has('sbkhush_ref_code')).toBe(false);
+
+      clearStoredReferralContext();
+    } finally {
+      (globalThis as any).localStorage = originalStorage;
+    }
+
+    const firestoreRules = fs.readFileSync(path.join(WORKSPACE_ROOT, 'firestore.rules'), 'utf-8');
+    const serverSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'server.ts'), 'utf-8');
+    const referralLayoutSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/referral/ReferralLayout.tsx'), 'utf-8');
+    const referralRegisterSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/referral/ReferralRegisterPage.tsx'), 'utf-8');
+    const salesMembersSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/superadmin/sales/SalesMembersPage.tsx'), 'utf-8');
+
+    expect(firestoreRules).toContain("memberId == ('sm_ref_' + request.auth.uid)");
+    expect(firestoreRules).toContain("incoming().accountStatus == 'pending_approval'");
+    expect(firestoreRules).toContain("incoming().role == 'referral_agent'");
+    expect(serverSrc).toContain('qrScanDedupCache');
+    expect(serverSrc).toContain('attributionWindowDays');
+    expect(referralLayoutSrc).toContain('pending_approval');
+    expect(referralRegisterSrc).toContain('submitReferralPartnerApplication');
+    expect(salesMembersSrc).toContain('handleApproveMember');
+  });
+});
+
+

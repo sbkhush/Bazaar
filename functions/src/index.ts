@@ -26,6 +26,9 @@ async function assertSuperAdmin(uid?: string, email?: string, emailVerified?: bo
   const adminSnap = await db.collection('platform_admins').doc(uid).get();
   if (adminSnap.exists) return;
 
+  const legacyAdminSnap = await db.collection('admins').doc(uid).get();
+  if (legacyAdminSnap.exists && legacyAdminSnap.data()?.role === 'super_admin') return;
+
   throw new HttpsError('permission-denied', 'Super Admin privileges required.');
 }
 
@@ -33,9 +36,13 @@ async function rebuildCustomClaimsForUser(
   uid: string
 ): Promise<{ super_admin: boolean; shops: Record<string, string>; sales_role: string | null }> {
   const userRecord = await auth.getUser(uid);
-  const adminSnap = await db.collection('platform_admins').doc(uid).get();
+  const [adminSnap, legacyAdminSnap] = await Promise.all([
+    db.collection('platform_admins').doc(uid).get(),
+    db.collection('admins').doc(uid).get(),
+  ]);
   const isSuper =
     adminSnap.exists ||
+    (legacyAdminSnap.exists && legacyAdminSnap.data()?.role === 'super_admin') ||
     (userRecord.email === SUPER_ADMIN_EMAIL && Boolean(userRecord.emailVerified));
 
   const membershipsSnap = await db.collection('users').doc(uid).collection('shopMemberships').get();

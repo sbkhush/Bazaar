@@ -34,8 +34,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SUPER_ADMIN_EMAIL = 'hasanaamir815@gmail.com';
 
-// Lightweight sliding-window rate limiter for public APIs
+// Lightweight sliding-window rate limiter & daily QR scan deduplication cache
 const rateWindowMap = new Map<string, number[]>();
+const qrScanDedupCache = new Map<string, string>();
 function checkRateLimit(ip: string, bucket: string, maxRequests: number, windowMs: number): boolean {
   const key = `${bucket}:${ip}`;
   const now = Date.now();
@@ -484,6 +485,8 @@ Format cleanly in markdown with:
     }
   });
 
+  const orderIdempotencyCache = new Map<string, { expiresAt: number; payload: any }>();
+
   // API Route: Multi-Tenant Guest & Auth Order Creation (with authoritative Firestore price/discount recalculation)
   app.post('/api/orders/create', async (req, res) => {
     const clientIp = req.ip || 'unknown';
@@ -506,7 +509,17 @@ Format cleanly in markdown with:
         paymentProofImage,
         userId,
         couponCode,
+        idempotencyKey,
       } = req.body;
+
+      const cleanIdempotencyKey = sanitizeDocId(idempotencyKey);
+      const idemCacheKey = cleanIdempotencyKey ? `${shopId}:${cleanIdempotencyKey}` : '';
+      if (idemCacheKey) {
+        const cached = orderIdempotencyCache.get(idemCacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+          return res.status(200).json({ ...cached.payload, deduplicated: true });
+        }
+      }
 
       if (!customer || !customer.name || !customer.phone || !customer.address || !customer.city) {
         return res.status(400).json({ error: 'Incomplete customer delivery details' });
@@ -537,6 +550,12 @@ Format cleanly in markdown with:
 
       const pubSettings = pubSettingsSnap.exists() ? pubSettingsSnap.data() : {};
       const resolvedPaymentMethod = String(paymentMethod || 'cod');
+      if (resolvedPaymentMethod === 'online') {
+        return res.status(400).json({ error: 'Online card gateway is not enabled. Please select COD, EasyPaisa, JazzCash, or Bank Transfer.' });
+      }
+      if (!['cod', 'easypaisa', 'jazzcash', 'bank_transfer'].includes(resolvedPaymentMethod)) {
+        return res.status(400).json({ error: 'Unsupported payment method selected.' });
+      }
       if (resolvedPaymentMethod === 'cod' && pubSettings.codEnabled === false) {
         return res.status(400).json({ error: 'Cash on Delivery is disabled for this store.' });
       }
@@ -635,7 +654,9 @@ Format cleanly in markdown with:
       );
 
       const orderNumber = `PK-${Math.floor(100000 + Math.random() * 900000)}`;
-      const orderId = `ord_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const orderId = cleanIdempotencyKey
+        ? `ord_${cleanIdempotencyKey.slice(0, 80)}`
+        : `ord_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       const trackingToken = generateServerTrackingToken();
       const trackingTokenHash = computeTrackingTokenHash(orderNumber, trackingToken);
       const trackingDocId = `trk_${trackingTokenHash.slice(0, 32)}`;
@@ -721,7 +742,14 @@ Format cleanly in markdown with:
           createdAt: now,
         });
         await batch.commit();
-        return res.status(201).json({ ...newOrder, trackingToken });
+        const responsePayload = { ...newOrder, trackingToken };
+        if (idemCacheKey) {
+          orderIdempotencyCache.set(idemCacheKey, {
+            expiresAt: Date.now() + 15 * 60 * 1000,
+            payload: responsePayload,
+          });
+        }
+        return res.status(201).json(responsePayload);
       }
 
       return res.status(200).json({ ...newOrder, trackingToken, requiresClientAuthWrite: true });
@@ -840,6 +868,16 @@ Format cleanly in markdown with:
       }
 
       const now = new Date().toISOString();
+      const todayYmd = now.slice(0, 10);
+      const dedupKey = `${clientIp}:${code}`;
+      if (qrScanDedupCache.get(dedupKey) === todayYmd) {
+        return res.json({ ok: true, owner, deduplicated: true });
+      }
+      if (qrScanDedupCache.size > 5000) {
+        qrScanDedupCache.clear();
+      }
+      qrScanDedupCache.set(dedupKey, todayYmd);
+
       const evtId = `qr_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
       // Public salesQrEvents create rule permits unauthenticated scan logging on its own
       await restSetDoc(
@@ -931,11 +969,23 @@ Format cleanly in markdown with:
       }
 
       let preventSelf = true;
+      let attributionWindowDays = 30;
       if (isSuper) {
         const settings = await restGetDoc<Record<string, any>>(['salesSettings', 'general'], verifiedUser.idToken).catch(
           () => null
         );
         preventSelf = settings ? settings.preventSelfReferral !== false : true;
+        if (settings && Number(settings.attributionWindowDays) > 0) {
+          attributionWindowDays = Number(settings.attributionWindowDays);
+        }
+      }
+
+      const rawCapturedAt = req.body?.capturedAt ? String(req.body.capturedAt) : '';
+      if (rawCapturedAt) {
+        const capturedMs = Date.parse(rawCapturedAt);
+        if (Number.isFinite(capturedMs) && Date.now() - capturedMs > attributionWindowDays * 86_400_000) {
+          return res.json({ ok: false, attribution: null, reason: 'Referral attribution window expired' });
+        }
       }
 
       const ownerEmail = String(req.body?.ownerEmail || verifiedUser.email || '').trim().toLowerCase();

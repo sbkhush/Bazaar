@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   Truck,
-  CreditCard,
   Building,
   Lock,
   Phone,
@@ -79,6 +78,7 @@ export const CheckoutPage: React.FC = () => {
   const easypaisaEnabled = settings.easypaisaDetails?.enabled !== false;
   const jazzcashEnabled = settings.jazzcashDetails?.enabled !== false;
   const bankEnabled = settings.bankDetails?.enabled !== false;
+  const hasEnabledPaymentMethod = codEnabled || easypaisaEnabled || jazzcashEnabled || bankEnabled;
 
   // Payment Selection
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
@@ -92,10 +92,6 @@ export const CheckoutPage: React.FC = () => {
   const [checkoutSessionId] = useState(
     () => `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   );
-  const [cardHolder, setCardHolder] = useState('');
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCvc, setCardCvc] = useState('');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [mobileSummaryOpen, setMobileSummaryOpen] = useState(false);
 
@@ -104,15 +100,14 @@ export const CheckoutPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    const enabledMap: Record<PaymentMethod, boolean> = {
+    const enabledMap: Record<'cod' | 'easypaisa' | 'jazzcash' | 'bank_transfer', boolean> = {
       cod: codEnabled,
       easypaisa: easypaisaEnabled,
       jazzcash: jazzcashEnabled,
       bank_transfer: bankEnabled,
-      online: true,
     };
-    if (!enabledMap[paymentMethod]) {
-      const firstAvailable = (['cod', 'easypaisa', 'jazzcash', 'bank_transfer', 'online'] as PaymentMethod[]).find(
+    if (paymentMethod === 'online' || !enabledMap[paymentMethod as keyof typeof enabledMap]) {
+      const firstAvailable = (['cod', 'easypaisa', 'jazzcash', 'bank_transfer'] as const).find(
         (m) => enabledMap[m]
       );
       if (firstAvailable) setPaymentMethod(firstAvailable);
@@ -302,11 +297,9 @@ export const CheckoutPage: React.FC = () => {
       }
     }
 
-    if (paymentMethod === 'online') {
-      if (!cardHolder.trim() || !cardNumber || cardNumber.replace(/\s+/g, '').length < 15 || !cardExpiry || !cardCvc) {
-        setErrorMessage('Please enter complete debit/credit card details.');
-        return;
-      }
+    if (!hasEnabledPaymentMethod) {
+      setErrorMessage('No payment methods are currently enabled for this store. Please contact support.');
+      return;
     }
 
     setIsSubmitting(true);
@@ -379,6 +372,7 @@ export const CheckoutPage: React.FC = () => {
           paymentMethod === 'bank_transfer'
             ? paymentProofImage || undefined
             : undefined,
+        idempotencyKey: checkoutSessionId,
       };
 
       const placedOrder = await createShopOrder(shopId, orderPayload);
@@ -1152,97 +1146,14 @@ export const CheckoutPage: React.FC = () => {
                 </label>
                 )}
 
-                {/* Option 5: Online Payment Gateway */}
-                <label
-                  className={`block p-3.5 sm:p-4 rounded-2xl border-2 cursor-pointer transition ${
-                    paymentMethod === 'online'
-                      ? 'border-emerald-700 bg-emerald-50/50'
-                      : 'border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value="online"
-                        checked={paymentMethod === 'online'}
-                        onChange={() => setPaymentMethod('online')}
-                        className="mt-1 text-emerald-700 focus:ring-emerald-600"
-                      />
-                      <div>
-                        <span className="font-bold text-sm text-slate-900 block">
-                          Credit / Debit Card (Online Gateway)
-                        </span>
-                        <span className="text-xs text-slate-500">
-                          Secure 256-bit encrypted card gateway (Visa / Mastercard / PayPak).
-                        </span>
-                      </div>
-                    </div>
-                    <CreditCard className="w-5 h-5 text-slate-400 shrink-0" />
+                {!hasEnabledPaymentMethod && (
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      No checkout payment methods are currently enabled by this store. Please contact customer support before placing an order.
+                    </span>
                   </div>
-
-                  {paymentMethod === 'online' && (
-                    <div className="mt-4 p-3.5 sm:p-4 rounded-xl bg-white border border-emerald-200 space-y-3 text-xs">
-                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-[11px]">
-                        ℹ️ <strong>Gateway Notice:</strong> Order remains <strong>Pending Verification</strong> until 3D Secure settlement clears with your issuing Pakistani bank.
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Cardholder Name
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Name on card"
-                          value={cardHolder}
-                          onChange={(e) => setCardHolder(e.target.value)}
-                          className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Card Number
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="4242 •••• •••• 4242"
-                          maxLength={19}
-                          value={cardNumber}
-                          onChange={(e) => setCardNumber(e.target.value)}
-                          className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 font-mono"
-                        />
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                            Expiry (MM/YY)
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="12/28"
-                            maxLength={5}
-                            value={cardExpiry}
-                            onChange={(e) => setCardExpiry(e.target.value)}
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                            CVV / CVC
-                          </label>
-                          <input
-                            type="password"
-                            placeholder="•••"
-                            maxLength={4}
-                            value={cardCvc}
-                            onChange={(e) => setCardCvc(e.target.value)}
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </label>
+                )}
               </div>
             </div>
           </div>
@@ -1318,7 +1229,7 @@ export const CheckoutPage: React.FC = () => {
             {/* Place Order CTA */}
             <button
               type="submit"
-              disabled={isSubmitting || uploadingProof}
+              disabled={isSubmitting || uploadingProof || !hasEnabledPaymentMethod}
               className="w-full py-3.5 sm:py-4 px-4 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl font-extrabold text-sm shadow-xl flex items-center justify-center gap-2 transition disabled:opacity-60"
             >
               {uploadingProof ? (

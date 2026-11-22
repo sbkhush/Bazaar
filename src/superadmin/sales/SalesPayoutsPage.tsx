@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Wallet, FileDown, CheckCircle2, Loader2, Banknote } from 'lucide-react';
+import { Wallet, FileDown, CheckCircle2, Loader2, Banknote, Download } from 'lucide-react';
 import {
   getAllCommissionLedger,
   getAllCommissionPayouts,
@@ -9,6 +9,7 @@ import {
 } from '../../services/salesService';
 import { formatPKR } from '../../data/seedData';
 import { downloadPayoutStatementPdf } from '../../utils/qrPdfUtils';
+import { downloadCsvFile } from '../../utils/csvUtils';
 import { useToast } from '../../components/common/Toast';
 import {
   CommissionLedgerEntry,
@@ -21,6 +22,7 @@ import {
 export const SalesPayoutsPage: React.FC = () => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const [members, setMembers] = useState<SalesMember[]>([]);
@@ -39,17 +41,22 @@ export const SalesPayoutsPage: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [m, l, p, s] = await Promise.all([
-        getAllSalesMembers().catch(() => []),
-        getAllCommissionLedger().catch(() => []),
-        getAllCommissionPayouts().catch(() => []),
+        getAllSalesMembers(),
+        getAllCommissionLedger(),
+        getAllCommissionPayouts(),
         getSalesSettings(),
       ]);
       setMembers(m);
       setLedger(l);
       setPayouts(p);
       setSettings(s);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to load payouts queue from Firestore.';
+      setLoadError(msg);
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -162,6 +169,26 @@ export const SalesPayoutsPage: React.FC = () => {
   const totalApprovedQueue = payableGroups.reduce((s, g) => s + g.total, 0);
   const totalSettled = payouts.reduce((s, p) => s + Number(p.totalAmount || 0), 0);
 
+  const exportCsv = () => {
+    downloadCsvFile(
+      `sbkhush-payouts-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['StatementNumber', 'Salesman', 'Method', 'AccountTitle', 'AccountNumber', 'BankName', 'TransactionReference', 'EntriesCount', 'TotalAmountPKR', 'ProcessedAt'],
+      payouts.map((p) => [
+        p.payoutNumber,
+        p.salesmanName,
+        p.method,
+        p.accountTitle,
+        p.accountNumber,
+        p.bankName || '',
+        p.transactionReference,
+        p.ledgerEntryIds.length,
+        p.totalAmount,
+        p.processedAt,
+      ])
+    );
+    showToast(`Exported ${payouts.length} payout statement(s).`, 'success');
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -171,7 +198,14 @@ export const SalesPayoutsPage: React.FC = () => {
             Settle approved commissions via Bank Transfer, EasyPaisa, or JazzCash and issue downloadable PDF payout statements.
           </p>
         </div>
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700 flex items-center gap-1.5"
+          >
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </button>
           <div className="bg-blue-50 border border-blue-200 rounded-xl px-3.5 py-2">
             <span className="text-blue-700 font-semibold">Approved Queue: </span>
             <span className="font-extrabold text-blue-950 tabular-nums">{formatPKR(totalApprovedQueue)}</span>
@@ -182,6 +216,19 @@ export const SalesPayoutsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-12 flex justify-center">

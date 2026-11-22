@@ -84,6 +84,7 @@ export function canAccessPortalRoute(role: AuthorizedPortalRole | null, pathname
     normalized === '/sales-manager/login' ||
     normalized === '/salesman/login' ||
     normalized === '/referral/login' ||
+    normalized === '/referral/register' ||
     normalized === '/login' ||
     normalized === '/register'
   ) {

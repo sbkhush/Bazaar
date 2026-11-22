@@ -13,7 +13,7 @@ import { Product, Category } from '../types';
 import { ProductCard } from '../components/common/ProductCard';
 import { QuickViewModal } from '../components/common/QuickViewModal';
 import { MarketBuyingGuide } from '../components/shop/MarketBuyingGuide';
-import { formatPKR, DEFAULT_SHOP_ID, INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../data/seedData';
+import { formatPKR } from '../data/seedData';
 import { useTenant } from '../context/TenantContext';
 import { DynamicSeoHead } from '../components/common/DynamicSeoHead';
 
@@ -43,13 +43,10 @@ export const ShopPage: React.FC = () => {
     Promise.all([getShopProducts(shopId), getShopCategories(shopId)])
       .then(([prods, cats]) => {
         if (!active) return;
-        const isFlagship = shopId === DEFAULT_SHOP_ID;
-        const finalProds = prods.length > 0 ? prods : isFlagship ? INITIAL_PRODUCTS : [];
-        const finalCats = cats.length > 0 ? cats : isFlagship ? INITIAL_CATEGORIES : [];
-        setProducts(finalProds);
-        setCategories(finalCats);
+        setProducts(prods);
+        setCategories(cats);
 
-        const maxProdPrice = finalProds.reduce((m, p) => Math.max(m, p.regularPrice || 0), 25000);
+        const maxProdPrice = prods.reduce((m, p) => Math.max(m, p.regularPrice || 0), 25000);
         setPriceMax(Math.max(25000, Math.ceil(maxProdPrice / 5000) * 5000));
       })
       .finally(() => {
@@ -188,7 +185,7 @@ export const ShopPage: React.FC = () => {
       </div>
 
       {/* Google Search Grounded Buying Guide & Pakistan Market Trends */}
-      {(plan?.features?.buyingGuide || shopId === DEFAULT_SHOP_ID) && (
+      {Boolean(plan?.features?.buyingGuide) && (
         <div className="mb-8">
           <MarketBuyingGuide
             currentCategory={selectedCategory}

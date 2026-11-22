@@ -29,8 +29,6 @@ import {
   PAKISTAN_CITIES,
   FALLBACK_PRODUCT_IMAGE,
   getPaymentMethodLabel,
-  DEFAULT_SHOP_ID,
-  INITIAL_PRODUCTS,
 } from '../data/seedData';
 import { useToast } from '../components/common/Toast';
 import { AuthModal } from '../components/common/AuthModal';
@@ -85,8 +83,7 @@ export const AccountPage: React.FC = () => {
   useEffect(() => {
     if (wishlistIds.length > 0) {
       getShopProducts(shopId).then((all) => {
-        const pool = all.length > 0 ? all : shopId === DEFAULT_SHOP_ID ? INITIAL_PRODUCTS : [];
-        setWishlistProducts(pool.filter((p) => wishlistIds.includes(p.id)));
+        setWishlistProducts(all.filter((p) => wishlistIds.includes(p.id)));
       });
     } else {
       setWishlistProducts([]);

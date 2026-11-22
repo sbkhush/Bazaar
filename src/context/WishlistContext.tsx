@@ -14,18 +14,27 @@ const WishlistContext = createContext<WishlistContextType | undefined>(undefined
 export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useAuth();
   const { shopId } = useTenant();
-  const storageKey = `bazaarpk_wishlist_${shopId}`;
+  const storageKey = `sbkhush_wishlist_${shopId}`;
+  const legacyStorageKey = `bazaarpk_wishlist_${shopId}`;
 
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(storageKey);
+      let saved = localStorage.getItem(storageKey);
+      if (!saved) {
+        const legacy = localStorage.getItem(legacyStorageKey);
+        if (legacy) {
+          localStorage.setItem(storageKey, legacy);
+          localStorage.removeItem(legacyStorageKey);
+          saved = legacy;
+        }
+      }
       setWishlistIds(saved ? JSON.parse(saved) : []);
     } catch {
       setWishlistIds([]);
     }
-  }, [storageKey]);
+  }, [storageKey, legacyStorageKey]);
 
   useEffect(() => {
     if (currentUser?.uid && shopId) {

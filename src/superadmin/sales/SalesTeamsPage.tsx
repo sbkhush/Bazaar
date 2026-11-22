@@ -13,6 +13,7 @@ import { SalesMember, SalesTeam } from '../../types';
 export const SalesTeamsPage: React.FC = () => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [teams, setTeams] = useState<SalesTeam[]>([]);
   const [members, setMembers] = useState<SalesMember[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
@@ -29,13 +30,18 @@ export const SalesTeamsPage: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [t, m] = await Promise.all([
-        getAllSalesTeams().catch(() => []),
-        getAllSalesMembers().catch(() => []),
+        getAllSalesTeams(),
+        getAllSalesMembers(),
       ]);
       setTeams(t);
       setMembers(m);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to load sales teams from Firestore.';
+      setLoadError(msg);
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -130,6 +136,19 @@ export const SalesTeamsPage: React.FC = () => {
           <Plus className="w-3.5 h-3.5" /> New Sales Team
         </button>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="p-10 flex justify-center bg-white border border-slate-200 rounded-2xl">

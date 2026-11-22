@@ -97,6 +97,7 @@ export const SalesmanDashboardPage: React.FC = () => {
   }, [pathname]);
 
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [leads, setLeads] = useState<SalesLead[]>([]);
   const [referrals, setReferrals] = useState<ReferralAttribution[]>([]);
   const [commissions, setCommissions] = useState<CommissionLedgerEntry[]>([]);
@@ -152,6 +153,7 @@ export const SalesmanDashboardPage: React.FC = () => {
   const loadData = async () => {
     if (!currentUser?.uid || !salesMember?.id) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const uid = currentUser.uid;
       const mid = salesMember.id;
@@ -180,6 +182,8 @@ export const SalesmanDashboardPage: React.FC = () => {
         const url = await generateQrDataUrl(salesMember.referralLink, 480);
         setQrDataUrl(url);
       }
+    } catch (err: any) {
+      setLoadError(err?.message || 'Unable to load sales representative workspace data.');
     } finally {
       setLoading(false);
     }
@@ -188,8 +192,6 @@ export const SalesmanDashboardPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [currentUser?.uid, salesMember?.id]);
-
-  if (!salesMember || !currentUser) return null;
 
   const stats = useMemo(() => {
     const validRefs = referrals.filter((r) => r.attributionStatus !== 'rejected_self_referral');
@@ -204,9 +206,10 @@ export const SalesmanDashboardPage: React.FC = () => {
     const paidOut = commissions
       .filter((c) => c.status === 'paid')
       .reduce((s, c) => s + Number(c.commissionAmount || 0), 0);
+    const monthlyTarget = salesMember?.monthlyTarget || 0;
     const targetPct =
-      salesMember.monthlyTarget > 0
-        ? Math.min(200, Math.round((totalRevenue / salesMember.monthlyTarget) * 100))
+      monthlyTarget > 0
+        ? Math.min(200, Math.round((totalRevenue / monthlyTarget) * 100))
         : 0;
     return {
       totalLeads: leads.length,
@@ -219,7 +222,9 @@ export const SalesmanDashboardPage: React.FC = () => {
       paidOut,
       targetPct,
     };
-  }, [leads, referrals, commissions, salesMember.monthlyTarget]);
+  }, [leads, referrals, commissions, salesMember?.monthlyTarget]);
+
+  if (!salesMember || !currentUser) return null;
 
   const handleCopyRef = async () => {
     await navigator.clipboard?.writeText(salesMember.referralLink).catch(() => {});
@@ -362,6 +367,21 @@ export const SalesmanDashboardPage: React.FC = () => {
     return (
       <div className="bg-white border border-slate-200 rounded-2xl p-12 flex justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-[#065F46]" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="bg-white border border-rose-200 rounded-2xl p-8 text-center space-y-3">
+        <p className="text-sm font-bold text-rose-700">{loadError}</p>
+        <button
+          type="button"
+          onClick={loadData}
+          className="px-4 py-2 rounded-xl bg-[#065F46] text-white text-xs font-bold hover:bg-emerald-900"
+        >
+          Retry Loading Workspace
+        </button>
       </div>
     );
   }

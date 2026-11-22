@@ -10,6 +10,7 @@ import {
   Archive,
   RotateCcw,
   Upload,
+  Download,
   AlertTriangle,
   Barcode,
 } from 'lucide-react';
@@ -30,6 +31,8 @@ import {
   PRODUCT_UNITS,
 } from '../data/seedData';
 import { ImageUploader } from '../components/common/ImageUploader';
+import { CsvImportModal } from '../components/common/CsvImportModal';
+import { downloadCsvFile } from '../utils/csvUtils';
 
 export const ShopProductsPage: React.FC = () => {
   const { shopId, shop, plan, isReadOnly } = useDashboard();
@@ -46,11 +49,6 @@ export const ShopProductsPage: React.FC = () => {
 
   const [confirmDeleteProduct, setConfirmDeleteProduct] = useState<Product | null>(null);
   const [csvModalOpen, setCsvModalOpen] = useState(false);
-  const [csvText, setCsvText] = useState(
-    'title,sku,barcode,category,regularPrice,salePrice,purchasePrice,stock,minStockAlert,unit,brand\n' +
-      'Sample Basmati Rice 5kg,RICE-5KG,8964001001,staples,1950,1850,1600,25,5,kg,Guard'
-  );
-  const [importingCsv, setImportingCsv] = useState(false);
 
   const loadCatalog = async () => {
     if (!shopId) return;
@@ -154,59 +152,76 @@ export const ShopProductsPage: React.FC = () => {
     }
   };
 
-  const handleCsvImport = async () => {
-    if (isReadOnly) return;
-    setImportingCsv(true);
-    setError(null);
-    setSuccessMsg(null);
-    try {
-      const lines = csvText
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean);
-      if (lines.length < 2) throw new Error('Provide a header row and at least 1 product row.');
-      const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-      let created = 0;
+  const exportProductsCsv = () => {
+    downloadCsvFile(
+      `${shop?.slug || shopId}-products-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['title', 'sku', 'barcode', 'category', 'regularPrice', 'salePrice', 'purchasePrice', 'stock', 'minStockAlert', 'unit', 'brand', 'status'],
+      filtered.map((p) => [
+        p.title,
+        p.sku,
+        p.barcode || '',
+        p.category,
+        p.regularPrice,
+        p.salePrice ?? '',
+        p.purchasePrice ?? '',
+        p.stock,
+        p.minStockAlert ?? 5,
+        p.unit || 'pcs',
+        p.brand || '',
+        p.status === 'archived' ? 'archived' : 'active',
+      ])
+    );
+  };
 
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',').map((c) => c.trim());
-        const getCol = (name: string) => {
-          const idx = headers.indexOf(name);
-          return idx >= 0 ? cols[idx] || '' : '';
-        };
-        const title = getCol('title');
-        if (!title) continue;
-        const reg = Number(getCol('regularprice')) || 0;
-        const saleRaw = Number(getCol('saleprice'));
-        const costRaw = Number(getCol('purchaseprice'));
-        await saveShopProduct(shopId, {
-          title,
-          sku: getCol('sku') || `SKU-${Date.now().toString().slice(-4)}-${i}`,
-          barcode: getCol('barcode') || undefined,
-          category: getCol('category') || categories[0]?.slug || 'general',
-          regularPrice: Math.max(1, reg),
-          salePrice: saleRaw > 0 ? saleRaw : undefined,
-          purchasePrice: costRaw > 0 ? costRaw : undefined,
-          stock: Math.max(0, Number(getCol('stock')) || 0),
-          minStockAlert: Math.max(0, Number(getCol('minstockalert')) || 5),
-          unit: getCol('unit') || 'pcs',
-          brand: getCol('brand') || shop?.name || '',
-          description: title,
-          images: [],
-          isPublished: true,
-          status: 'active',
-        });
-        created++;
+  const handleCsvImport = async (rows: Record<string, string>[]) => {
+    if (isReadOnly) throw new Error('Read-only access cannot import products.');
+    const existingSkus = new Set(products.map((p) => (p.sku || '').trim().toLowerCase()).filter(Boolean));
+    let imported = 0;
+    let skipped = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const title = (r.title || r.productname || r.name || '').trim();
+      if (!title) {
+        skipped++;
+        continue;
       }
-
-      setCsvModalOpen(false);
-      setSuccessMsg(`Imported ${created} product(s) successfully.`);
-      await loadCatalog();
-    } catch (err: any) {
-      setError(err?.message || 'CSV import stopped due to validation or plan limit.');
-    } finally {
-      setImportingCsv(false);
+      const sku = (r.sku || `SKU-${Date.now().toString().slice(-4)}-${i + 1}`).trim();
+      if (existingSkus.has(sku.toLowerCase())) {
+        skipped++;
+        continue;
+      }
+      const reg = Number(r.regularprice || r.price) || 0;
+      const saleRaw = Number(r.saleprice);
+      const costRaw = Number(r.purchaseprice || r.costprice);
+      await saveShopProduct(shopId, {
+        title,
+        sku,
+        barcode: r.barcode || undefined,
+        category: r.category || categories[0]?.slug || 'general',
+        regularPrice: Math.max(1, reg),
+        salePrice: saleRaw > 0 ? saleRaw : undefined,
+        purchasePrice: costRaw > 0 ? costRaw : undefined,
+        stock: Math.max(0, Number(r.stock) || 0),
+        minStockAlert: Math.max(0, Number(r.minstockalert) || 5),
+        unit: r.unit || 'pcs',
+        brand: r.brand || shop?.name || '',
+        description: r.description || title,
+        images: [],
+        isPublished: true,
+        status: 'active',
+      });
+      existingSkus.add(sku.toLowerCase());
+      imported++;
     }
+
+    await loadCatalog();
+    setSuccessMsg(`Imported ${imported} product(s)${skipped ? ` (skipped ${skipped} duplicate/empty)` : ''}.`);
+    return {
+      imported,
+      skipped,
+      notes: skipped > 0 ? 'Duplicate SKUs or blank titles were skipped.' : undefined,
+    };
   };
 
   return (
@@ -220,27 +235,36 @@ export const ShopProductsPage: React.FC = () => {
           </p>
         </div>
 
-        {!isReadOnly && (
-          <div className="flex flex-wrap gap-2 self-start">
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                setCsvModalOpen(true);
-              }}
-              className="px-3.5 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-1.5"
-            >
-              <Upload className="w-4 h-4" /> CSV Import
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenNew}
-              className="px-4 py-2.5 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" /> Add Product
-            </button>
-          </div>
-        )}
+        <div className="flex flex-wrap gap-2 self-start">
+          <button
+            type="button"
+            onClick={exportProductsCsv}
+            className="px-3.5 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-1.5"
+          >
+            <Download className="w-4 h-4" /> Export CSV
+          </button>
+          {!isReadOnly && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setCsvModalOpen(true);
+                }}
+                className="px-3.5 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-1.5"
+              >
+                <Upload className="w-4 h-4" /> CSV Import
+              </button>
+              <button
+                type="button"
+                onClick={handleOpenNew}
+                className="px-4 py-2.5 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" /> Add Product
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {atActiveQuota && (
@@ -711,48 +735,17 @@ export const ShopProductsPage: React.FC = () => {
       )}
 
       {/* CSV Bulk Import Modal */}
-      {csvModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 max-w-xl w-full p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-extrabold text-slate-900">Bulk CSV Product Import</h3>
-              <button
-                type="button"
-                onClick={() => setCsvModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <p className="text-xs text-slate-600">
-              Paste CSV rows below. Plan product quota limits ({isUnlimited ? 'Unlimited' : `${plan.maxProducts} active`}) are strictly enforced per item.
-            </p>
-            <textarea
-              rows={8}
-              value={csvText}
-              onChange={(e) => setCsvText(e.target.value)}
-              className="w-full p-3 border border-slate-200 rounded-xl font-mono text-[11px]"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setCsvModalOpen(false)}
-                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={importingCsv}
-                onClick={handleCsvImport}
-                className="px-5 py-2 bg-[#065F46] text-white rounded-lg text-xs font-bold"
-              >
-                {importingCsv ? 'Importing...' : 'Import Products'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <CsvImportModal
+        isOpen={csvModalOpen}
+        onClose={() => setCsvModalOpen(false)}
+        title="Bulk CSV Product Import"
+        subtitle={`Plan quota limits (${isUnlimited ? 'Unlimited' : `${plan.maxProducts} active`}) and duplicate SKU checks apply per row.`}
+        expectedHeaders={['title', 'sku', 'barcode', 'category', 'regularPrice', 'salePrice', 'purchasePrice', 'stock', 'minStockAlert', 'unit', 'brand']}
+        requiredHeaders={['title', 'regularPrice']}
+        sampleFilename={`${shop?.slug || shopId}-products-sample.csv`}
+        sampleRows={[['Basmati Rice 5kg', 'RICE-5KG', '8964001001', categories[0]?.slug || 'general', 1950, 1850, 1600, 25, 5, 'kg', 'Guard']]}
+        onImport={handleCsvImport}
+      />
 
       {/* Delete Confirmation Modal */}
       {confirmDeleteProduct && (

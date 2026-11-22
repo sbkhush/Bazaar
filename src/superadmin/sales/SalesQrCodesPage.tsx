@@ -17,6 +17,7 @@ import { ReferralAttribution, SalesMember, SalesQrEvent } from '../../types';
 export const SalesQrCodesPage: React.FC = () => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [members, setMembers] = useState<SalesMember[]>([]);
   const [referrals, setReferrals] = useState<ReferralAttribution[]>([]);
   const [qrEvents, setQrEvents] = useState<SalesQrEvent[]>([]);
@@ -27,11 +28,12 @@ export const SalesQrCodesPage: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [m, r, q] = await Promise.all([
-        getAllSalesMembers().catch(() => []),
-        getAllReferralAttributions().catch(() => []),
-        getAllSalesQrEvents().catch(() => []),
+        getAllSalesMembers(),
+        getAllReferralAttributions(),
+        getAllSalesQrEvents(),
       ]);
       setMembers(m);
       setReferrals(r);
@@ -44,6 +46,10 @@ export const SalesQrCodesPage: React.FC = () => {
         })
       );
       setQrImages(previews);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to load referral QR directory from Firestore.';
+      setLoadError(msg);
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -104,6 +110,19 @@ export const SalesQrCodesPage: React.FC = () => {
           />
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <span className="font-semibold text-rose-800">{loadError}</span>
+          <button
+            type="button"
+            onClick={loadData}
+            className="px-3.5 py-1.5 rounded-lg bg-rose-700 text-white font-bold hover:bg-rose-800 self-start sm:self-auto"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-12 flex justify-center">

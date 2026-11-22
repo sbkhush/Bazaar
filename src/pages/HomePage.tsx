@@ -14,17 +14,16 @@ import {
   Award,
   Package,
 } from 'lucide-react';
-import { getShopProducts, getShopCategories, getShopBanners } from '../services/tenantService';
-import { Product, Category, Banner } from '../types';
+import {
+  getShopProducts,
+  getShopCategories,
+  getShopBanners,
+  getShopRecentReviews,
+} from '../services/tenantService';
+import { Product, Category, Banner, Review } from '../types';
 import { ProductCard } from '../components/common/ProductCard';
 import { QuickViewModal } from '../components/common/QuickViewModal';
-import {
-  DEFAULT_SHOP_ID,
-  INITIAL_PRODUCTS,
-  INITIAL_CATEGORIES,
-  INITIAL_BANNERS,
-  FALLBACK_PRODUCT_IMAGE,
-} from '../data/seedData';
+import { FALLBACK_PRODUCT_IMAGE } from '../data/seedData';
 import { useTenant } from '../context/TenantContext';
 import defaultStoreBanner from '../assets/images/storefront_banner_default_1795028612348.jpg';
 
@@ -33,6 +32,7 @@ export const HomePage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [banners, setBanners] = useState<Banner[]>([]);
+  const [recentReviews, setRecentReviews] = useState<Review[]>([]);
   const [currentBanner, setCurrentBanner] = useState(0);
   const [quickViewProduct, setQuickViewProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,17 +51,16 @@ export const HomePage: React.FC = () => {
       getShopProducts(shopId),
       getShopCategories(shopId),
       getShopBanners(shopId),
+      getShopRecentReviews(shopId, 6),
     ])
-      .then(([prods, cats, bans]) => {
+      .then(([prods, cats, bans, revs]) => {
         if (!active) return;
-        const isFlagship = shopId === DEFAULT_SHOP_ID;
-        setProducts(prods.length > 0 ? prods : isFlagship ? INITIAL_PRODUCTS : []);
-        setCategories(cats.length > 0 ? cats : isFlagship ? INITIAL_CATEGORIES : []);
+        setProducts(prods);
+        setCategories(cats);
+        setRecentReviews(revs);
 
         if (bans.length > 0) {
           setBanners(bans);
-        } else if (isFlagship) {
-          setBanners(INITIAL_BANNERS);
         } else {
           setBanners([
             {
@@ -385,90 +384,68 @@ export const HomePage: React.FC = () => {
         </section>
       )}
 
-      {/* 7. Customer Testimonials */}
-      <section className="bg-slate-50 py-12 sm:py-14 border-y border-slate-200/80">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="text-center max-w-xl mx-auto mb-8 sm:mb-10">
-            <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
-              Verified Buyer Reviews
-            </span>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mt-1">
-              Loved by Pakistani Shoppers
-            </h2>
-            <p className="text-xs text-slate-500 mt-2">
-              Real shopping experiences across Karachi, Lahore, Islamabad, and Peshawar.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
-            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between">
-              <div>
-                <div className="flex text-amber-400 mb-3">
-                  {[...Array(5)].map((_, i) => (
-                    <Star key={i} className="w-4 h-4 fill-amber-400" />
-                  ))}
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed italic mb-4">
-                  "Authentic products packed securely and delivered via TCS within 48 hours. Self-pickup option also makes local collection effortless!"
-                </p>
-              </div>
-              <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
-                <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center">
-                  TM
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800">Tariq Mahmood</h4>
-                  <p className="text-[10px] text-slate-400">Gulberg, Lahore • Verified Purchase</p>
-                </div>
-              </div>
+      {/* 7. Customer Reviews (Rendered only when real reviews exist in Firestore) */}
+      {recentReviews.length > 0 && (
+        <section className="bg-slate-50 py-12 sm:py-14 border-y border-slate-200/80">
+          <div className="max-w-7xl mx-auto px-4">
+            <div className="text-center max-w-xl mx-auto mb-8 sm:mb-10">
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
+                Customer Feedback
+              </span>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mt-1">
+                Recent Shopper Reviews
+              </h2>
+              <p className="text-xs text-slate-500 mt-2">
+                Reviews submitted by customers on {settings.siteName}.
+              </p>
             </div>
 
-            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between">
-              <div>
-                <div className="flex text-amber-400 mb-3">
-                  {[...Array(5)].map((_, i) => (
-                    <Star key={i} className="w-4 h-4 fill-amber-400" />
-                  ))}
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed italic mb-4">
-                  "Uploading the EasyPaisa transfer screenshot right at checkout made payment confirmation fast and worry-free."
-                </p>
-              </div>
-              <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
-                <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center">
-                  SK
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800">Saima Khan</h4>
-                  <p className="text-[10px] text-slate-400">DHA Phase 6, Karachi • Verified Purchase</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between">
-              <div>
-                <div className="flex text-amber-400 mb-3">
-                  {[...Array(5)].map((_, i) => (
-                    <Star key={i} className="w-4 h-4 fill-amber-400" />
-                  ))}
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed italic mb-4">
-                  "Excellent packaging and prompt WhatsApp response whenever I checked consignment tracking."
-                </p>
-              </div>
-              <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
-                <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center">
-                  HA
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800">Hamza Abbasi</h4>
-                  <p className="text-[10px] text-slate-400">F-11, Islamabad • Verified Purchase</p>
-                </div>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
+              {recentReviews.slice(0, 6).map((rev) => {
+                const initials = (rev.userName || 'C')
+                  .trim()
+                  .split(/\s+/)
+                  .slice(0, 2)
+                  .map((w) => w[0]?.toUpperCase() || '')
+                  .join('') || 'C';
+                return (
+                  <div
+                    key={rev.id}
+                    className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex text-amber-400 mb-3">
+                        {[...Array(5)].map((_, i) => (
+                          <Star
+                            key={i}
+                            className={`w-4 h-4 ${
+                              i < Math.round(rev.rating || 5) ? 'fill-amber-400' : 'text-slate-200'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <p className="text-xs text-slate-600 leading-relaxed mb-4 line-clamp-4">
+                        "{rev.comment}"
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+                      <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center shrink-0">
+                        {initials}
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-xs font-bold text-slate-800 truncate">{rev.userName}</h4>
+                        <p className="text-[10px] text-slate-400">
+                          {new Date(rev.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Quick View Modal */}
       <QuickViewModal
