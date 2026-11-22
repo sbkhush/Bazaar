@@ -1,4 +1,4 @@
-name: Deploy BazaarPK Cloud to GitHub Pages
+name: Deploy Sb Khush to GitHub Pages
 
 on:
   push:
