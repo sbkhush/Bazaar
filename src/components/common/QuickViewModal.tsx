@@ -76,6 +76,8 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({ product, onClose
             <img
               src={selectedImage || product.images[0] || FALLBACK_PRODUCT_IMAGE}
               alt={product.title}
+              decoding="async"
+              fetchPriority="high"
               onError={(e) => {
                 (e.currentTarget as HTMLImageElement).src = FALLBACK_PRODUCT_IMAGE;
               }}
@@ -94,7 +96,11 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({ product, onClose
                 >
                   <img
                     src={img || FALLBACK_PRODUCT_IMAGE}
-                    alt="thumb"
+                    alt={`${product.title} thumbnail ${idx + 1}`}
+                    width={56}
+                    height={56}
+                    loading="lazy"
+                    decoding="async"
                     onError={(e) => {
                       (e.currentTarget as HTMLImageElement).src = FALLBACK_PRODUCT_IMAGE;
                     }}

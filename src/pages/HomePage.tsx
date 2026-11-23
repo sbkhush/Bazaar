@@ -25,7 +25,7 @@ import { ProductCard } from '../components/common/ProductCard';
 import { QuickViewModal } from '../components/common/QuickViewModal';
 import { FALLBACK_PRODUCT_IMAGE } from '../data/seedData';
 import { useTenant } from '../context/TenantContext';
-import defaultStoreBanner from '../assets/images/storefront_banner_default_1795028612348.jpg';
+import defaultStoreBanner from '../assets/images/storefront_banner_default_1795028612348.webp';
 
 export const HomePage: React.FC = () => {
   const { shopId, settings, storeBasePath } = useTenant();
@@ -115,6 +115,9 @@ export const HomePage: React.FC = () => {
                   (e.currentTarget as HTMLImageElement).src = defaultStoreBanner;
                 }}
                 alt={banner.title}
+                decoding="async"
+                loading={index === 0 ? 'eager' : 'lazy'}
+                fetchPriority={index === currentBanner ? 'high' : 'low'}
                 className="w-full h-full object-cover object-center"
               />
               <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/75 to-slate-950/20" />
@@ -265,6 +268,10 @@ export const HomePage: React.FC = () => {
                       (e.currentTarget as HTMLImageElement).src = FALLBACK_PRODUCT_IMAGE;
                     }}
                     alt={cat.name}
+                    width={96}
+                    height={96}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover"
                   />
                 </div>

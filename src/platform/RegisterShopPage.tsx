@@ -9,6 +9,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { auth } from '../firebase/config';
 import {
   PAKISTAN_CITIES,
   BUSINESS_TYPE_OPTIONS,
@@ -171,8 +172,6 @@ export const RegisterShopPage: React.FC = () => {
           throw new Error('Please enter a valid email and a password of at least 6 characters.');
         }
         await registerWithEmail(finalName, finalEmail, password, ownerPhone);
-        // Fetch freshly signed-in auth user via modular auth import cleanly
-        const { auth } = await import('../firebase/config');
         uid = auth.currentUser?.uid;
         if (!uid) throw new Error('Account created, please try again.');
       }

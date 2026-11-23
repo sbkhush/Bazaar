@@ -15,9 +15,9 @@ import {
   Users,
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import generalStoreImg from '../../assets/images/solution_general_store_1795085193366.jpg';
-import cosmeticsStoreImg from '../../assets/images/solution_cosmetics_store_1795085193246.jpg';
-import clothingStoreImg from '../../assets/images/solution_clothing_store_1795085192837.jpg';
+import generalStoreImg from '../../assets/images/solution_general_store_1795085193366.webp';
+import cosmeticsStoreImg from '../../assets/images/solution_cosmetics_store_1795085193246.webp';
+import clothingStoreImg from '../../assets/images/solution_clothing_store_1795085192837.webp';
 import { SafeImage } from '../../components/common/SafeImage';
 import { Tilt3DCard } from './Tilt3DCard';
 
@@ -370,7 +370,10 @@ export const FeaturesAndSolutionsSection: React.FC = () => {
                     <SafeImage
                       src={sol.image}
                       alt={sol.imageAlt}
+                      width={640}
+                      height={480}
                       loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     />
                   </div>

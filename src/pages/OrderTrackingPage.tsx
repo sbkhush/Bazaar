@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Truck, Search, CheckCircle2, AlertCircle, ExternalLink, Store, Clock, Phone, KeyRound } from 'lucide-react';
+import { Truck, Search, CheckCircle2, AlertCircle, ExternalLink, Store, Clock, Phone, KeyRound, MapPin, Calendar } from 'lucide-react';
 import { Order } from '../types';
 import { formatPKR, COURIERS, FALLBACK_PRODUCT_IMAGE, getPaymentMethodLabel, getFulfillmentLabel } from '../data/seedData';
 import { trackShopOrder } from '../services/tenantService';
@@ -65,7 +65,30 @@ export const OrderTrackingPage: React.FC = () => {
     }
   }, [initialOrder, initialToken, shopId, currentUser?.uid]);
 
-  const getStepIndex = (status: string) => {
+  const isSelfPickup = order?.fulfillmentMethod === 'self_pickup';
+
+  const getStepIndex = (status: string, selfPickup: boolean) => {
+    if (selfPickup) {
+      switch (status) {
+        case 'Pending':
+          return 0;
+        case 'Confirmed':
+        case 'Accepted':
+          return 1;
+        case 'Preparing':
+        case 'Processing':
+          return 2;
+        case 'Ready for Pickup':
+          return 3;
+        case 'Collected':
+          return 4;
+        case 'Completed':
+        case 'Delivered':
+          return 5;
+        default:
+          return 0;
+      }
+    }
     switch (status) {
       case 'Pending':
         return 0;
@@ -82,15 +105,14 @@ export const OrderTrackingPage: React.FC = () => {
     }
   };
 
-  const isSelfPickup = order?.fulfillmentMethod === 'self_pickup';
-
   const steps = isSelfPickup
     ? [
-        { title: 'Order Placed', desc: 'Received & verified' },
-        { title: 'Confirmed', desc: 'Confirmed for pickup' },
-        { title: 'Packing', desc: 'Items packed at outlet' },
-        { title: 'Ready for Pickup', desc: 'Available at counter' },
-        { title: 'Picked Up', desc: 'Collected by customer' },
+        { title: 'Placed', desc: 'Order received' },
+        { title: 'Accepted', desc: 'Confirmed by store' },
+        { title: 'Preparing', desc: 'Packing items' },
+        { title: 'Ready', desc: 'Ready at counter' },
+        { title: 'Collected', desc: 'OTP verified' },
+        { title: 'Completed', desc: 'Handover done' },
       ]
     : [
         { title: 'Order Placed', desc: 'Received & verified' },
@@ -100,7 +122,7 @@ export const OrderTrackingPage: React.FC = () => {
         { title: 'Delivered', desc: 'Delivered to doorstep' },
       ];
 
-  const currentStep = order ? getStepIndex(order.orderStatus) : 0;
+  const currentStep = order ? getStepIndex(order.orderStatus, isSelfPickup) : 0;
   const isCancelled = order?.orderStatus === 'Cancelled' || order?.orderStatus === 'Returned' || order?.orderStatus === 'Refunded';
 
   const courierInfo = COURIERS.find(
@@ -225,7 +247,7 @@ export const OrderTrackingPage: React.FC = () => {
                 </div>
                 <div className="sm:hidden absolute top-4 bottom-4 left-4 w-0.5 bg-slate-100 z-0" />
 
-                <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 relative z-10">
+                <div className={`grid grid-cols-1 ${isSelfPickup ? 'sm:grid-cols-6' : 'sm:grid-cols-5'} gap-4 relative z-10`}>
                   {steps.map((step, idx) => {
                     const isDone = idx <= currentStep;
                     return (
@@ -257,12 +279,33 @@ export const OrderTrackingPage: React.FC = () => {
           )}
 
           {isSelfPickup && order.pickupDetails ? (
-            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-1.5 text-xs">
-              <div className="font-bold text-emerald-900 flex items-center gap-1.5">
-                <Store className="w-4 h-4 text-emerald-700" />
-                Pickup Counter: {order.pickupDetails.locationName}
+            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-2 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-bold text-emerald-900 flex items-center gap-1.5">
+                  <Store className="w-4 h-4 text-emerald-700" />
+                  Pickup Counter: {order.pickupDetails.locationName}
+                </div>
+                {order.pickupDetails.mapUrl && (
+                  <a
+                    href={order.pickupDetails.mapUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-[#065F46] text-white rounded-lg font-bold text-[11px] hover:bg-emerald-900 transition inline-flex items-center gap-1"
+                  >
+                    <MapPin className="w-3.5 h-3.5" /> Google Maps Directions <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
               </div>
               <p className="text-slate-700">{order.pickupDetails.address}</p>
+              {(order.pickupDetails.pickupDate || order.pickupDetails.preferredTime) && (
+                <p className="text-[11px] font-semibold text-emerald-900 tabular-nums flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-emerald-700" />
+                  Scheduled:{' '}
+                  {order.pickupDetails.pickupDate
+                    ? `${order.pickupDetails.pickupDate} · ${order.pickupDetails.pickupSlotLabel || ''}`
+                    : order.pickupDetails.preferredTime}
+                </p>
+              )}
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600 pt-1">
                 <span className="flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5 text-emerald-700" /> {order.pickupDetails.timings}
@@ -271,6 +314,11 @@ export const OrderTrackingPage: React.FC = () => {
                   <Phone className="w-3.5 h-3.5 text-emerald-700" /> {order.pickupDetails.contactPhone}
                 </span>
               </div>
+              {order.pickupDetails.instructions && (
+                <p className="text-[11px] text-emerald-900 bg-white/80 p-2 rounded-lg border border-emerald-100">
+                  {order.pickupDetails.instructions}
+                </p>
+              )}
             </div>
           ) : (
             order.trackingNumber && (

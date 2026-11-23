@@ -211,6 +211,8 @@ export const ProductDetailPage: React.FC = () => {
                 (e.currentTarget as HTMLImageElement).src = FALLBACK_PRODUCT_IMAGE;
               }}
               alt={product.title}
+              decoding="async"
+              fetchPriority="high"
               className="w-full h-full object-cover object-center"
             />
             {hasDiscount && (
@@ -245,7 +247,11 @@ export const ProductDetailPage: React.FC = () => {
                     onError={(e) => {
                       (e.currentTarget as HTMLImageElement).src = FALLBACK_PRODUCT_IMAGE;
                     }}
-                    alt="thumb"
+                    alt={`${product.title} thumbnail ${i + 1}`}
+                    width={80}
+                    height={80}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover"
                   />
                 </button>

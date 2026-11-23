@@ -17,98 +17,128 @@ import { CartProvider } from './context/CartContext';
 import { WishlistProvider } from './context/WishlistContext';
 import { ToastProvider } from './components/common/Toast';
 
-// Layer 1: SaaS Platform Marketing & Auth
+// Layer 1: Critical Public Shell & Primary Landing/Storefront Home
 import { PlatformLandingPage } from './platform/PlatformLandingPage';
-import { RegisterShopPage } from './platform/RegisterShopPage';
-import { LoginPage } from './platform/LoginPage';
-import { ReferralRedirectPage } from './platform/ReferralRedirectPage';
-import { PlatformLegalPage } from './pages/PlatformLegalPage';
+import { HomePage } from './pages/HomePage';
 import { PWAStatusBanner } from './components/common/PWAStatusBanner';
 import { BRAND } from './config/brand';
 
-// Layer 2: Super Admin Portal
-import { SuperAdminLayout } from './superadmin/SuperAdminLayout';
-import { SuperAdminDashboardPage } from './superadmin/SuperAdminDashboardPage';
-import { SuperAdminShopsPage } from './superadmin/SuperAdminShopsPage';
-import { SuperAdminShopDetailPage } from './superadmin/SuperAdminShopDetailPage';
-import { SuperAdminPlansPage } from './superadmin/SuperAdminPlansPage';
-import { SuperAdminPaymentsPage } from './superadmin/SuperAdminPaymentsPage';
-import { SuperAdminAnalyticsPage } from './superadmin/SuperAdminAnalyticsPage';
-import { SuperAdminSupportPage } from './superadmin/SuperAdminSupportPage';
-import { SuperAdminAuditLogsPage } from './superadmin/SuperAdminAuditLogsPage';
-import { SuperAdminSettingsPage } from './superadmin/SuperAdminSettingsPage';
-import { SalesOverviewPage } from './superadmin/sales/SalesOverviewPage';
-import { SalesPortalAccessPage } from './superadmin/sales/SalesPortalAccessPage';
-import { SalesMembersPage } from './superadmin/sales/SalesMembersPage';
-import { SalesMemberDetailPage } from './superadmin/sales/SalesMemberDetailPage';
-import { SalesTeamsPage } from './superadmin/sales/SalesTeamsPage';
-import { SalesLeadsPage } from './superadmin/sales/SalesLeadsPage';
-import { SalesRegistrationsPage } from './superadmin/sales/SalesRegistrationsPage';
-import { SalesReferralsPage } from './superadmin/sales/SalesReferralsPage';
-import { SalesTargetsPage } from './superadmin/sales/SalesTargetsPage';
-import { SalesCommissionsPage } from './superadmin/sales/SalesCommissionsPage';
-import { SalesPayoutsPage } from './superadmin/sales/SalesPayoutsPage';
-import { SalesQrCodesPage } from './superadmin/sales/SalesQrCodesPage';
-import { SalesReportsPage } from './superadmin/sales/SalesReportsPage';
-import { SalesActivityLogsPage } from './superadmin/sales/SalesActivityLogsPage';
-import { SalesSettingsPage } from './superadmin/sales/SalesSettingsPage';
-
-// Layer 2B: Individual Salesman, Sales Manager & Referral Agent Portals
-import { SalesmanLoginPage } from './salesman/SalesmanLoginPage';
-import { SalesmanLayout } from './salesman/SalesmanLayout';
-import { SalesmanDashboardPage } from './salesman/SalesmanDashboardPage';
-import { SalesManagerLoginPage } from './salesmanager/SalesManagerLoginPage';
-import { SalesManagerLayout } from './salesmanager/SalesManagerLayout';
-import { SalesManagerDashboardPage } from './salesmanager/SalesManagerDashboardPage';
-import { ReferralLoginPage } from './referral/ReferralLoginPage';
-import { ReferralRegisterPage } from './referral/ReferralRegisterPage';
-import { ReferralLayout } from './referral/ReferralLayout';
-import { ReferralDashboardPage } from './referral/ReferralDashboardPage';
-
-// Layer 3: Merchant Shop Dashboard
-import { ShopDashboardLayout } from './dashboard/ShopDashboardLayout';
-import { ShopOverviewPage } from './dashboard/ShopOverviewPage';
-import { ShopProductsPage } from './dashboard/ShopProductsPage';
-import { ShopCategoriesPage } from './dashboard/ShopCategoriesPage';
-import { ShopOrdersPage } from './dashboard/ShopOrdersPage';
-import { ShopCustomersPage } from './dashboard/ShopCustomersPage';
-import { ShopInventoryPage } from './dashboard/ShopInventoryPage';
-import { ShopPosPage } from './dashboard/ShopPosPage';
-import { ShopPurchasesPage } from './dashboard/ShopPurchasesPage';
-import { ShopSuppliersPage } from './dashboard/ShopSuppliersPage';
-import { ShopKhataPage } from './dashboard/ShopKhataPage';
-import { ShopCouponsPage } from './dashboard/ShopCouponsPage';
-import { ShopBannersPage } from './dashboard/ShopBannersPage';
-import { ShopAppearancePage } from './dashboard/ShopAppearancePage';
-import { ShopSettingsPage } from './dashboard/ShopSettingsPage';
-import { ShopStaffPage } from './dashboard/ShopStaffPage';
-import { ShopReportsPage } from './dashboard/ShopReportsPage';
-import { ShopSubscriptionPage } from './dashboard/ShopSubscriptionPage';
-import { ShopProfilePage } from './dashboard/ShopProfilePage';
-
-// Layer 4: Multi-Tenant Storefront Components & Pages
+// Layer 4: Critical Storefront Chrome
 import { Header } from './components/common/Header';
 import { Footer } from './components/common/Footer';
 import { CartDrawer } from './components/common/CartDrawer';
 import { WhatsAppButton } from './components/common/WhatsAppButton';
 import { DynamicSeoHead } from './components/common/DynamicSeoHead';
-import { HomePage } from './pages/HomePage';
-import { ShopPage } from './pages/ShopPage';
-import { ProductDetailPage } from './pages/ProductDetailPage';
-import { CartPage } from './pages/CartPage';
-import { CheckoutPage } from './pages/CheckoutPage';
-import { OrderSuccessPage } from './pages/OrderSuccessPage';
-import { AccountPage } from './pages/AccountPage';
-import { OrderTrackingPage } from './pages/OrderTrackingPage';
-import { ContactPage } from './pages/ContactPage';
-import {
-  AboutPage,
-  FAQPage,
-  ReturnPolicyPage,
-  TermsPage,
-  PrivacyPage,
-} from './pages/PolicyPages';
 import { DEFAULT_SHOP_ID } from './data/seedData';
+
+function lazyNamed<T extends React.ComponentType<any>>(
+  loader: () => Promise<Record<string, unknown>>,
+  exportName: string
+): React.LazyExoticComponent<T> {
+  return React.lazy(() =>
+    loader().then((mod) => ({ default: mod[exportName] as T }))
+  );
+}
+
+const RouteLoader: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
+  <div
+    className={`${
+      compact ? 'min-h-[55vh]' : 'min-h-screen'
+    } flex flex-col items-center justify-center bg-slate-50 gap-3 p-6`}
+  >
+    <Loader2 className="w-8 h-8 animate-spin text-emerald-700" />
+    <p className="text-xs font-semibold text-slate-600 tracking-wide">
+      Loading {BRAND.name}...
+    </p>
+  </div>
+);
+
+// Layer 1 (Secondary): SaaS Platform Auth, Legal & Referral
+const RegisterShopPage = lazyNamed(() => import('./platform/RegisterShopPage'), 'RegisterShopPage');
+const LoginPage = lazyNamed(() => import('./platform/LoginPage'), 'LoginPage');
+const ReferralRedirectPage = lazyNamed(() => import('./platform/ReferralRedirectPage'), 'ReferralRedirectPage');
+const PlatformLegalPage = lazyNamed<React.ComponentType<{ type: 'privacy' | 'terms' }>>(
+  () => import('./pages/PlatformLegalPage'),
+  'PlatformLegalPage'
+);
+
+// Layer 2: Super Admin Portal (Lazy Chunked)
+const SuperAdminLayout = lazyNamed(() => import('./superadmin/SuperAdminLayout'), 'SuperAdminLayout');
+const SuperAdminDashboardPage = lazyNamed(() => import('./superadmin/SuperAdminDashboardPage'), 'SuperAdminDashboardPage');
+const SuperAdminShopsPage = lazyNamed(() => import('./superadmin/SuperAdminShopsPage'), 'SuperAdminShopsPage');
+const SuperAdminShopDetailPage = lazyNamed(() => import('./superadmin/SuperAdminShopDetailPage'), 'SuperAdminShopDetailPage');
+const SuperAdminPlansPage = lazyNamed(() => import('./superadmin/SuperAdminPlansPage'), 'SuperAdminPlansPage');
+const SuperAdminPaymentsPage = lazyNamed(() => import('./superadmin/SuperAdminPaymentsPage'), 'SuperAdminPaymentsPage');
+const SuperAdminAnalyticsPage = lazyNamed(() => import('./superadmin/SuperAdminAnalyticsPage'), 'SuperAdminAnalyticsPage');
+const SuperAdminSupportPage = lazyNamed(() => import('./superadmin/SuperAdminSupportPage'), 'SuperAdminSupportPage');
+const SuperAdminAuditLogsPage = lazyNamed(() => import('./superadmin/SuperAdminAuditLogsPage'), 'SuperAdminAuditLogsPage');
+const SuperAdminSettingsPage = lazyNamed(() => import('./superadmin/SuperAdminSettingsPage'), 'SuperAdminSettingsPage');
+const SalesOverviewPage = lazyNamed(() => import('./superadmin/sales/SalesOverviewPage'), 'SalesOverviewPage');
+const SalesPortalAccessPage = lazyNamed(() => import('./superadmin/sales/SalesPortalAccessPage'), 'SalesPortalAccessPage');
+const SalesMembersPage = lazyNamed<React.ComponentType<{ defaultCreateOpen?: boolean }>>(
+  () => import('./superadmin/sales/SalesMembersPage'),
+  'SalesMembersPage'
+);
+const SalesMemberDetailPage = lazyNamed(() => import('./superadmin/sales/SalesMemberDetailPage'), 'SalesMemberDetailPage');
+const SalesTeamsPage = lazyNamed(() => import('./superadmin/sales/SalesTeamsPage'), 'SalesTeamsPage');
+const SalesLeadsPage = lazyNamed(() => import('./superadmin/sales/SalesLeadsPage'), 'SalesLeadsPage');
+const SalesRegistrationsPage = lazyNamed(() => import('./superadmin/sales/SalesRegistrationsPage'), 'SalesRegistrationsPage');
+const SalesReferralsPage = lazyNamed(() => import('./superadmin/sales/SalesReferralsPage'), 'SalesReferralsPage');
+const SalesTargetsPage = lazyNamed(() => import('./superadmin/sales/SalesTargetsPage'), 'SalesTargetsPage');
+const SalesCommissionsPage = lazyNamed(() => import('./superadmin/sales/SalesCommissionsPage'), 'SalesCommissionsPage');
+const SalesPayoutsPage = lazyNamed(() => import('./superadmin/sales/SalesPayoutsPage'), 'SalesPayoutsPage');
+const SalesQrCodesPage = lazyNamed(() => import('./superadmin/sales/SalesQrCodesPage'), 'SalesQrCodesPage');
+const SalesReportsPage = lazyNamed(() => import('./superadmin/sales/SalesReportsPage'), 'SalesReportsPage');
+const SalesActivityLogsPage = lazyNamed(() => import('./superadmin/sales/SalesActivityLogsPage'), 'SalesActivityLogsPage');
+const SalesSettingsPage = lazyNamed(() => import('./superadmin/sales/SalesSettingsPage'), 'SalesSettingsPage');
+
+// Layer 2B: Individual Salesman, Sales Manager & Referral Agent Portals
+const SalesmanLoginPage = lazyNamed(() => import('./salesman/SalesmanLoginPage'), 'SalesmanLoginPage');
+const SalesmanLayout = lazyNamed(() => import('./salesman/SalesmanLayout'), 'SalesmanLayout');
+const SalesmanDashboardPage = lazyNamed(() => import('./salesman/SalesmanDashboardPage'), 'SalesmanDashboardPage');
+const SalesManagerLoginPage = lazyNamed(() => import('./salesmanager/SalesManagerLoginPage'), 'SalesManagerLoginPage');
+const SalesManagerLayout = lazyNamed(() => import('./salesmanager/SalesManagerLayout'), 'SalesManagerLayout');
+const SalesManagerDashboardPage = lazyNamed(() => import('./salesmanager/SalesManagerDashboardPage'), 'SalesManagerDashboardPage');
+const ReferralLoginPage = lazyNamed(() => import('./referral/ReferralLoginPage'), 'ReferralLoginPage');
+const ReferralRegisterPage = lazyNamed(() => import('./referral/ReferralRegisterPage'), 'ReferralRegisterPage');
+const ReferralLayout = lazyNamed(() => import('./referral/ReferralLayout'), 'ReferralLayout');
+const ReferralDashboardPage = lazyNamed(() => import('./referral/ReferralDashboardPage'), 'ReferralDashboardPage');
+
+// Layer 3: Merchant Shop Dashboard (Lazy Chunked)
+const ShopDashboardLayout = lazyNamed(() => import('./dashboard/ShopDashboardLayout'), 'ShopDashboardLayout');
+const ShopOverviewPage = lazyNamed(() => import('./dashboard/ShopOverviewPage'), 'ShopOverviewPage');
+const ShopProductsPage = lazyNamed(() => import('./dashboard/ShopProductsPage'), 'ShopProductsPage');
+const ShopCategoriesPage = lazyNamed(() => import('./dashboard/ShopCategoriesPage'), 'ShopCategoriesPage');
+const ShopOrdersPage = lazyNamed(() => import('./dashboard/ShopOrdersPage'), 'ShopOrdersPage');
+const ShopCustomersPage = lazyNamed(() => import('./dashboard/ShopCustomersPage'), 'ShopCustomersPage');
+const ShopInventoryPage = lazyNamed(() => import('./dashboard/ShopInventoryPage'), 'ShopInventoryPage');
+const ShopPosPage = lazyNamed(() => import('./dashboard/ShopPosPage'), 'ShopPosPage');
+const ShopPurchasesPage = lazyNamed(() => import('./dashboard/ShopPurchasesPage'), 'ShopPurchasesPage');
+const ShopSuppliersPage = lazyNamed(() => import('./dashboard/ShopSuppliersPage'), 'ShopSuppliersPage');
+const ShopKhataPage = lazyNamed(() => import('./dashboard/ShopKhataPage'), 'ShopKhataPage');
+const ShopCouponsPage = lazyNamed(() => import('./dashboard/ShopCouponsPage'), 'ShopCouponsPage');
+const ShopBannersPage = lazyNamed(() => import('./dashboard/ShopBannersPage'), 'ShopBannersPage');
+const ShopAppearancePage = lazyNamed(() => import('./dashboard/ShopAppearancePage'), 'ShopAppearancePage');
+const ShopSettingsPage = lazyNamed(() => import('./dashboard/ShopSettingsPage'), 'ShopSettingsPage');
+const ShopStaffPage = lazyNamed(() => import('./dashboard/ShopStaffPage'), 'ShopStaffPage');
+const ShopReportsPage = lazyNamed(() => import('./dashboard/ShopReportsPage'), 'ShopReportsPage');
+const ShopSubscriptionPage = lazyNamed(() => import('./dashboard/ShopSubscriptionPage'), 'ShopSubscriptionPage');
+const ShopProfilePage = lazyNamed(() => import('./dashboard/ShopProfilePage'), 'ShopProfilePage');
+
+// Layer 4 (Secondary): Storefront Interior Pages
+const ShopPage = lazyNamed(() => import('./pages/ShopPage'), 'ShopPage');
+const ProductDetailPage = lazyNamed(() => import('./pages/ProductDetailPage'), 'ProductDetailPage');
+const CartPage = lazyNamed(() => import('./pages/CartPage'), 'CartPage');
+const CheckoutPage = lazyNamed(() => import('./pages/CheckoutPage'), 'CheckoutPage');
+const OrderSuccessPage = lazyNamed(() => import('./pages/OrderSuccessPage'), 'OrderSuccessPage');
+const AccountPage = lazyNamed(() => import('./pages/AccountPage'), 'AccountPage');
+const OrderTrackingPage = lazyNamed(() => import('./pages/OrderTrackingPage'), 'OrderTrackingPage');
+const ContactPage = lazyNamed(() => import('./pages/ContactPage'), 'ContactPage');
+const AboutPage = lazyNamed(() => import('./pages/PolicyPages'), 'AboutPage');
+const FAQPage = lazyNamed(() => import('./pages/PolicyPages'), 'FAQPage');
+const ReturnPolicyPage = lazyNamed(() => import('./pages/PolicyPages'), 'ReturnPolicyPage');
+const TermsPage = lazyNamed(() => import('./pages/PolicyPages'), 'TermsPage');
+const PrivacyPage = lazyNamed(() => import('./pages/PolicyPages'), 'PrivacyPage');
 
 const StorefrontLayout: React.FC = () => {
   const { loading, notFound, isSuspended, shopSlug, shop, settings, storeBasePath } = useTenant();
@@ -192,7 +222,9 @@ const StorefrontLayout: React.FC = () => {
       {!hasChildSeo && <DynamicSeoHead shop={shop} settings={settings} />}
       <Header />
       <main className="flex-1">
-        <Outlet />
+        <React.Suspense fallback={<RouteLoader compact />}>
+          <Outlet />
+        </React.Suspense>
       </main>
       <CartDrawer />
       <WhatsAppButton />
@@ -292,6 +324,7 @@ export default function App() {
         <ToastProvider>
           <BrowserRouter basename={basename}>
             <PWAStatusBanner />
+            <React.Suspense fallback={<RouteLoader />}>
             <Routes>
               {/* Layer 1: SaaS Platform Marketing, Legal & Auth */}
               <Route path="/" element={<PlatformLandingPage />} />
@@ -441,6 +474,7 @@ export default function App() {
               {/* Platform-wide Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            </React.Suspense>
           </BrowserRouter>
         </ToastProvider>
       </AuthProvider>

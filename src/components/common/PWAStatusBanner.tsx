@@ -82,8 +82,11 @@ export const PWAStatusBanner: React.FC = () => {
       {installPrompt && !dismissed && (
         <div className="fixed bottom-4 right-4 z-[110] max-w-xs bg-white border border-slate-200 rounded-2xl shadow-xl p-3.5 flex items-center gap-3">
           <img
-            src="/pwa-192x192.png"
+            src={`${import.meta.env.BASE_URL}pwa-192x192.png`}
             alt={`${BRAND.name} App`}
+            width={40}
+            height={40}
+            decoding="async"
             className="w-10 h-10 rounded-xl shrink-0"
           />
           <div className="min-w-0 flex-1">

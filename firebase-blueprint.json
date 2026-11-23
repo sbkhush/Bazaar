@@ -1,5 +1,20 @@
 {
   "entities": {
+    "PickupSlot": {
+      "title": "Self-Pickup Slot Occupancy",
+      "description": "Date and slot reservation capacity tracker per merchant storefront",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "shopId": { "type": "string" },
+        "date": { "type": "string" },
+        "slotId": { "type": "string" },
+        "bookedCount": { "type": "number" },
+        "maxOrders": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "shopId", "date", "slotId", "bookedCount", "maxOrders"]
+    },
     "PlatformAdmin": {
       "title": "Platform Super Admin",
       "description": "Authorized platform owner / super administrator record",
@@ -462,6 +477,10 @@
     },
     "/shops/{shopId}/expenses/{expenseId}": {
       "description": "Tenant operating expenses for Net Profit reporting"
+    },
+    "/shops/{shopId}/pickup_slots/{slotKey}": {
+      "schema": { "$ref": "#/entities/PickupSlot" },
+      "description": "Self-pickup date and time-slot reservation counts with strict capacity guard"
     },
     "/support_tickets/{ticketId}": {
       "schema": { "$ref": "#/entities/SupportTicket" },

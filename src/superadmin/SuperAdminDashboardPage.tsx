@@ -303,7 +303,7 @@ export const SuperAdminDashboardPage: React.FC = () => {
           <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-4">
             <h3 className="text-base font-extrabold text-slate-900">Sync Legacy Flagship Store to Tenant?</h3>
             <p className="text-xs text-slate-600 leading-relaxed">
-              This idempotently copies top-level legacy records into <code className="font-mono font-bold">/shops/bazaarpk</code> and updates public mirrors without deleting any legacy collections.
+              This idempotently copies top-level legacy records into the isolated legacy flagship tenant (<code className="font-mono font-bold">/shops/bazaarpk</code>) and updates public mirrors without deleting any legacy collections.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button

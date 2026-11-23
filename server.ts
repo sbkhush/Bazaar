@@ -13,6 +13,7 @@ import {
   getDoc,
   getDocs,
   query,
+  runTransaction,
   setDoc,
   setLogLevel,
   where,
@@ -662,6 +663,63 @@ Format cleanly in markdown with:
       const trackingDocId = `trk_${trackingTokenHash.slice(0, 32)}`;
       const now = new Date().toISOString();
 
+      let pickupOtp: string | undefined;
+      let pickupOtpHash: string | undefined;
+      let pickupSlotKey: string | undefined;
+      let slotDate: string | undefined;
+      let slotId: string | undefined;
+      let slotMaxOrders = 10;
+
+      if (resolvedFulfillment === 'self_pickup') {
+        pickupOtp = String(100000 + crypto.randomInt(0, 900000));
+        pickupOtpHash = crypto.createHash('sha256').update(`OTP:${orderNumber}:${pickupOtp}`).digest('hex');
+
+        if (pickupDetails?.pickupDate && pickupDetails?.pickupSlotId) {
+          slotDate = String(pickupDetails.pickupDate).replace(/[^0-9-]/g, '').slice(0, 10);
+          slotId = String(pickupDetails.pickupSlotId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(slotDate) || !slotId) {
+            return res.status(400).json({ error: 'Invalid pickup date or slot selection.' });
+          }
+          pickupSlotKey = `${slotDate}__${slotId}`;
+          const configuredSlots = Array.isArray(pubSettings.selfPickupDetails?.pickupSlots)
+            ? pubSettings.selfPickupDetails.pickupSlots
+            : [];
+          if (configuredSlots.length > 0) {
+            const matchSlot = configuredSlots.find((s: any) => String(s?.id) === slotId);
+            if (!matchSlot || matchSlot.isActive === false) {
+              return res.status(400).json({ error: 'Selected pickup slot is not active.' });
+            }
+            slotMaxOrders = Math.max(1, Math.min(500, Math.floor(Number(matchSlot.maxOrdersPerSlot) || 10)));
+          }
+        }
+      }
+
+      const initialPickupHistory = resolvedFulfillment === 'self_pickup'
+        ? [
+            {
+              status: 'Pending',
+              timestamp: now,
+              note: pickupDetails?.pickupSlotLabel
+                ? `Self-Pickup scheduled for ${pickupDetails.pickupDate} (${pickupDetails.pickupSlotLabel})`
+                : 'Self-Pickup order placed',
+              actor: customer.name.trim(),
+            },
+          ]
+        : undefined;
+
+      const initialCustomerNotifications = resolvedFulfillment === 'self_pickup'
+        ? [
+            {
+              id: `cnot_${Date.now()}`,
+              title: `Pickup Order ${orderNumber} Received`,
+              message: `Present your 6-digit Pickup OTP at ${pickupDetails?.locationName || 'the store counter'} when collecting your order.`,
+              status: 'Pending',
+              createdAt: now,
+              channel: 'in_app',
+            },
+          ]
+        : undefined;
+
       const newOrder = stripUndefined({
         id: orderId,
         shopId,
@@ -684,6 +742,12 @@ Format cleanly in markdown with:
         couponCode: cleanCouponCode,
         fulfillmentMethod: resolvedFulfillment,
         pickupDetails: resolvedFulfillment === 'self_pickup' ? pickupDetails : undefined,
+        pickupOtp,
+        pickupOtpHash,
+        pickupSlotKey,
+        stockDeducted: false,
+        pickupHistory: initialPickupHistory,
+        customerNotifications: initialCustomerNotifications,
         paymentMethod: resolvedPaymentMethod,
         paymentStatus: 'pending',
         orderStatus: 'Pending',
@@ -704,12 +768,18 @@ Format cleanly in markdown with:
         orderStatus: 'Pending',
         fulfillmentMethod: newOrder.fulfillmentMethod,
         pickupDetails: newOrder.pickupDetails
-          ? {
+          ? stripUndefined({
               locationName: newOrder.pickupDetails.locationName,
               address: newOrder.pickupDetails.address,
               city: newOrder.pickupDetails.city,
               timings: newOrder.pickupDetails.timings,
-            }
+              contactPhone: newOrder.pickupDetails.contactPhone,
+              mapUrl: newOrder.pickupDetails.mapUrl,
+              pickupDate: newOrder.pickupDetails.pickupDate,
+              pickupSlotId: newOrder.pickupDetails.pickupSlotId,
+              pickupSlotLabel: newOrder.pickupDetails.pickupSlotLabel,
+              instructions: newOrder.pickupDetails.instructions,
+            })
           : undefined,
         paymentMethod: newOrder.paymentMethod,
         paymentStatus: 'pending',
@@ -728,20 +798,68 @@ Format cleanly in markdown with:
       });
 
       if (newOrder.userId === 'guest') {
-        const batch = writeBatch(db);
-        batch.set(doc(db, 'shops', shopId, 'orders', orderId), newOrder);
-        batch.set(doc(db, 'shops', shopId, 'order_tracking', trackingDocId), trackingDoc);
         const notifId = `ntf_${Date.now()}`;
-        batch.set(doc(db, 'shops', shopId, 'notifications', notifId), {
+        const notifDoc = {
           id: notifId,
-          title: `New Guest Order ${orderNumber}`,
-          message: `${newOrder.customer.name} placed Rs. ${newOrder.total.toLocaleString()} order`,
+          title: resolvedFulfillment === 'self_pickup' ? `New Self-Pickup Order ${orderNumber}` : `New Guest Order ${orderNumber}`,
+          message: resolvedFulfillment === 'self_pickup'
+            ? `${newOrder.customer.name} booked Self-Pickup (${newOrder.pickupDetails?.pickupDate || 'Flex'}) · Rs. ${newOrder.total.toLocaleString()}`
+            : `${newOrder.customer.name} placed Rs. ${newOrder.total.toLocaleString()} order`,
           type: 'order',
           isRead: false,
           link: '/dashboard/orders',
           createdAt: now,
-        });
-        await batch.commit();
+        };
+
+        if (pickupSlotKey && slotDate && slotId) {
+          try {
+            await runTransaction(db, async (tx) => {
+              const slotRef = doc(db, 'shops', shopId, 'pickup_slots', pickupSlotKey!);
+              const slotSnap = await tx.get(slotRef);
+              const existingBooked = slotSnap.exists() ? Number(slotSnap.data()?.bookedCount || 0) : 0;
+              const maxOrders = slotSnap.exists() ? Number(slotSnap.data()?.maxOrders || slotMaxOrders) : slotMaxOrders;
+              if (existingBooked >= maxOrders) {
+                throw new Error('SLOT_FULL');
+              }
+              if (slotSnap.exists()) {
+                tx.update(slotRef, {
+                  id: pickupSlotKey,
+                  shopId,
+                  date: slotDate,
+                  slotId,
+                  bookedCount: existingBooked + 1,
+                  maxOrders,
+                  updatedAt: now,
+                });
+              } else {
+                tx.set(slotRef, {
+                  id: pickupSlotKey,
+                  shopId,
+                  date: slotDate,
+                  slotId,
+                  bookedCount: 1,
+                  maxOrders,
+                  updatedAt: now,
+                });
+              }
+              tx.set(doc(db, 'shops', shopId, 'orders', orderId), newOrder);
+              tx.set(doc(db, 'shops', shopId, 'order_tracking', trackingDocId), trackingDoc);
+              tx.set(doc(db, 'shops', shopId, 'notifications', notifId), notifDoc);
+            });
+          } catch (txErr: any) {
+            if (txErr?.message === 'SLOT_FULL') {
+              return res.status(400).json({ error: 'Selected pickup time slot is now full. Please select another slot.' });
+            }
+            throw txErr;
+          }
+        } else {
+          const batch = writeBatch(db);
+          batch.set(doc(db, 'shops', shopId, 'orders', orderId), newOrder);
+          batch.set(doc(db, 'shops', shopId, 'order_tracking', trackingDocId), trackingDoc);
+          batch.set(doc(db, 'shops', shopId, 'notifications', notifId), notifDoc);
+          await batch.commit();
+        }
+
         const responsePayload = { ...newOrder, trackingToken };
         if (idemCacheKey) {
           orderIdempotencyCache.set(idemCacheKey, {
@@ -756,6 +874,48 @@ Format cleanly in markdown with:
     } catch (err: any) {
       console.error('Error creating tenant order on server:', err);
       return res.status(500).json({ error: err.message || 'Failed to place order' });
+    }
+  });
+
+  // API Route: Live Self-Pickup Time Slot Availability
+  app.get('/api/orders/pickup-slots', async (req, res) => {
+    try {
+      const shopId = sanitizeShopId(req.query.shopId);
+      const date = String(req.query.date || '').replace(/[^0-9-]/g, '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'Valid YYYY-MM-DD pickup date is required.' });
+      }
+      const pubSnap = await getDoc(doc(db, 'shops', shopId, 'settings', 'public'));
+      const pubSettings = pubSnap.exists() ? pubSnap.data() : {};
+      const rawSlots = Array.isArray(pubSettings.selfPickupDetails?.pickupSlots)
+        ? pubSettings.selfPickupDetails.pickupSlots
+        : [];
+      const activeSlots = rawSlots.filter((s: any) => s && s.isActive !== false);
+      const slotSnaps = await Promise.all(
+        activeSlots.map((slot: any) =>
+          getDoc(doc(db, 'shops', shopId, 'pickup_slots', `${date}__${String(slot.id)}`)).catch(() => null)
+        )
+      );
+      const slots = activeSlots.map((slot: any, idx: number) => {
+        const snap = slotSnaps[idx];
+        const bookedCount = snap?.exists() ? Math.max(0, Number(snap.data()?.bookedCount || 0)) : 0;
+        const maxOrdersPerSlot = snap?.exists()
+          ? Math.max(1, Number(snap.data()?.maxOrders || slot.maxOrdersPerSlot || 10))
+          : Math.max(1, Number(slot.maxOrdersPerSlot || 10));
+        const remaining = Math.max(0, maxOrdersPerSlot - bookedCount);
+        return {
+          ...slot,
+          date,
+          slotKey: `${date}__${String(slot.id)}`,
+          bookedCount,
+          maxOrdersPerSlot,
+          remaining,
+          isFull: remaining <= 0,
+        };
+      });
+      return res.json({ shopId, date, slots });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Failed to load pickup slots.' });
     }
   });
 
@@ -800,6 +960,7 @@ Format cleanly in markdown with:
         courierName: td.courierName,
         trackingNumber: td.trackingNumber,
         createdAt: td.createdAt,
+        updatedAt: td.updatedAt,
         total: td.total,
         customer: { name: td.customerName, city: td.city },
         items: td.items || [],

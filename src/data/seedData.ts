@@ -11,6 +11,7 @@ import {
   StaffPermission,
   BusinessType,
   ProductUnit,
+  PickupSlotConfig,
 } from '../types';
 
 export const DEFAULT_SHOP_ID = 'bazaarpk';
@@ -228,6 +229,61 @@ export function getPaymentMethodLabel(
 
 export function getFulfillmentLabel(method?: FulfillmentMethod | string): string {
   return method === 'self_pickup' ? 'Self-Pickup (Store Outlet)' : 'Home Delivery (Courier)';
+}
+
+export function getDefaultPickupSlots(): PickupSlotConfig[] {
+  return [
+    {
+      id: 'slot_morning',
+      label: 'Morning (10:00 AM – 1:00 PM)',
+      startTime: '10:00',
+      endTime: '13:00',
+      maxOrdersPerSlot: 10,
+      isActive: true,
+    },
+    {
+      id: 'slot_afternoon',
+      label: 'Afternoon (2:00 PM – 5:00 PM)',
+      startTime: '14:00',
+      endTime: '17:00',
+      maxOrdersPerSlot: 12,
+      isActive: true,
+    },
+    {
+      id: 'slot_evening',
+      label: 'Evening (6:00 PM – 9:30 PM)',
+      startTime: '18:00',
+      endTime: '21:30',
+      maxOrdersPerSlot: 12,
+      isActive: true,
+    },
+  ];
+}
+
+export function buildPickupSlotKey(date: string, slotId: string): string {
+  const safeDate = String(date || '').replace(/[^0-9-]/g, '').slice(0, 10);
+  const safeSlot = String(slotId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+  return `${safeDate}__${safeSlot}`;
+}
+
+export function buildPickupDateOptions(advanceDays = 5, referenceDate: Date = new Date()): { date: string; label: string }[] {
+  const daysCount = Math.max(1, Math.min(14, Math.floor(advanceDays) || 5));
+  const list: { date: string; label: string }[] = [];
+  for (let i = 0; i < daysCount; i++) {
+    const d = new Date(referenceDate.getTime() + i * 86400000);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const iso = `${yyyy}-${mm}-${dd}`;
+    const dayLabel =
+      i === 0
+        ? 'Today'
+        : i === 1
+        ? 'Tomorrow'
+        : d.toLocaleDateString('en-PK', { weekday: 'short', month: 'short', day: 'numeric' });
+    list.push({ date: iso, label: `${dayLabel} (${dd}/${mm})` });
+  }
+  return list;
 }
 
 export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
@@ -449,7 +505,10 @@ export const INITIAL_SETTINGS: StoreSettings = {
     city: 'Karachi',
     timings: 'Mon – Sat: 11:00 AM – 9:00 PM',
     contactPhone: '',
-    instructions: 'Bring your Order Number and registered mobile number when collecting your parcel.',
+    mapUrl: '',
+    advanceDays: 5,
+    pickupSlots: getDefaultPickupSlots(),
+    instructions: 'Bring your Order Number, registered mobile number, and 6-digit Pickup OTP when collecting your parcel.',
   },
   socialLinks: {},
 };

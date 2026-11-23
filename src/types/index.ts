@@ -422,12 +422,50 @@ export type FulfillmentMethod = 'delivery' | 'self_pickup';
 export type OrderStatus =
   | 'Pending'
   | 'Confirmed'
+  | 'Accepted'
+  | 'Preparing'
+  | 'Ready for Pickup'
+  | 'Collected'
+  | 'Completed'
   | 'Processing'
   | 'Shipped'
   | 'Delivered'
   | 'Cancelled'
   | 'Returned'
   | 'Refunded';
+
+export interface PickupSlotConfig {
+  id: string;
+  label: string;
+  startTime: string;
+  endTime: string;
+  maxOrdersPerSlot: number;
+  isActive: boolean;
+}
+
+export interface PickupSlotAvailability extends PickupSlotConfig {
+  date: string;
+  slotKey: string;
+  bookedCount: number;
+  remaining: number;
+  isFull: boolean;
+}
+
+export interface PickupHistoryEntry {
+  status: OrderStatus;
+  timestamp: string;
+  note?: string;
+  actor?: string;
+}
+
+export interface OrderCustomerNotification {
+  id: string;
+  title: string;
+  message: string;
+  status: OrderStatus;
+  createdAt: string;
+  channel?: 'in_app' | 'system';
+}
 
 export interface OrderItem {
   productId: string;
@@ -453,7 +491,12 @@ export interface OrderPickupDetails {
   city: string;
   timings: string;
   contactPhone: string;
+  mapUrl?: string;
+  pickupDate?: string;
+  pickupSlotId?: string;
+  pickupSlotLabel?: string;
   preferredTime?: string;
+  instructions?: string;
 }
 
 export interface Order {
@@ -472,6 +515,14 @@ export interface Order {
   couponCode?: string;
   fulfillmentMethod?: FulfillmentMethod;
   pickupDetails?: OrderPickupDetails;
+  pickupOtp?: string;
+  pickupOtpHash?: string;
+  pickupVerifiedAt?: string;
+  pickupVerifiedBy?: string;
+  pickupSlotKey?: string;
+  stockDeducted?: boolean;
+  pickupHistory?: PickupHistoryEntry[];
+  customerNotifications?: OrderCustomerNotification[];
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
   orderStatus: OrderStatus;
@@ -546,6 +597,11 @@ export interface SelfPickupSettings {
   city: string;
   timings: string;
   contactPhone: string;
+  mapUrl?: string;
+  latitude?: number;
+  longitude?: number;
+  advanceDays?: number;
+  pickupSlots?: PickupSlotConfig[];
   instructions?: string;
 }
 

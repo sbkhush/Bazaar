@@ -5,8 +5,11 @@ import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
+  const rawBase = process.env.VITE_BASE_PATH || '/';
+  const normalizedBase = rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
+
   return {
-    base: process.env.VITE_BASE_PATH || '/',
+    base: normalizedBase,
     plugins: [
       react(),
       tailwindcss(),
@@ -14,6 +17,7 @@ export default defineConfig(() => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'robots.txt', 'sitemap.xml'],
         manifest: {
+          id: normalizedBase,
           name: 'SB Khush — Multi-Tenant Commerce & Business Cloud',
           short_name: 'SB Khush',
           description:
@@ -21,21 +25,21 @@ export default defineConfig(() => {
           theme_color: '#065F46',
           background_color: '#ffffff',
           display: 'standalone',
-          start_url: '/',
-          scope: '/',
+          start_url: normalizedBase,
+          scope: normalizedBase,
           icons: [
             {
-              src: '/pwa-192x192.png',
+              src: `${normalizedBase}pwa-192x192.png`,
               sizes: '192x192',
               type: 'image/png',
             },
             {
-              src: '/pwa-512x512.png',
+              src: `${normalizedBase}pwa-512x512.png`,
               sizes: '512x512',
               type: 'image/png',
             },
             {
-              src: '/maskable-icon-512x512.png',
+              src: `${normalizedBase}maskable-icon-512x512.png`,
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
@@ -43,8 +47,8 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          navigateFallback: '/index.html',
-          navigateFallbackDenylist: [/^\/api\//],
+          navigateFallback: `${normalizedBase}index.html`,
+          navigateFallbackDenylist: [/^\/api\//, /\/firebase-messaging-sw\.js$/],
           maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
           runtimeCaching: [
             {
@@ -55,6 +59,34 @@ export default defineConfig(() => {
               urlPattern: /^https:\/\/(identitytoolkit|securetoken|firestore)\.googleapis\.com\/.*/i,
               handler: 'NetworkOnly',
             },
+            {
+              urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'sbkhush-google-fonts-v1',
+                expiration: {
+                  maxEntries: 20,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /\.(?:png|jpg|jpeg|webp|svg)$/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'sbkhush-images-v1',
+                expiration: {
+                  maxEntries: 80,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
           ],
         },
       }),
@@ -62,6 +94,43 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve('.'),
+      },
+    },
+    build: {
+      chunkSizeWarningLimit: 600,
+      rolldownOptions: {
+        output: {
+          manualChunks(id: string) {
+            if (!id.includes('node_modules')) return undefined;
+            if (
+              id.includes('/react/') ||
+              id.includes('/react-dom/') ||
+              id.includes('/react-router') ||
+              id.includes('/scheduler/')
+            ) {
+              return 'vendor-react';
+            }
+            if (id.includes('/@firebase/firestore/')) {
+              return 'vendor-firestore';
+            }
+            if (id.includes('/firebase/') || id.includes('/@firebase/')) {
+              return 'vendor-firebase';
+            }
+            if (id.includes('/lucide-react/')) {
+              return 'vendor-icons';
+            }
+            if (id.includes('/qrcode/')) {
+              return 'vendor-qr';
+            }
+            if (id.includes('/jspdf/') || id.includes('/html2canvas/')) {
+              return 'vendor-pdf';
+            }
+            if (id.includes('/motion/') || id.includes('/framer-motion/') || id.includes('/canvas-confetti/')) {
+              return 'vendor-motion';
+            }
+            return undefined;
+          },
+        },
       },
     },
     server: {

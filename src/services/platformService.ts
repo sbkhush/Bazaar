@@ -41,6 +41,12 @@ import {
 } from '../types';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
 import { normalizeAndValidateSocialLinks, normalizeOptionalHttpUrl } from '../utils/socialLinks';
+import {
+  recordReferralAttribution,
+  verifyReferralAttributionOnShopActivation,
+  syncCommissionForApprovedPayment,
+  reverseCommissionForPayment,
+} from './salesService';
 
 export function stripUndefined<T>(obj: T): T {
   if (Array.isArray(obj)) {
@@ -58,32 +64,128 @@ export function stripUndefined<T>(obj: T): T {
   return obj;
 }
 
+export function resolveValidPublicSlug(shopId: string, candidateSlug?: string): string {
+  const candidates = [candidateSlug, shopId].filter(Boolean) as string[];
+  for (const raw of candidates) {
+    const clean = sanitizeShopSlug(raw);
+    if (clean.length >= 2 && clean.length <= 60 && isValidShopSlug(clean)) {
+      return clean;
+    }
+  }
+  const fallback = `store-${sanitizeShopSlug(shopId) || 'tenant'}`.slice(0, 60);
+  return fallback;
+}
+
+export function buildValidShopPublicProjection(
+  shopId: string,
+  shopData?: Partial<Shop & ShopPublic> | null,
+  existingPublic?: Partial<ShopPublic> | null,
+  publicSettings?: Partial<StoreSettings> | null,
+  overrides?: Partial<ShopPublic>
+): ShopPublic {
+  const slug = resolveValidPublicSlug(
+    shopId,
+    overrides?.slug || shopData?.slug || existingPublic?.slug
+  );
+  const rawStatus = overrides?.status || shopData?.status || existingPublic?.status || 'active';
+  const status: ShopStatus =
+    rawStatus === 'inactive' || rawStatus === 'suspended' ? rawStatus : 'active';
+  const name = (
+    overrides?.name ||
+    shopData?.name ||
+    existingPublic?.name ||
+    publicSettings?.siteName ||
+    shopId
+  ).trim() || shopId;
+
+  const baseTheme = overrides?.theme || shopData?.theme || existingPublic?.theme;
+  const theme = baseTheme
+    ? stripUndefined({
+        primaryColor: baseTheme.primaryColor || publicSettings?.primaryColor || '#065f46',
+        accentColor: baseTheme.accentColor || publicSettings?.accentColor || '#d97706',
+        heroTitle: baseTheme.heroTitle,
+        heroSubtitle: baseTheme.heroSubtitle,
+        showTestimonials: baseTheme.showTestimonials,
+        showBuyingGuide: baseTheme.showBuyingGuide,
+      })
+    : undefined;
+
+  return stripUndefined<ShopPublic>({
+    id: shopId,
+    slug,
+    name,
+    businessType: overrides?.businessType ?? shopData?.businessType ?? existingPublic?.businessType,
+    logoUrl:
+      overrides?.logoUrl ??
+      publicSettings?.logoUrl ??
+      shopData?.logoUrl ??
+      existingPublic?.logoUrl ??
+      '',
+    city:
+      overrides?.city ??
+      publicSettings?.city ??
+      shopData?.city ??
+      existingPublic?.city ??
+      '',
+    publicContactPhone:
+      overrides?.publicContactPhone ??
+      publicSettings?.contactPhone ??
+      shopData?.publicContactPhone ??
+      existingPublic?.publicContactPhone,
+    publicSupportEmail:
+      overrides?.publicSupportEmail ??
+      publicSettings?.contactEmail ??
+      shopData?.publicSupportEmail ??
+      existingPublic?.publicSupportEmail,
+    storefrontAddress:
+      overrides?.storefrontAddress ??
+      publicSettings?.address ??
+      shopData?.storefrontAddress ??
+      existingPublic?.storefrontAddress ??
+      shopData?.address,
+    businessHours:
+      overrides?.businessHours ??
+      publicSettings?.businessHours ??
+      shopData?.businessHours ??
+      existingPublic?.businessHours,
+    seoTitle:
+      overrides?.seoTitle ??
+      publicSettings?.seoTitle ??
+      shopData?.seoTitle ??
+      existingPublic?.seoTitle,
+    seoDescription:
+      overrides?.seoDescription ??
+      publicSettings?.seoDescription ??
+      shopData?.seoDescription ??
+      existingPublic?.seoDescription,
+    ogImageUrl:
+      overrides?.ogImageUrl ??
+      publicSettings?.ogImageUrl ??
+      shopData?.ogImageUrl ??
+      existingPublic?.ogImageUrl,
+    websiteUrl:
+      overrides?.websiteUrl ??
+      publicSettings?.websiteUrl ??
+      shopData?.websiteUrl ??
+      existingPublic?.websiteUrl,
+    socialLinks:
+      overrides?.socialLinks ??
+      publicSettings?.socialLinks ??
+      shopData?.socialLinks ??
+      existingPublic?.socialLinks,
+    theme,
+    status,
+    createdAt: overrides?.createdAt ?? shopData?.createdAt ?? existingPublic?.createdAt,
+    updatedAt: overrides?.updatedAt || new Date().toISOString(),
+  });
+}
+
 /**
  * Maps a master private Shop document into the strict non-PII ShopPublic projection
  * permitted for public storefront reading under firestore.rules.
  */
 export function toShopPublic(shop: Shop | ShopPublic, publicSettings?: Partial<StoreSettings>): ShopPublic {
-  return stripUndefined<ShopPublic>({
-    id: shop.id,
-    slug: shop.slug,
-    name: shop.name,
-    businessType: shop.businessType,
-    logoUrl: shop.logoUrl || publicSettings?.logoUrl || '',
-    city: shop.city || publicSettings?.city || '',
-    publicContactPhone: publicSettings?.contactPhone || ('publicContactPhone' in shop ? shop.publicContactPhone : undefined),
-    publicSupportEmail: publicSettings?.contactEmail || ('publicSupportEmail' in shop ? shop.publicSupportEmail : undefined),
-    storefrontAddress: publicSettings?.address || ('storefrontAddress' in shop ? shop.storefrontAddress : undefined),
-    businessHours: publicSettings?.businessHours || ('businessHours' in shop ? shop.businessHours : undefined),
-    seoTitle: publicSettings?.seoTitle || ('seoTitle' in shop ? shop.seoTitle : undefined),
-    seoDescription: publicSettings?.seoDescription || ('seoDescription' in shop ? shop.seoDescription : undefined),
-    ogImageUrl: publicSettings?.ogImageUrl || ('ogImageUrl' in shop ? shop.ogImageUrl : undefined),
-    websiteUrl: publicSettings?.websiteUrl || ('websiteUrl' in shop ? shop.websiteUrl : undefined),
-    socialLinks: publicSettings?.socialLinks || ('socialLinks' in shop ? shop.socialLinks : undefined),
-    theme: shop.theme,
-    status: shop.status,
-    createdAt: shop.createdAt,
-    updatedAt: shop.updatedAt || new Date().toISOString(),
-  });
+  return buildValidShopPublicProjection(shop.id, shop as Partial<Shop>, shop as Partial<ShopPublic>, publicSettings);
 }
 
 export function getShopSubscriptionStatus(shop?: Shop | null, gracePeriodDays = 0) {
@@ -689,7 +791,6 @@ export async function registerNewShop(input: {
     }
 
     if (input.referralCode?.trim()) {
-      const { recordReferralAttribution } = await import('./salesService');
       await recordReferralAttribution({
         referralCode: input.referralCode.trim(),
         shopId,
@@ -716,12 +817,30 @@ export async function registerNewShop(input: {
 export async function updateShopStatus(shopId: string, status: ShopStatus): Promise<void> {
   const now = new Date().toISOString();
   try {
+    const [shopSnap, pubSnap, settingsPubSnap] = await Promise.all([
+      getDoc(doc(db, 'shops', shopId)),
+      getDoc(doc(db, 'shops_public', shopId)).catch(() => null),
+      getDoc(doc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
+    ]);
+    if (!shopSnap.exists()) {
+      throw new Error(`Shop "${shopId}" was not found.`);
+    }
+    const shopData = { ...(shopSnap.data() as Shop), id: shopId };
+    const existingPublic = pubSnap?.exists() ? (pubSnap.data() as ShopPublic) : null;
+    const publicSettings = settingsPubSnap?.exists() ? (settingsPubSnap.data() as Partial<StoreSettings>) : null;
+    const cleanPublicDoc = buildValidShopPublicProjection(
+      shopId,
+      shopData,
+      existingPublic,
+      publicSettings,
+      { status, updatedAt: now }
+    );
+
     const batch = writeBatch(db);
     batch.update(doc(db, 'shops', shopId), { status, updatedAt: now });
-    batch.set(doc(db, 'shops_public', shopId), { status, updatedAt: now }, { merge: true });
+    batch.set(doc(db, 'shops_public', shopId), cleanPublicDoc);
     await batch.commit();
     if (status === 'active') {
-      const { verifyReferralAttributionOnShopActivation } = await import('./salesService');
       await verifyReferralAttributionOnShopActivation(shopId).catch(() => {});
     }
     await logPlatformActivity(`Shop ${status}`, 'shop', shopId, `Changed shop ${shopId} status to ${status}`);
@@ -760,13 +879,32 @@ export async function assignShopSubscription(
   };
 
   try {
+    const [shopSnap, pubSnap, settingsPubSnap] = await Promise.all([
+      getDoc(doc(db, 'shops', shopId)),
+      getDoc(doc(db, 'shops_public', shopId)).catch(() => null),
+      getDoc(doc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
+    ]);
+    if (!shopSnap.exists()) {
+      throw new Error(`Shop "${shopId}" was not found.`);
+    }
+    const shopData = { ...(shopSnap.data() as Shop), id: shopId };
+    const existingPublic = pubSnap?.exists() ? (pubSnap.data() as ShopPublic) : null;
+    const publicSettings = settingsPubSnap?.exists() ? (settingsPubSnap.data() as Partial<StoreSettings>) : null;
+    const cleanPublicDoc = buildValidShopPublicProjection(
+      shopId,
+      shopData,
+      existingPublic,
+      publicSettings,
+      { status: 'active', updatedAt: startDate }
+    );
+
     const batch = writeBatch(db);
     batch.update(doc(db, 'shops', shopId), {
       subscription: stripUndefined(subscription),
       status: 'active',
       updatedAt: startDate,
     });
-    batch.set(doc(db, 'shops_public', shopId), { status: 'active', updatedAt: startDate }, { merge: true });
+    batch.set(doc(db, 'shops_public', shopId), cleanPublicDoc);
     await batch.commit();
     await logPlatformActivity(
       'Updated Shop Plan',
@@ -831,6 +969,8 @@ export async function deleteShopComplete(shopId: string): Promise<void> {
       'pages',
       'carts',
       'wishlists',
+      'pickup_slots',
+      'newsletter_subscribers',
     ];
 
     for (const sub of subcollections) {
@@ -935,12 +1075,13 @@ export async function approvePlatformPayment(paymentId: string): Promise<void> {
 
       const shopRef = doc(db, 'shops', payment.shopId);
       const shopPubRef = doc(db, 'shops_public', payment.shopId);
-      const shopSnap = await tx.get(shopRef);
+      const [shopSnap, pubSnap] = await Promise.all([tx.get(shopRef), tx.get(shopPubRef)]);
       if (!shopSnap.exists()) {
         throw new Error(`Target shop "${payment.shopId}" no longer exists.`);
       }
 
       const shopData = shopSnap.data() as Shop;
+      const existingPublic = pubSnap.exists() ? (pubSnap.data() as ShopPublic) : null;
       const plan = plans.find((p) => p.id === payment.planId) || DEFAULT_SUBSCRIPTION_PLANS[1];
       const cycleDays = payment.billingCycle === 'yearly' ? 365 : plan.durationDays || 30;
       const now = new Date();
@@ -954,6 +1095,14 @@ export async function approvePlatformPayment(paymentId: string): Promise<void> {
         currentExpiry > now;
       const baseTime = isRenewSamePlan ? currentExpiry.getTime() : now.getTime();
       const nextExpiryIso = new Date(baseTime + cycleDays * 86400000).toISOString();
+
+      const cleanPublicDoc = buildValidShopPublicProjection(
+        payment.shopId,
+        { ...shopData, id: payment.shopId },
+        existingPublic,
+        undefined,
+        { status: 'active', updatedAt: nowIso }
+      );
 
       tx.update(paymentRef, {
         status: 'approved',
@@ -976,11 +1125,10 @@ export async function approvePlatformPayment(paymentId: string): Promise<void> {
         updatedAt: nowIso,
       });
 
-      tx.set(shopPubRef, { status: 'active', updatedAt: nowIso }, { merge: true });
+      tx.set(shopPubRef, cleanPublicDoc);
       logMsg = `Approved Rs. ${payment.amount} for ${payment.shopName} (${payment.planName})`;
     });
 
-    const { syncCommissionForApprovedPayment } = await import('./salesService');
     await syncCommissionForApprovedPayment(paymentId).catch((e) => console.warn('Commission sync note:', e));
 
     await logPlatformActivity('Approved Payment', 'payment', paymentId, logMsg);
@@ -1006,7 +1154,6 @@ export async function rejectPlatformPayment(paymentId: string, reason: string): 
         reviewedAt: new Date().toISOString(),
       });
     });
-    const { reverseCommissionForPayment } = await import('./salesService');
     await reverseCommissionForPayment(paymentId, reason).catch(() => {});
     await logPlatformActivity('Rejected Payment', 'payment', paymentId, `Rejected payment ${paymentId}: ${reason}`);
   } catch (err) {

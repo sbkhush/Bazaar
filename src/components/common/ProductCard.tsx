@@ -66,20 +66,26 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onQuickView }
             fallbackSrc={FALLBACK_PRODUCT_IMAGE}
             fallbackText={product.title}
             alt={product.title}
+            width={400}
+            height={400}
             className={`w-full h-full object-cover object-center transition-transform duration-500 group-hover:scale-105 ${
               product.images[1] && isHovered ? 'opacity-0' : 'opacity-100'
             }`}
             loading="lazy"
+            decoding="async"
           />
           {product.images[1] && (
             <SafeImage
               src={product.images[1]}
               fallbackSrc={FALLBACK_PRODUCT_IMAGE}
               alt={product.title}
+              width={400}
+              height={400}
               className={`absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-500 ${
                 isHovered ? 'opacity-100 scale-105' : 'opacity-0'
               }`}
               loading="lazy"
+              decoding="async"
             />
           )}
         </Link>

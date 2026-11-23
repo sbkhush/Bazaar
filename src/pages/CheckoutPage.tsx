@@ -19,19 +19,22 @@ import {
   Clock,
   Upload,
   Trash2,
+  Calendar,
+  ExternalLink,
 } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { useTenant } from '../context/TenantContext';
-import { createShopOrder } from '../services/tenantService';
+import { createShopOrder, getSelfPickupSlotAvailability } from '../services/tenantService';
 import { uploadCheckoutPaymentProof } from '../services/storageService';
 import {
   PAKISTAN_CITIES,
   formatPKR,
   isValidPakistaniPhone,
   FALLBACK_PRODUCT_IMAGE,
+  buildPickupDateOptions,
 } from '../data/seedData';
-import { PaymentMethod } from '../types';
+import { PaymentMethod, PickupSlotAvailability } from '../types';
 import { useToast } from '../components/common/Toast';
 
 export const CheckoutPage: React.FC = () => {
@@ -59,7 +62,15 @@ export const CheckoutPage: React.FC = () => {
   const [address, setAddress] = useState(userProfile?.addresses?.[0]?.address || '');
   const [city, setCity] = useState(userProfile?.addresses?.[0]?.city || 'Karachi');
   const [postalCode, setPostalCode] = useState(userProfile?.addresses?.[0]?.postalCode || '');
-  const [preferredPickupTime, setPreferredPickupTime] = useState('Today / Next Business Day (12 PM – 7 PM)');
+  const pickupDateOptions = React.useMemo(
+    () => buildPickupDateOptions(settings.selfPickupDetails?.advanceDays || 5),
+    [settings.selfPickupDetails?.advanceDays]
+  );
+  const [pickupDate, setPickupDate] = useState<string>(() => buildPickupDateOptions(5)[0]?.date || '');
+  const [pickupSlots, setPickupSlots] = useState<PickupSlotAvailability[]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [slotLoadError, setSlotLoadError] = useState<string | null>(null);
+  const [selectedSlotId, setSelectedSlotId] = useState<string>('');
   const [orderNotes, setOrderNotes] = useState('');
 
   // Sync user profile defaults when loaded
@@ -73,6 +84,42 @@ export const CheckoutPage: React.FC = () => {
       setPostalCode(userProfile.addresses[0].postalCode || '');
     }
   }, [currentUser, userProfile]);
+
+  useEffect(() => {
+    if (!pickupDate || !pickupDateOptions.some((d) => d.date === pickupDate)) {
+      setPickupDate(pickupDateOptions[0]?.date || '');
+    }
+  }, [pickupDateOptions, pickupDate]);
+
+  useEffect(() => {
+    if (fulfillmentMethod !== 'self_pickup' || settings.selfPickupDetails?.enabled === false || !pickupDate) {
+      return;
+    }
+    let active = true;
+    setLoadingSlots(true);
+    setSlotLoadError(null);
+    getSelfPickupSlotAvailability(shopId, pickupDate, settings.selfPickupDetails?.pickupSlots)
+      .then((list) => {
+        if (!active) return;
+        setPickupSlots(list);
+        setSelectedSlotId((prev) => {
+          const existingAvailable = list.find((s) => s.id === prev && !s.isFull);
+          if (existingAvailable) return existingAvailable.id;
+          const firstOpen = list.find((s) => !s.isFull);
+          return firstOpen ? firstOpen.id : '';
+        });
+      })
+      .catch(() => {
+        if (!active) return;
+        setSlotLoadError('Could not load pickup slot capacity right now.');
+      })
+      .finally(() => {
+        if (active) setLoadingSlots(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [fulfillmentMethod, shopId, pickupDate, settings.selfPickupDetails?.enabled, settings.selfPickupDetails?.pickupSlots]);
 
   const codEnabled = settings.codEnabled !== false;
   const easypaisaEnabled = settings.easypaisaDetails?.enabled !== false;
@@ -307,6 +354,19 @@ export const CheckoutPage: React.FC = () => {
     try {
       const pickup = settings.selfPickupDetails;
       const isPickup = fulfillmentMethod === 'self_pickup' && pickup?.enabled !== false;
+      const selectedSlot = pickupSlots.find((s) => s.id === selectedSlotId);
+      if (isPickup) {
+        if (!pickupDate) {
+          setErrorMessage('Please select a pickup date.');
+          setIsSubmitting(false);
+          return;
+        }
+        if (!selectedSlot || selectedSlot.isFull) {
+          setErrorMessage('Please choose an available pickup time slot before placing your order.');
+          setIsSubmitting(false);
+          return;
+        }
+      }
 
       const orderPayload = {
         userId: currentUser?.uid || 'guest',
@@ -348,7 +408,12 @@ export const CheckoutPage: React.FC = () => {
               city: pickup.city,
               timings: pickup.timings,
               contactPhone: pickup.contactPhone,
-              preferredTime: preferredPickupTime.trim() || undefined,
+              mapUrl: pickup.mapUrl,
+              pickupDate,
+              pickupSlotId: selectedSlot?.id,
+              pickupSlotLabel: selectedSlot?.label,
+              preferredTime: selectedSlot ? `${pickupDate} · ${selectedSlot.label}` : pickupDate,
+              instructions: pickup.instructions,
             }
           : undefined,
         paymentMethod,
@@ -577,23 +642,36 @@ export const CheckoutPage: React.FC = () => {
                       <Store className="w-4 h-4 text-emerald-700" />
                       {settings.selfPickupDetails.title}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleCopy('Pickup Address', settings.selfPickupDetails.address)
-                      }
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-emerald-200 text-emerald-800 font-bold text-[11px] hover:bg-emerald-100 transition"
-                    >
-                      {copiedField === 'Pickup Address' ? (
-                        <Check className="w-3 h-3" />
-                      ) : (
-                        <Copy className="w-3 h-3" />
+                    <div className="flex flex-wrap items-center gap-2">
+                      {settings.selfPickupDetails.mapUrl && (
+                        <a
+                          href={settings.selfPickupDetails.mapUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#065F46] text-white font-bold text-[11px] hover:bg-emerald-900 transition"
+                        >
+                          <MapPin className="w-3 h-3" /> Open in Google Maps <ExternalLink className="w-3 h-3" />
+                        </a>
                       )}
-                      Copy Address
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleCopy('Pickup Address', settings.selfPickupDetails.address)
+                        }
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-emerald-200 text-emerald-800 font-bold text-[11px] hover:bg-emerald-100 transition"
+                      >
+                        {copiedField === 'Pickup Address' ? (
+                          <Check className="w-3 h-3" />
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
+                        Copy Address
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-slate-700 font-medium">
-                    📍 {settings.selfPickupDetails.address}
+                  <p className="text-slate-700 font-medium flex items-start gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
+                    <span>{settings.selfPickupDetails.address}, {settings.selfPickupDetails.city}</span>
                   </p>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
                     <span className="flex items-center gap-1">
@@ -718,28 +796,77 @@ export const CheckoutPage: React.FC = () => {
                     </div>
                   </>
                 ) : (
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Preferred Pickup Time Window
-                    </label>
-                    <select
-                      value={preferredPickupTime}
-                      onChange={(e) => setPreferredPickupTime(e.target.value)}
-                      className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-600 bg-white"
-                    >
-                      <option value="Today / Next Business Day (12 PM – 4 PM)">
-                        Today / Next Business Day (12:00 PM – 4:00 PM)
-                      </option>
-                      <option value="Today / Next Business Day (4 PM – 9 PM)">
-                        Today / Next Business Day (4:00 PM – 9:00 PM)
-                      </option>
-                      <option value="Weekend Pickup (2 PM – 8 PM)">
-                        Weekend Pickup (2:00 PM – 8:00 PM)
-                      </option>
-                      <option value="Call me when parcel is ready">
-                        Call / WhatsApp me when ready for pickup
-                      </option>
-                    </select>
+                  <div className="sm:col-span-2 space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-emerald-700" /> Select Pickup Date *
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {pickupDateOptions.map((opt) => (
+                          <button
+                            key={opt.date}
+                            type="button"
+                            onClick={() => setPickupDate(opt.date)}
+                            className={`px-3 py-2 min-h-[44px] rounded-xl border text-xs font-semibold transition whitespace-nowrap tabular-nums ${
+                              pickupDate === opt.date
+                                ? 'border-emerald-700 bg-emerald-800 text-white'
+                                : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-emerald-700" /> Select Pickup Time Slot *
+                      </label>
+                      {loadingSlots ? (
+                        <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-500 flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin text-emerald-700" /> Checking real-time slot capacity...
+                        </div>
+                      ) : slotLoadError ? (
+                        <div className="p-3 rounded-xl border border-rose-200 bg-rose-50 text-xs text-rose-700">
+                          {slotLoadError}
+                        </div>
+                      ) : pickupSlots.length === 0 ? (
+                        <div className="p-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-800">
+                          No active pickup slots configured for this store. Please switch to Home Delivery or contact store support.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          {pickupSlots.map((slot) => {
+                            const isSelected = selectedSlotId === slot.id && !slot.isFull;
+                            return (
+                              <button
+                                key={slot.id}
+                                type="button"
+                                disabled={slot.isFull}
+                                onClick={() => setSelectedSlotId(slot.id)}
+                                className={`p-3 min-h-[44px] rounded-xl border-2 text-left transition ${
+                                  slot.isFull
+                                    ? 'border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed opacity-70'
+                                    : isSelected
+                                    ? 'border-emerald-700 bg-emerald-50/70 text-slate-900'
+                                    : 'border-slate-200 bg-white hover:border-slate-300 text-slate-800'
+                                }`}
+                              >
+                                <span className="block text-xs font-bold leading-snug">{slot.label}</span>
+                                <span className="block text-[11px] mt-1 tabular-nums">
+                                  <span className="text-slate-500">{slot.startTime} – {slot.endTime}</span>
+                                  <span aria-hidden="true"> · </span>
+                                  <span className={slot.isFull ? 'font-bold text-rose-600' : 'font-semibold text-emerald-700'}>
+                                    {slot.isFull ? 'Full' : `${slot.remaining} left`}
+                                  </span>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -1194,8 +1321,25 @@ export const CheckoutPage: React.FC = () => {
               ))}
             </div>
 
+            {/* Pre-Submit Self-Pickup Summary */}
+            {fulfillmentMethod === 'self_pickup' && settings.selfPickupDetails?.enabled !== false && (
+              <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs space-y-1">
+                <div className="font-bold text-emerald-900 flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5">
+                    <Store className="w-3.5 h-3.5 text-emerald-700" /> Self-Pickup Reservation
+                  </span>
+                  <span className="text-emerald-800 font-extrabold tabular-nums">Rs. 0 Fee</span>
+                </div>
+                <p className="text-slate-700 font-medium">{settings.selfPickupDetails.title}</p>
+                <p className="text-[11px] text-slate-600 tabular-nums">
+                  {pickupDate || 'Select date'} ·{' '}
+                  {pickupSlots.find((s) => s.id === selectedSlotId)?.label || 'Select a time slot'}
+                </p>
+              </div>
+            )}
+
             {/* Cost Breakdown */}
-            <div className="space-y-2 text-xs text-slate-600 border-t border-slate-100 pt-4">
+            <div className="space-y-2 text-xs text-slate-600 border-t border-slate-100 pt-4 tabular-nums">
               <div className="flex justify-between">
                 <span>Subtotal</span>
                 <span className="font-semibold text-slate-800">{formatPKR(subtotal)}</span>

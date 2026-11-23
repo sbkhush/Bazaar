@@ -1,7 +1,7 @@
 {
-  "name": "bazaarpk-cloud-functions",
+  "name": "sbkhush-cloud-functions",
   "version": "1.0.0",
-  "description": "Trusted Firebase Admin SDK Cloud Functions for BazaarPK Cloud Multi-Tenant SaaS",
+  "description": "Trusted Firebase Admin SDK Cloud Functions for SB Khush Multi-Tenant SaaS",
   "main": "lib/index.js",
   "scripts": {
     "build": "tsc",

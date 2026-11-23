@@ -16,6 +16,69 @@ const storage = getStorage(app);
 
 const SUPER_ADMIN_EMAIL = 'hasanaamir815@gmail.com';
 
+const RESERVED_SLUGS = new Set([
+  'admin', 'super-admin', 'dashboard', 'login', 'merchant', 'register', 'api',
+  's', 'shop', 'cart', 'checkout', 'account', 'tracking',
+  'platform', 'pricing', 'about', 'faq', 'terms', 'privacy',
+  'privacy-policy', 'terms-and-conditions', 'contact',
+  'salesman', 'sales-manager', 'referral', 'r',
+]);
+
+function resolveCleanSlug(shopId: string, candidate?: unknown): string {
+  for (const raw of [candidate, shopId]) {
+    const clean = String(raw || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 50);
+    if (clean.length >= 2 && clean.length <= 60 && !RESERVED_SLUGS.has(clean)) {
+      return clean;
+    }
+  }
+  return `store-${shopId.toLowerCase().replace(/[^a-z0-9-]+/g, '-')}`.slice(0, 50);
+}
+
+function stripUndefinedFields(obj: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function toCleanShopPublic(
+  shopId: string,
+  shopData: Record<string, any>,
+  existingPublic: Record<string, any> | undefined,
+  status: 'active' | 'inactive' | 'suspended',
+  nowIso: string
+): Record<string, any> {
+  return stripUndefinedFields({
+    id: shopId,
+    slug: resolveCleanSlug(shopId, shopData.slug || existingPublic?.slug),
+    name: String(shopData.name || existingPublic?.name || shopId).trim() || shopId,
+    businessType: shopData.businessType ?? existingPublic?.businessType,
+    logoUrl: shopData.logoUrl ?? existingPublic?.logoUrl ?? '',
+    city: shopData.city ?? existingPublic?.city ?? '',
+    publicContactPhone: shopData.publicContactPhone ?? existingPublic?.publicContactPhone,
+    publicSupportEmail: shopData.publicSupportEmail ?? existingPublic?.publicSupportEmail,
+    storefrontAddress: shopData.storefrontAddress ?? existingPublic?.storefrontAddress ?? shopData.address,
+    businessHours: shopData.businessHours ?? existingPublic?.businessHours,
+    seoTitle: shopData.seoTitle ?? existingPublic?.seoTitle,
+    seoDescription: shopData.seoDescription ?? existingPublic?.seoDescription,
+    ogImageUrl: shopData.ogImageUrl ?? existingPublic?.ogImageUrl,
+    websiteUrl: shopData.websiteUrl ?? existingPublic?.websiteUrl,
+    socialLinks: shopData.socialLinks ?? existingPublic?.socialLinks,
+    theme: shopData.theme ?? existingPublic?.theme,
+    status,
+    createdAt: shopData.createdAt ?? existingPublic?.createdAt,
+    updatedAt: nowIso,
+  });
+}
+
 async function assertSuperAdmin(uid?: string, email?: string, emailVerified?: boolean, tokenClaims?: Record<string, any>) {
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
@@ -157,17 +220,21 @@ export const approvePlatformPayment = onCall(async (request) => {
 
     const shopRef = db.collection('shops').doc(payment.shopId);
     const shopPublicRef = db.collection('shops_public').doc(payment.shopId);
-    const shopSnap = await tx.get(shopRef);
+    const [shopSnap, shopPublicSnap, planSnap] = await Promise.all([
+      tx.get(shopRef),
+      tx.get(shopPublicRef),
+      tx.get(db.collection('platform_plans').doc(payment.planId)),
+    ]);
     if (!shopSnap.exists) {
       throw new HttpsError('not-found', `Shop ${payment.shopId} not found.`);
     }
 
-    const planSnap = await tx.get(db.collection('platform_plans').doc(payment.planId));
     const planData = planSnap.exists ? planSnap.data() : null;
     const cycleDays =
       payment.billingCycle === 'yearly' ? 365 : Number(planData?.durationDays || 30);
 
     const shopData = shopSnap.data()!;
+    const existingPublic = shopPublicSnap.exists ? shopPublicSnap.data() : undefined;
     const currentSub = shopData.subscription || {};
     const currentExpiry = currentSub.expiryDate ? new Date(currentSub.expiryDate) : now;
     // Renewal on same plan extends from existing unexpired date; upgrade starts fresh or extends cleanly
@@ -201,11 +268,7 @@ export const approvePlatformPayment = onCall(async (request) => {
 
     tx.set(
       shopPublicRef,
-      {
-        status: 'active',
-        updatedAt: nowIso,
-      },
-      { merge: true }
+      toCleanShopPublic(payment.shopId, shopData, existingPublic, 'active', nowIso)
     );
 
     const logId = `plog_${Date.now()}`;
@@ -265,15 +328,26 @@ export const updateShopStatusAdmin = onCall(async (request) => {
     request.auth?.token
   );
   const shopId = String(request.data?.shopId || '').trim();
-  const status = String(request.data?.status || '').trim();
+  const status = String(request.data?.status || '').trim() as 'active' | 'inactive' | 'suspended';
   if (!shopId || !['active', 'inactive', 'suspended'].includes(status)) {
     throw new HttpsError('invalid-argument', 'Valid shopId and status required.');
+  }
+
+  const [shopSnap, pubSnap] = await Promise.all([
+    db.collection('shops').doc(shopId).get(),
+    db.collection('shops_public').doc(shopId).get(),
+  ]);
+  if (!shopSnap.exists) {
+    throw new HttpsError('not-found', `Shop ${shopId} not found.`);
   }
 
   const nowIso = new Date().toISOString();
   const batch = db.batch();
   batch.update(db.collection('shops').doc(shopId), { status, updatedAt: nowIso });
-  batch.set(db.collection('shops_public').doc(shopId), { status, updatedAt: nowIso }, { merge: true });
+  batch.set(
+    db.collection('shops_public').doc(shopId),
+    toCleanShopPublic(shopId, shopSnap.data()!, pubSnap.exists ? pubSnap.data() : undefined, status, nowIso)
+  );
   await batch.commit();
   return { ok: true, status };
 });
@@ -290,8 +364,14 @@ export const assignShopSubscriptionAdmin = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'shopId and planId are required.');
   }
 
-  const planSnap = await db.collection('platform_plans').doc(String(planId)).get();
+  const cleanShopId = String(shopId).trim();
+  const [planSnap, shopSnap, pubSnap] = await Promise.all([
+    db.collection('platform_plans').doc(String(planId)).get(),
+    db.collection('shops').doc(cleanShopId).get(),
+    db.collection('shops_public').doc(cleanShopId).get(),
+  ]);
   if (!planSnap.exists) throw new HttpsError('not-found', 'Plan not found.');
+  if (!shopSnap.exists) throw new HttpsError('not-found', `Shop ${cleanShopId} not found.`);
   const plan = planSnap.data()!;
 
   const days = Number(durationDays) || (billingCycle === 'yearly' ? 365 : Number(plan.durationDays || 30));
@@ -299,7 +379,8 @@ export const assignShopSubscriptionAdmin = onCall(async (request) => {
   const nowIso = now.toISOString();
   const expiryIso = new Date(now.getTime() + days * 86400000).toISOString();
 
-  await db.collection('shops').doc(String(shopId)).update({
+  const batch = db.batch();
+  batch.update(db.collection('shops').doc(cleanShopId), {
     status: 'active',
     subscription: {
       planId: plan.id,
@@ -314,7 +395,11 @@ export const assignShopSubscriptionAdmin = onCall(async (request) => {
     updatedAt: nowIso,
   });
 
-  await db.collection('shops_public').doc(String(shopId)).set({ status: 'active', updatedAt: nowIso }, { merge: true });
+  batch.set(
+    db.collection('shops_public').doc(cleanShopId),
+    toCleanShopPublic(cleanShopId, shopSnap.data()!, pubSnap.exists ? pubSnap.data() : undefined, 'active', nowIso)
+  );
+  await batch.commit();
   return { ok: true, expiryDate: expiryIso };
 });
 

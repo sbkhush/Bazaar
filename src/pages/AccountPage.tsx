@@ -13,6 +13,11 @@ import {
   Trash2,
   ExternalLink,
   Save,
+  Store,
+  Clock,
+  Copy,
+  Check,
+  Bell,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useWishlist } from '../context/WishlistContext';
@@ -60,6 +65,7 @@ export const AccountPage: React.FC = () => {
   const [addrPostal, setAddrPostal] = useState('');
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
   const [cancellingOrder, setCancellingOrder] = useState(false);
+  const [copiedOtpId, setCopiedOtpId] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveTab(searchParams.get('tab') || 'orders');
@@ -399,11 +405,11 @@ export const AccountPage: React.FC = () => {
                   <div className="flex items-center justify-between sm:justify-end gap-3">
                     <span
                       className={`text-xs font-bold px-3 py-1 rounded-md ${
-                        ord.orderStatus === 'Delivered'
+                        ord.orderStatus === 'Delivered' || ord.orderStatus === 'Collected' || ord.orderStatus === 'Completed'
                           ? 'bg-emerald-100 text-emerald-800'
-                          : ord.orderStatus === 'Cancelled'
+                          : ord.orderStatus === 'Cancelled' || ord.orderStatus === 'Returned' || ord.orderStatus === 'Refunded'
                           ? 'bg-rose-100 text-rose-800'
-                          : ord.orderStatus === 'Shipped'
+                          : ord.orderStatus === 'Shipped' || ord.orderStatus === 'Ready for Pickup'
                           ? 'bg-sky-100 text-sky-800'
                           : 'bg-amber-100 text-amber-800'
                       }`}
@@ -413,6 +419,66 @@ export const AccountPage: React.FC = () => {
                     <span className="text-xs font-bold text-slate-900 tabular-nums">{formatPKR(ord.total)}</span>
                   </div>
                 </div>
+
+                {ord.fulfillmentMethod === 'self_pickup' && (
+                  <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <div className="space-y-0.5">
+                      <p className="font-bold text-emerald-950 flex items-center gap-1.5">
+                        <Store className="w-3.5 h-3.5 text-emerald-700" />
+                        {ord.pickupDetails?.locationName || 'Store Counter Pickup'}
+                      </p>
+                      {(ord.pickupDetails?.pickupDate || ord.pickupDetails?.preferredTime) && (
+                        <p className="text-[11px] text-slate-700 tabular-nums flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-emerald-700" />
+                          {ord.pickupDetails.pickupDate
+                            ? `${ord.pickupDetails.pickupDate} · ${ord.pickupDetails.pickupSlotLabel || ''}`
+                            : ord.pickupDetails.preferredTime}
+                        </p>
+                      )}
+                      {ord.pickupDetails?.mapUrl && (
+                        <a
+                          href={ord.pickupDetails.mapUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] font-bold text-[#065F46] hover:underline inline-flex items-center gap-1"
+                        >
+                          <MapPin className="w-3 h-3" /> Open Google Maps Directions
+                        </a>
+                      )}
+                      {ord.customerNotifications && ord.customerNotifications.length > 0 && (
+                        <p className="text-[11px] text-slate-600 flex items-center gap-1 pt-0.5">
+                          <Bell className="w-3 h-3 text-emerald-700 shrink-0" />
+                          {ord.customerNotifications[ord.customerNotifications.length - 1].title}
+                        </p>
+                      )}
+                    </div>
+
+                    {ord.pickupOtp && ord.orderStatus !== 'Cancelled' && (
+                      <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                        <div className="text-right">
+                          <span className="block text-[10px] font-semibold text-emerald-800">Pickup OTP</span>
+                          <span className="font-mono font-black text-base tracking-[0.18em] text-slate-900 tabular-nums">
+                            {ord.pickupOtp}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(ord.pickupOtp || '');
+                            setCopiedOtpId(ord.id);
+                            showToast('Pickup OTP copied!', 'info');
+                            setTimeout(() => setCopiedOtpId(null), 2000);
+                          }}
+                          className="p-2 rounded-lg bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-100"
+                          title="Copy Pickup OTP"
+                          aria-label="Copy Pickup OTP"
+                        >
+                          {copiedOtpId === ord.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   {ord.items.map((it, idx) => (
@@ -442,7 +508,15 @@ export const AccountPage: React.FC = () => {
                       to={`${storeBasePath}/tracking?order=${ord.orderNumber}`}
                       className="text-emerald-700 font-bold hover:underline flex items-center gap-1"
                     >
-                      <Truck className="w-3.5 h-3.5" /> Track Shipment
+                      {ord.fulfillmentMethod === 'self_pickup' ? (
+                        <>
+                          <Store className="w-3.5 h-3.5" /> Track Pickup
+                        </>
+                      ) : (
+                        <>
+                          <Truck className="w-3.5 h-3.5" /> Track Shipment
+                        </>
+                      )}
                     </Link>
                     <Link
                       to={`${storeBasePath}/order-success/${ord.id}`}

@@ -172,7 +172,7 @@ export async function migrateLegacyBazaarPKToTenant(options?: {
         slug: shopSlug,
         shopId,
         ownerId: currentUid,
-        name: settingsDoc.siteName || 'BazaarPK',
+        name: settingsDoc.siteName || 'SB Khush Flagship',
         createdAt: now,
       },
       { merge: true }
@@ -187,7 +187,7 @@ export async function migrateLegacyBazaarPKToTenant(options?: {
       flagshipShop = {
         id: shopId,
         slug: shopSlug,
-        name: settingsDoc.siteName || 'BazaarPK',
+        name: settingsDoc.siteName || 'SB Khush Flagship',
         ownerId: currentUid,
         ownerName: currentName,
         ownerEmail: currentEmail,
@@ -264,7 +264,7 @@ export async function migrateLegacyBazaarPKToTenant(options?: {
 
     const memDoc: ShopMembership = {
       shopId,
-      shopName: settingsDoc.siteName || 'BazaarPK',
+      shopName: settingsDoc.siteName || 'SB Khush Flagship',
       shopSlug,
       role: 'shop_owner',
       joinedAt: now,
@@ -403,10 +403,10 @@ export async function migrateLegacyBazaarPKToTenant(options?: {
     );
 
     await logPlatformActivity(
-      'Migrated Legacy BazaarPK',
+      'Migrated Legacy Storefront',
       'migration',
       shopId,
-      `Migrated BazaarPK into tenant shop "${shopId}" (${result.migratedCounts.products} products, ${result.migratedCounts.orders} orders)`
+      `Migrated legacy store data into tenant shop "${shopId}" (${result.migratedCounts.products} products, ${result.migratedCounts.orders} orders)`
     );
 
     result.success = result.failedRecords.length === 0 && result.errors.length === 0;

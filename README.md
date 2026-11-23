@@ -1,6 +1,6 @@
-# BazaarPK — Complete Professional eCommerce Platform & Admin Dashboard
+# SB Khush — Multi-Tenant eCommerce SaaS & Store Management Platform
 
-A full-stack, production-ready Pakistani eCommerce web application and multi-role administrative system built with React, TypeScript, Tailwind CSS, and Firebase Firestore & Authentication.
+A full-stack, production-ready Pakistani multi-tenant eCommerce SaaS web application and administrative system built with React, TypeScript, Tailwind CSS, Express, and Firebase Firestore, Storage & Authentication (`https://sbkhush.com`).
 
 ## Key Features
 

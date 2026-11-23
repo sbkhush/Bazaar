@@ -1363,4 +1363,146 @@ describe('Waves 1-3 Production Hardening: Portals, Zero-Demo Storefront, CSV Sui
   });
 });
 
+describe('Batch A-C Audit: shops_public Projection, Self-Pickup System & Subpath PWA/Bundle Optimization', () => {
+  it('constructs strict 19-key shops_public projections and safe fallback slugs via resolveValidPublicSlug', async () => {
+    const { buildValidShopPublicProjection, resolveValidPublicSlug } = await import('../src/services/platformService');
+    const allowedPublicKeys = new Set([
+      'id',
+      'slug',
+      'name',
+      'businessType',
+      'logoUrl',
+      'city',
+      'publicContactPhone',
+      'publicSupportEmail',
+      'storefrontAddress',
+      'businessHours',
+      'seoTitle',
+      'seoDescription',
+      'ogImageUrl',
+      'websiteUrl',
+      'socialLinks',
+      'theme',
+      'status',
+      'createdAt',
+      'updatedAt',
+    ]);
+
+    expect(resolveValidPublicSlug('hasan-aamir', '')).toBe('hasan-aamir');
+    expect(resolveValidPublicSlug('admin', 'admin')).toBe('store-admin');
+    expect(resolveValidPublicSlug('s1', 'My Shop!!')).toBe('my-shop');
+
+    const projection = buildValidShopPublicProjection(
+      'hasan-aamir',
+      {
+        id: 'hasan-aamir',
+        slug: 'hasan-aamir',
+        name: 'Hasan Aamir Store',
+        ownerId: 'uid_secret',
+        ownerEmail: 'private@example.com',
+        ownerPhone: '03001112222',
+        city: 'Lahore',
+        address: 'Gulberg III',
+        status: 'active',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      null,
+      { contactPhone: '03211234567', contactEmail: 'support@hasan.pk' },
+      { status: 'suspended' }
+    );
+
+    const keys = Object.keys(projection);
+    expect(keys.every((k) => allowedPublicKeys.has(k))).toBe(true);
+    expect(keys.length).toBeLessThanOrEqual(19);
+    expect(projection.id).toBe('hasan-aamir');
+    expect(projection.slug).toBe('hasan-aamir');
+    expect(projection.status).toBe('suspended');
+    expect((projection as any).ownerEmail).toBeUndefined();
+    expect((projection as any).ownerId).toBeUndefined();
+  });
+
+  it('validates Self-Pickup slot keys, date options, normalization, OTP generation/hashing, and zero shipping', async () => {
+    const {
+      buildPickupSlotKey,
+      buildPickupDateOptions,
+      getDefaultPickupSlots,
+      getFulfillmentLabel,
+    } = await import('../src/data/seedData');
+    const {
+      normalizePickupSlots,
+      generatePickupOtp,
+      hashPickupOtp,
+    } = await import('../src/services/tenantService');
+
+    expect(buildPickupSlotKey('2026-11-24', 'slot_morning')).toBe('2026-11-24__slot_morning');
+    expect(getFulfillmentLabel('self_pickup')).toContain('Self-Pickup');
+
+    const ref = new Date('2026-11-23T10:00:00.000Z');
+    const dates = buildPickupDateOptions(5, ref);
+    expect(dates).toHaveLength(5);
+    expect(dates[0].label).toContain('Today');
+    expect(dates[1].label).toContain('Tomorrow');
+    expect(dates[0].date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(buildPickupDateOptions(99, ref)).toHaveLength(14);
+
+    const defaults = getDefaultPickupSlots();
+    expect(defaults).toHaveLength(3);
+    const normalized = normalizePickupSlots([
+      { id: 'slot morning!', label: 'Early', startTime: '09:00', endTime: '11:00', maxOrdersPerSlot: 999, isActive: true },
+      { id: 'slot morning!', label: 'Duplicate', startTime: '09:00', endTime: '11:00', maxOrdersPerSlot: 5, isActive: true },
+    ]);
+    expect(normalized).toHaveLength(1);
+    expect(normalized[0].maxOrdersPerSlot).toBe(500);
+    expect(normalized[0].id).toBe('slot_morning_');
+
+    const otp = generatePickupOtp();
+    expect(otp).toMatch(/^\d{6}$/);
+    const hash1 = await hashPickupOtp('PK-100200', otp);
+    const hash2 = await hashPickupOtp('pk-100200', ` ${otp} `);
+    expect(hash1).toBe(hash2);
+    expect(hash1).toMatch(/^[a-f0-9]{64}$/);
+
+    const cartContextSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/context/CartContext.tsx'), 'utf-8');
+    const checkoutSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/pages/CheckoutPage.tsx'), 'utf-8');
+    const serverSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'server.ts'), 'utf-8');
+    const orderTrackSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/pages/OrderTrackingPage.tsx'), 'utf-8');
+    const firestoreRules = fs.readFileSync(path.join(WORKSPACE_ROOT, 'firestore.rules'), 'utf-8');
+
+    expect(cartContextSrc).toMatch(/fulfillmentMethod === 'self_pickup'\s*\?\s*0/);
+    expect(checkoutSrc).toContain('Free (Pickup)');
+    expect(serverSrc).toContain("fulfillmentMethod === 'self_pickup'");
+    expect(serverSrc).toContain('pickup_slots');
+    expect(orderTrackSrc).toContain('Ready for Pickup');
+    expect(firestoreRules).toContain('match /pickup_slots/{slotKey}');
+  });
+
+  it('configures subpath-aware PWA manifest/workbox, React.lazy route splitting, and WebP storefront assets', () => {
+    const viteConfigSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'vite.config.ts'), 'utf-8');
+    const appSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/App.tsx'), 'utf-8');
+    const pwaBannerSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/components/common/PWAStatusBanner.tsx'), 'utf-8');
+    const homeSrc = fs.readFileSync(path.join(WORKSPACE_ROOT, 'src/pages/HomePage.tsx'), 'utf-8');
+    const featuresSrc = fs.readFileSync(
+      path.join(WORKSPACE_ROOT, 'src/platform/components/FeaturesAndSolutionsSection.tsx'),
+      'utf-8'
+    );
+
+    expect(viteConfigSrc).toContain('normalizedBase');
+    expect(viteConfigSrc).toContain('start_url: normalizedBase');
+    expect(viteConfigSrc).toContain('scope: normalizedBase');
+    expect(viteConfigSrc).toContain('navigateFallback: `${normalizedBase}index.html`');
+    expect(viteConfigSrc).toContain('manualChunks');
+    expect(viteConfigSrc).toContain('sbkhush-google-fonts-v1');
+    expect(viteConfigSrc).toContain('sbkhush-images-v1');
+
+    expect(pwaBannerSrc).toContain('import.meta.env.BASE_URL');
+    expect(appSrc).toContain('React.lazy');
+    expect(appSrc).toContain('React.Suspense');
+    expect(homeSrc).toContain('.webp');
+    expect(homeSrc).not.toContain('.jpg');
+    expect(featuresSrc).toContain('.webp');
+    expect(featuresSrc).not.toContain('.jpg');
+  });
+});
+
+
 

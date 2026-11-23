@@ -561,6 +561,39 @@ service cloud.firestore {
         allow delete: if isValidId(trackKey) && isShopAdmin(shopId);
       }
 
+      // Shop Self-Pickup Slot Occupancy Reservations (strict capacity & atomic +1 guard)
+      match /pickup_slots/{slotKey} {
+        allow get, list: if isValidId(slotKey);
+        allow create: if isValidId(slotKey) && (
+          hasShopPermission(shopId, 'orders') || (
+            incoming().keys().hasAll(['id', 'shopId', 'date', 'slotId', 'bookedCount', 'maxOrders', 'updatedAt']) &&
+            incoming().keys().hasOnly(['id', 'shopId', 'date', 'slotId', 'bookedCount', 'maxOrders', 'updatedAt']) &&
+            incoming().id == slotKey &&
+            incoming().shopId == shopId &&
+            incoming().date is string && incoming().date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+            incoming().slotId is string && incoming().slotId.size() <= 40 &&
+            incoming().maxOrders is number && incoming().maxOrders >= 1 && incoming().maxOrders <= 500 &&
+            incoming().bookedCount is number && incoming().bookedCount >= 0 && incoming().bookedCount <= 1 &&
+            incoming().bookedCount <= incoming().maxOrders
+          )
+        );
+        allow update: if isValidId(slotKey) && (
+          hasShopPermission(shopId, 'orders') || (
+            incoming().keys().hasAll(['id', 'shopId', 'date', 'slotId', 'bookedCount', 'maxOrders', 'updatedAt']) &&
+            incoming().keys().hasOnly(['id', 'shopId', 'date', 'slotId', 'bookedCount', 'maxOrders', 'updatedAt']) &&
+            incoming().id == slotKey &&
+            incoming().shopId == shopId &&
+            incoming().date == existing().date &&
+            incoming().slotId == existing().slotId &&
+            incoming().maxOrders == existing().maxOrders &&
+            incoming().bookedCount is number &&
+            incoming().bookedCount == existing().bookedCount + 1 &&
+            incoming().bookedCount <= existing().maxOrders
+          )
+        );
+        allow delete: if isValidId(slotKey) && isShopAdmin(shopId);
+      }
+
       // Shop Inventory Logs
       match /inventory_logs/{logId} {
         allow read, write: if isValidId(logId) && hasShopPermission(shopId, 'inventory');

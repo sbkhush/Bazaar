@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Save, CheckCircle2, AlertCircle, FileText, ExternalLink, Sparkles } from 'lucide-react';
+import { Save, CheckCircle2, AlertCircle, FileText, ExternalLink, Sparkles, MapPin, Clock, Plus, Trash2, RotateCcw } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
   updateShopSettings,
   getShopPageContent,
   saveShopPageContent,
+  normalizePickupSlots,
 } from '../services/tenantService';
-import { StoreSettings } from '../types';
+import { StoreSettings, PickupSlotConfig } from '../types';
 import { BRAND, buildShopLegalStarterTemplates } from '../config/brand';
+import { getDefaultPickupSlots } from '../data/seedData';
 
 export const ShopSettingsPage: React.FC = () => {
   const { shopId, shop, settings, refreshDashboard, isReadOnly } = useDashboard();
@@ -68,7 +70,12 @@ export const ShopSettingsPage: React.FC = () => {
           ...form.bankDetails,
           enabled: form.bankDetails?.enabled !== false,
         },
-        selfPickupDetails: form.selfPickupDetails,
+        selfPickupDetails: {
+          ...form.selfPickupDetails,
+          mapUrl: form.selfPickupDetails.mapUrl?.trim() || undefined,
+          advanceDays: Math.max(1, Math.min(14, Number(form.selfPickupDetails.advanceDays) || 5)),
+          pickupSlots: normalizePickupSlots(form.selfPickupDetails.pickupSlots),
+        },
       });
       await refreshDashboard();
       setSaved(true);
@@ -396,12 +403,12 @@ export const ShopSettingsPage: React.FC = () => {
       </div>
 
       {/* Self-Pickup Service */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
-            <h3 className="text-sm font-extrabold text-slate-900">Self-Pickup Outlet Service</h3>
+            <h3 className="text-sm font-extrabold text-slate-900">Self-Pickup Outlet &amp; Time Slots</h3>
             <p className="text-[11px] text-slate-500">
-              Allow local customers to pick up parcels in person with zero courier charges.
+              Configure counter pickup details, Google Maps directions, and customer pickup time windows with per-slot capacity.
             </p>
           </div>
           <label className="flex items-center gap-2 font-bold cursor-pointer">
@@ -416,61 +423,266 @@ export const ShopSettingsPage: React.FC = () => {
           </label>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <input
-            type="text"
-            value={form.selfPickupDetails.title}
-            onChange={(e) =>
-              setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, title: e.target.value } })
-            }
-            placeholder="Outlet Name"
-            className="px-3 py-2 border border-slate-200 rounded-lg"
-          />
-          <input
-            type="text"
-            value={form.selfPickupDetails.city}
-            onChange={(e) =>
-              setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, city: e.target.value } })
-            }
-            placeholder="City"
-            className="px-3 py-2 border border-slate-200 rounded-lg"
-          />
-          <input
-            type="text"
-            value={form.selfPickupDetails.address}
-            onChange={(e) =>
-              setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, address: e.target.value } })
-            }
-            placeholder="Street Address"
-            className="px-3 py-2 border border-slate-200 rounded-lg"
-          />
-          <input
-            type="text"
-            value={form.selfPickupDetails.timings}
-            onChange={(e) =>
-              setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, timings: e.target.value } })
-            }
-            placeholder="Opening Hours"
-            className="px-3 py-2 border border-slate-200 rounded-lg"
-          />
-          <input
-            type="text"
-            value={form.selfPickupDetails.contactPhone}
-            onChange={(e) =>
-              setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, contactPhone: e.target.value } })
-            }
-            placeholder="Pickup Desk Phone Number"
-            className="px-3 py-2 border border-slate-200 rounded-lg"
-          />
-          <input
-            type="text"
-            value={form.selfPickupDetails.instructions || ''}
-            onChange={(e) =>
-              setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, instructions: e.target.value } })
-            }
-            placeholder="Customer Pickup Instructions"
-            className="px-3 py-2 border border-slate-200 rounded-lg"
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Outlet Name</label>
+            <input
+              type="text"
+              value={form.selfPickupDetails.title}
+              onChange={(e) =>
+                setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, title: e.target.value } })
+              }
+              placeholder="Outlet Name"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Outlet City</label>
+            <input
+              type="text"
+              value={form.selfPickupDetails.city}
+              onChange={(e) =>
+                setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, city: e.target.value } })
+              }
+              placeholder="City"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Pickup Desk Phone Number</label>
+            <input
+              type="text"
+              value={form.selfPickupDetails.contactPhone}
+              onChange={(e) =>
+                setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, contactPhone: e.target.value } })
+              }
+              placeholder="+92 300 0000000"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block font-semibold text-slate-700 mb-1">Outlet Street Address</label>
+            <input
+              type="text"
+              value={form.selfPickupDetails.address}
+              onChange={(e) =>
+                setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, address: e.target.value } })
+              }
+              placeholder="Street Address & Landmark"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Opening Hours</label>
+            <input
+              type="text"
+              value={form.selfPickupDetails.timings}
+              onChange={(e) =>
+                setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, timings: e.target.value } })
+              }
+              placeholder="10:00 AM – 9:30 PM"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block font-semibold text-slate-700 mb-1 flex items-center gap-1">
+              <MapPin className="w-3.5 h-3.5 text-[#065F46]" /> Google Maps Location Link (Optional)
+            </label>
+            <input
+              type="url"
+              value={form.selfPickupDetails.mapUrl || ''}
+              onChange={(e) =>
+                setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, mapUrl: e.target.value } })
+              }
+              placeholder="https://maps.google.com/?q=..."
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Advance Booking Window (Days)</label>
+            <input
+              type="number"
+              min={1}
+              max={14}
+              value={form.selfPickupDetails.advanceDays ?? 5}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  selfPickupDetails: {
+                    ...form.selfPickupDetails,
+                    advanceDays: Math.max(1, Math.min(14, Number(e.target.value) || 5)),
+                  },
+                })
+              }
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg tabular-nums"
+            />
+          </div>
+          <div className="sm:col-span-2 lg:col-span-3">
+            <label className="block font-semibold text-slate-700 mb-1">Customer Pickup Instructions</label>
+            <input
+              type="text"
+              value={form.selfPickupDetails.instructions || ''}
+              onChange={(e) =>
+                setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, instructions: e.target.value } })
+              }
+              placeholder="e.g. Show your Order Number and 6-digit Pickup OTP at the counter."
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
+        </div>
+
+        {/* Pickup Time Slots Editor */}
+        <div className="border-t border-slate-100 pt-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-[#065F46]" /> Scheduled Pickup Time Slots
+              </h4>
+              <p className="text-[11px] text-slate-500">
+                Shoppers pick an open date and time window at checkout. Full slots lock automatically.
+              </p>
+            </div>
+            {!isReadOnly && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      selfPickupDetails: {
+                        ...prev.selfPickupDetails,
+                        pickupSlots: getDefaultPickupSlots(),
+                      },
+                    }))
+                  }
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-[11px] font-semibold inline-flex items-center gap-1 whitespace-nowrap"
+                >
+                  <RotateCcw className="w-3 h-3" /> Reset Defaults
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentSlots = normalizePickupSlots(form.selfPickupDetails.pickupSlots);
+                    const nextSlot: PickupSlotConfig = {
+                      id: `slot_${Date.now().toString(36)}`,
+                      label: `Custom Slot ${currentSlots.length + 1} (5:00 PM – 8:00 PM)`,
+                      startTime: '17:00',
+                      endTime: '20:00',
+                      maxOrdersPerSlot: 10,
+                      isActive: true,
+                    };
+                    setForm((prev) => ({
+                      ...prev,
+                      selfPickupDetails: {
+                        ...prev.selfPickupDetails,
+                        pickupSlots: [...currentSlots, nextSlot],
+                      },
+                    }));
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-[#065F46] hover:bg-emerald-900 text-white text-[11px] font-bold inline-flex items-center gap-1 whitespace-nowrap"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add Time Slot
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+            {normalizePickupSlots(form.selfPickupDetails.pickupSlots).map((slot, idx, allSlots) => {
+              const updateSlot = (patch: Partial<PickupSlotConfig>) => {
+                const updated = allSlots.map((item, i) => (i === idx ? { ...item, ...patch } : item));
+                setForm((prev) => ({
+                  ...prev,
+                  selfPickupDetails: {
+                    ...prev.selfPickupDetails,
+                    pickupSlots: updated,
+                  },
+                }));
+              };
+              const removeSlot = () => {
+                if (allSlots.length <= 1) return;
+                const updated = allSlots.filter((_, i) => i !== idx);
+                setForm((prev) => ({
+                  ...prev,
+                  selfPickupDetails: {
+                    ...prev.selfPickupDetails,
+                    pickupSlots: updated,
+                  },
+                }));
+              };
+
+              return (
+                <div
+                  key={slot.id}
+                  className="p-3 grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center bg-white hover:bg-slate-50/50"
+                >
+                  <div className="md:col-span-5">
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Window Label</label>
+                    <input
+                      type="text"
+                      value={slot.label}
+                      onChange={(e) => updateSlot({ label: e.target.value })}
+                      placeholder="Morning (10:00 AM – 1:00 PM)"
+                      className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Start</label>
+                    <input
+                      type="time"
+                      value={slot.startTime}
+                      onChange={(e) => updateSlot({ startTime: e.target.value })}
+                      className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs tabular-nums"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">End</label>
+                    <input
+                      type="time"
+                      value={slot.endTime}
+                      onChange={(e) => updateSlot({ endTime: e.target.value })}
+                      className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs tabular-nums"
+                    />
+                  </div>
+                  <div className="md:col-span-1">
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Cap</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={500}
+                      value={slot.maxOrdersPerSlot}
+                      onChange={(e) =>
+                        updateSlot({ maxOrdersPerSlot: Math.max(1, Math.min(500, Number(e.target.value) || 10)) })
+                      }
+                      className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs tabular-nums"
+                    />
+                  </div>
+                  <div className="md:col-span-2 flex items-center justify-between md:justify-end gap-3 pt-3 md:pt-4">
+                    <label className="inline-flex items-center gap-1.5 font-semibold text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={slot.isActive !== false}
+                        onChange={(e) => updateSlot({ isActive: e.target.checked })}
+                      />
+                      Active
+                    </label>
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        disabled={allSlots.length <= 1}
+                        onClick={removeSlot}
+                        title={allSlots.length <= 1 ? 'Keep at least one slot' : 'Remove slot'}
+                        aria-label={`Remove ${slot.label}`}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-30"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 

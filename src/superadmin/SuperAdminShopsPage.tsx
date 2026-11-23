@@ -60,6 +60,7 @@ export const SuperAdminShopsPage: React.FC = () => {
   const [extraDays, setExtraDays] = useState(30);
   const [freeOverride, setFreeOverride] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Delete confirmation modal
   const [deleteTarget, setDeleteTarget] = useState<Shop | null>(null);
@@ -186,8 +187,22 @@ export const SuperAdminShopsPage: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleShopStatusChange = async (shop: Shop, nextStatus: 'active' | 'suspended') => {
+    setActionError(null);
+    setActionBusy(true);
+    try {
+      await updateShopStatus(shop.id, nextStatus);
+      await loadShops();
+    } catch (err: any) {
+      setActionError(err?.message || `Could not update status for ${shop.name}.`);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const handleApplyPlan = async () => {
     if (!planModalShop) return;
+    setActionError(null);
     setActionBusy(true);
     try {
       await assignShopSubscription(planModalShop.id, {
@@ -199,6 +214,23 @@ export const SuperAdminShopsPage: React.FC = () => {
       });
       setPlanModalShop(null);
       await loadShops();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to update subscription plan.');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleQuickExtend = async () => {
+    if (!planModalShop) return;
+    setActionError(null);
+    setActionBusy(true);
+    try {
+      await extendShopSubscription(planModalShop.id, 30);
+      setPlanModalShop(null);
+      await loadShops();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to extend subscription.');
     } finally {
       setActionBusy(false);
     }
@@ -206,12 +238,15 @@ export const SuperAdminShopsPage: React.FC = () => {
 
   const handleDeleteShop = async () => {
     if (!deleteTarget || deleteConfirmSlug !== deleteTarget.slug) return;
+    setActionError(null);
     setActionBusy(true);
     try {
       await deleteShopComplete(deleteTarget.id);
       setDeleteTarget(null);
       setDeleteConfirmSlug('');
       await loadShops();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to delete shop.');
     } finally {
       setActionBusy(false);
     }
@@ -344,6 +379,20 @@ export const SuperAdminShopsPage: React.FC = () => {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {actionError && (
+        <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium flex items-center justify-between gap-2">
+          <span>{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="text-red-500 hover:text-red-800 font-bold"
+            aria-label="Dismiss error"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -589,18 +638,20 @@ export const SuperAdminShopsPage: React.FC = () => {
                         {s.status === 'active' ? (
                           <button
                             type="button"
-                            onClick={() => updateShopStatus(s.id, 'suspended').then(loadShops)}
+                            disabled={actionBusy}
+                            onClick={() => handleShopStatusChange(s, 'suspended')}
                             title="Suspend Shop"
-                            className="p-1.5 rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50"
+                            className="p-1.5 rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 disabled:opacity-40"
                           >
                             <PauseCircle className="w-3.5 h-3.5" />
                           </button>
                         ) : (
                           <button
                             type="button"
-                            onClick={() => updateShopStatus(s.id, 'active').then(loadShops)}
+                            disabled={actionBusy}
+                            onClick={() => handleShopStatusChange(s, 'active')}
                             title="Activate Shop"
-                            className="p-1.5 rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                            className="p-1.5 rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5" />
                           </button>
@@ -715,8 +766,9 @@ export const SuperAdminShopsPage: React.FC = () => {
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => extendShopSubscription(planModalShop.id, 30).then(() => { setPlanModalShop(null); loadShops(); })}
-                className="px-3 py-2 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-bold hover:bg-emerald-50 mr-auto"
+                disabled={actionBusy}
+                onClick={handleQuickExtend}
+                className="px-3 py-2 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-bold hover:bg-emerald-50 mr-auto disabled:opacity-40"
               >
                 +30 Days Quick Extend
               </button>
@@ -783,7 +835,7 @@ export const SuperAdminShopsPage: React.FC = () => {
           <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-4">
             <h3 className="text-base font-extrabold text-slate-900">Confirm Legacy Store Migration</h3>
             <p className="text-xs text-slate-600 leading-relaxed">
-              This will idempotently copy legacy top-level collections (products, categories, banners, coupons, orders, settings) into the isolated <code className="font-mono font-bold">/shops/bazaarpk</code> tenant, generate non-PII tracking tokens, sync <code className="font-mono font-bold">/shops_public/bazaarpk</code>, and generate a downloadable JSON backup. Existing tenant documents are skipped safely.
+              This will idempotently copy legacy top-level collections (products, categories, banners, coupons, orders, settings) into the isolated legacy flagship tenant (<code className="font-mono font-bold">/shops/bazaarpk</code>), generate non-PII tracking tokens, sync its public mirror, and generate a downloadable JSON backup. Existing tenant documents are skipped safely.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button
