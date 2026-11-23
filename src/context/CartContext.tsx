@@ -9,7 +9,7 @@ import {
   getShopCoupons,
   getShopProducts,
 } from '../services/tenantService';
-import { INITIAL_SETTINGS, FALLBACK_PRODUCT_IMAGE } from '../data/seedData';
+import { INITIAL_SETTINGS, FALLBACK_PRODUCT_IMAGE, isSelfPickupEnabled } from '../data/seedData';
 
 interface CartContextType {
   items: CartItem[];
@@ -83,7 +83,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (tenantSettings) {
       setSettings(tenantSettings);
-      if (tenantSettings.selfPickupDetails?.enabled === false) {
+      if (!isSelfPickupEnabled(tenantSettings)) {
         setFulfillmentMethod('delivery');
       }
     }
@@ -93,7 +93,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const s = await getShopPublicSettings(shopId);
       setSettings(s);
-      if (s.selfPickupDetails?.enabled === false) {
+      if (!isSelfPickupEnabled(s)) {
         setFulfillmentMethod('delivery');
       }
     } catch {}

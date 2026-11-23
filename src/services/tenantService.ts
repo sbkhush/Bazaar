@@ -52,6 +52,11 @@ import {
   DEFAULT_SUBSCRIPTION_PLANS,
   getDefaultPickupSlots,
   buildPickupSlotKey,
+  isSelfPickupEnabled,
+  isCashOnPickupAllowed,
+  derivePickupStatusFromOrderStatus,
+  parsePickupVerificationInput,
+  validatePickupDateInWindow,
 } from '../data/seedData';
 import { stripUndefined, getShopSubscriptionStatus, buildValidShopPublicProjection } from './platformService';
 import {
@@ -633,34 +638,66 @@ export async function createShopOrder(
   const trackingTokenHash = await deriveTrackingTokenHash(orderNumber, trackingToken);
   const trackDocId = `trk_${trackingTokenHash.slice(0, 32)}`;
 
+  const pubSettings = await getShopPublicSettings(shopId);
+
+  if (isSelfPickup) {
+    if (!isSelfPickupEnabled(pubSettings)) {
+      throw new Error('Self-Pickup is currently disabled for this store.');
+    }
+    if (orderData.paymentMethod === 'cod' && !isCashOnPickupAllowed(pubSettings)) {
+      throw new Error('Advance payment (EasyPaisa, JazzCash, or Bank Transfer) is required for Self-Pickup orders at this store.');
+    }
+  } else if (orderData.paymentMethod === 'cod' && pubSettings.codEnabled === false) {
+    throw new Error('Cash on Delivery is disabled for this store.');
+  }
+
   let pickupOtp: string | undefined;
   let pickupOtpHash: string | undefined;
   let pickupSlotKey: string | undefined;
   let slotDate: string | undefined;
   let slotId: string | undefined;
   let slotMaxOrders = 10;
+  let resolvedPickupDetails = orderData.pickupDetails;
 
   if (isSelfPickup) {
-    const pubSettings = await getShopPublicSettings(shopId);
-    if (pubSettings.selfPickupDetails?.enabled === false) {
-      throw new Error('Self-Pickup is currently disabled for this store.');
-    }
     pickupOtp = generatePickupOtp();
     pickupOtpHash = await hashPickupOtp(orderNumber, pickupOtp);
 
-    if (orderData.pickupDetails?.pickupDate && orderData.pickupDetails?.pickupSlotId) {
-      slotDate = String(orderData.pickupDetails.pickupDate).replace(/[^0-9-]/g, '').slice(0, 10);
-      slotId = String(orderData.pickupDetails.pickupSlotId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
-      if (slotDate && slotId) {
-        pickupSlotKey = buildPickupSlotKey(slotDate, slotId);
-        const configuredSlots = normalizePickupSlots(pubSettings.selfPickupDetails?.pickupSlots);
-        const matchedSlot = configuredSlots.find((s) => s.id === slotId);
-        if (!matchedSlot || matchedSlot.isActive === false) {
-          throw new Error('Selected pickup time slot is no longer active. Please pick another slot.');
-        }
-        slotMaxOrders = matchedSlot.maxOrdersPerSlot;
-      }
+    slotDate = String(orderData.pickupDetails?.pickupDate || '').replace(/[^0-9-]/g, '').slice(0, 10);
+    slotId = String(orderData.pickupDetails?.pickupSlotId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+    const advanceDays = pubSettings.selfPickupDetails?.advanceDays ?? 5;
+
+    if (!validatePickupDateInWindow(slotDate, advanceDays)) {
+      throw new Error('Please select a valid pickup date within the store booking window.');
     }
+    if (!slotId) {
+      throw new Error('Please select an active pickup time slot.');
+    }
+
+    const configuredSlots = normalizePickupSlots(pubSettings.selfPickupDetails?.pickupSlots);
+    const matchedSlot = configuredSlots.find((s) => s.id === slotId);
+    if (!matchedSlot || matchedSlot.isActive === false) {
+      throw new Error('Selected pickup time slot is no longer active. Please pick another slot.');
+    }
+
+    pickupSlotKey = buildPickupSlotKey(slotDate, slotId);
+    slotMaxOrders = matchedSlot.maxOrdersPerSlot;
+
+    const storePickup = pubSettings.selfPickupDetails;
+    resolvedPickupDetails = stripUndefined({
+      locationName: storePickup.title || orderData.pickupDetails?.locationName || 'Store Counter',
+      address: storePickup.address || orderData.pickupDetails?.address || '',
+      city: storePickup.city || orderData.pickupDetails?.city || pubSettings.city || '',
+      timings: storePickup.timings || orderData.pickupDetails?.timings || '',
+      contactPhone: storePickup.contactPhone || orderData.pickupDetails?.contactPhone || pubSettings.contactPhone || '',
+      mapUrl: storePickup.mapUrl || orderData.pickupDetails?.mapUrl,
+      preparationTime: storePickup.preparationTime || orderData.pickupDetails?.preparationTime || '30–45 mins',
+      pickupDate: slotDate,
+      pickupSlotId: matchedSlot.id,
+      pickupSlotLabel: matchedSlot.label,
+      preferredTime: `${slotDate} · ${matchedSlot.label}`,
+      instructions: storePickup.instructions || orderData.pickupDetails?.instructions,
+    });
   }
 
   const normalizedSubtotal = Number(orderData.subtotal || 0);
@@ -673,8 +710,8 @@ export async function createShopOrder(
         {
           status: 'Pending',
           timestamp: now,
-          note: orderData.pickupDetails?.pickupSlotLabel
-            ? `Self-Pickup scheduled for ${orderData.pickupDetails.pickupDate} (${orderData.pickupDetails.pickupSlotLabel})`
+          note: resolvedPickupDetails?.pickupSlotLabel
+            ? `Self-Pickup scheduled for ${resolvedPickupDetails.pickupDate} (${resolvedPickupDetails.pickupSlotLabel})`
             : 'Self-Pickup order placed',
           actor: orderData.customer?.name || 'Customer',
         },
@@ -686,7 +723,7 @@ export async function createShopOrder(
         {
           id: `cnot_${Date.now()}`,
           title: `Pickup Order ${orderNumber} Received`,
-          message: `Keep your 6-digit Pickup OTP safe for verification at ${orderData.pickupDetails?.locationName || 'the store counter'}.`,
+          message: `Keep your 6-digit Pickup Code & QR Pass safe for verification at ${resolvedPickupDetails?.locationName || 'the store counter'}.`,
           status: 'Pending',
           createdAt: now,
           channel: 'in_app',
@@ -702,6 +739,13 @@ export async function createShopOrder(
     trackingTokenHash,
     userId: effectiveUserId,
     fulfillmentMethod: isSelfPickup ? 'self_pickup' : 'delivery',
+    pickupDetails: isSelfPickup ? resolvedPickupDetails : undefined,
+    pickupStatus: isSelfPickup ? 'New Pickup Order' : undefined,
+    pickupShopId: isSelfPickup ? shopId : undefined,
+    pickupAddress: isSelfPickup ? resolvedPickupDetails?.address : undefined,
+    pickupDate: isSelfPickup ? slotDate : undefined,
+    pickupTimeSlot: isSelfPickup ? resolvedPickupDetails?.pickupSlotLabel : undefined,
+    pickupInstructions: isSelfPickup ? resolvedPickupDetails?.instructions : undefined,
     shippingFee: normalizedShippingFee,
     total: normalizedTotal,
     pickupOtp,
@@ -896,6 +940,13 @@ export async function updateSelfPickupStatus(
         throw new Error(`Cannot transition pickup order from "${existing.orderStatus}" to "${nextStatus}".`);
       }
 
+      const slotRef =
+        nextStatus === 'Cancelled' && existing.pickupSlotKey
+          ? doc(db, 'shops', shopId, 'pickup_slots', existing.pickupSlotKey)
+          : null;
+      const slotSnap = slotRef ? await tx.get(slotRef) : null;
+
+      const nextPickupStatus = derivePickupStatusFromOrderStatus(nextStatus);
       const historyEntry: PickupHistoryEntry = {
         status: nextStatus,
         timestamp: now,
@@ -921,10 +972,19 @@ export async function updateSelfPickupStatus(
 
       tx.update(orderRef, stripUndefined({
         orderStatus: nextStatus,
+        pickupStatus: nextPickupStatus,
         pickupHistory,
         customerNotifications,
         updatedAt: now,
       }));
+
+      if (slotRef && slotSnap?.exists()) {
+        const currentBooked = Number(slotSnap.data()?.bookedCount || 0);
+        tx.update(slotRef, {
+          bookedCount: Math.max(0, currentBooked - 1),
+          updatedAt: now,
+        });
+      }
 
       if (existing.trackingTokenHash) {
         const trackDocId = `trk_${existing.trackingTokenHash.slice(0, 32)}`;
@@ -937,6 +997,7 @@ export async function updateSelfPickupStatus(
       return {
         ...existing,
         orderStatus: nextStatus,
+        pickupStatus: nextPickupStatus,
         pickupHistory,
         customerNotifications,
         updatedAt: now,
@@ -956,6 +1017,80 @@ export async function updateSelfPickupStatus(
   }
 }
 
+export async function notifySelfPickupCustomer(
+  shopId: string,
+  orderId: string,
+  customMessage?: string
+): Promise<Order> {
+  const now = new Date().toISOString();
+  const actor = auth.currentUser?.email || auth.currentUser?.displayName || 'Merchant';
+
+  try {
+    let notifiedOrderNumber = orderId;
+    const updatedOrder = await runTransaction(db, async (tx) => {
+      const orderRef = doc(db, 'shops', shopId, 'orders', orderId);
+      const orderSnap = await tx.get(orderRef);
+      if (!orderSnap.exists()) {
+        throw new Error('Order not found.');
+      }
+      const existing = { ...(orderSnap.data() as Order), id: orderSnap.id, shopId };
+      notifiedOrderNumber = existing.orderNumber;
+      if (existing.fulfillmentMethod !== 'self_pickup') {
+        throw new Error('Pickup notification is only available for Self-Pickup orders.');
+      }
+
+      const loc = existing.pickupDetails?.locationName || 'the store counter';
+      const defaultMsg =
+        existing.orderStatus === 'Ready for Pickup'
+          ? `Your order ${existing.orderNumber} is packed and ready for pickup at ${loc}. Bring your 6-digit Pickup Code or QR Pass.`
+          : `Store update for order ${existing.orderNumber} (${derivePickupStatusFromOrderStatus(existing.orderStatus)}). Counter: ${loc}.`;
+
+      const nextNotification: OrderCustomerNotification = {
+        id: `cnot_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+        title: existing.orderStatus === 'Ready for Pickup' ? 'Ready for Store Pickup Reminder' : 'Pickup Order Update',
+        message: customMessage?.trim() || defaultMsg,
+        status: existing.orderStatus,
+        createdAt: now,
+        channel: 'in_app',
+      };
+
+      const historyEntry: PickupHistoryEntry = {
+        status: existing.orderStatus,
+        timestamp: now,
+        note: `Customer notified: ${nextNotification.message}`,
+        actor,
+      };
+
+      const customerNotifications = [...(existing.customerNotifications || []), nextNotification];
+      const pickupHistory = [...(existing.pickupHistory || []), historyEntry];
+
+      tx.update(orderRef, {
+        customerNotifications,
+        pickupHistory,
+        updatedAt: now,
+      });
+
+      return {
+        ...existing,
+        customerNotifications,
+        pickupHistory,
+        updatedAt: now,
+      };
+    });
+
+    await logShopActivity(
+      shopId,
+      'Notified Self-Pickup Customer',
+      'order',
+      orderId,
+      `Sent pickup notification for ${notifiedOrderNumber}`
+    );
+    return updatedOrder;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}/orders/${orderId}`);
+  }
+}
+
 export async function verifyAndCollectSelfPickupOrder(params: {
   shopId: string;
   orderId: string;
@@ -964,20 +1099,20 @@ export async function verifyAndCollectSelfPickupOrder(params: {
   markCashPaid?: boolean;
 }): Promise<Order> {
   const { shopId, orderId } = params;
-  const cleanOtp = String(params.otp || '').replace(/\D/g, '').trim();
+  const preSnap = await getDoc(doc(db, 'shops', shopId, 'orders', orderId)).catch(() => null);
+  const preOrderNumber = preSnap?.exists() ? String((preSnap.data() as Order).orderNumber || '') : undefined;
+
+  const parsed = parsePickupVerificationInput(params.otp, preOrderNumber);
+  const cleanOtp = parsed.otp;
   if (!/^\d{6}$/.test(cleanOtp)) {
-    throw new Error('Please enter the 6-digit Pickup OTP shown on the customer receipt.');
+    throw new Error('Please enter the 6-digit Pickup Code or scan a valid Pickup QR code.');
   }
 
   const verifier = params.verifiedBy || auth.currentUser?.email || auth.currentUser?.displayName || 'Store Counter';
   const uid = auth.currentUser?.uid || verifier;
   const nowIso = new Date().toISOString();
 
-  // First peek order outside hash if needed, or compute hash cleanly after fetching orderNumber inside tx
-  const preSnap = await getDoc(doc(db, 'shops', shopId, 'orders', orderId)).catch(() => null);
-  const candidateHash = preSnap?.exists()
-    ? await hashPickupOtp(String((preSnap.data() as Order).orderNumber || ''), cleanOtp)
-    : '';
+  const candidateHash = preOrderNumber ? await hashPickupOtp(preOrderNumber, cleanOtp) : '';
 
   try {
     const updatedOrder = await runTransaction(db, async (tx) => {
@@ -988,23 +1123,25 @@ export async function verifyAndCollectSelfPickupOrder(params: {
       }
       const order = { ...(orderSnap.data() as Order), id: orderSnap.id, shopId };
       if (order.fulfillmentMethod !== 'self_pickup') {
-        throw new Error('Only Self-Pickup orders can be verified via Pickup OTP.');
+        throw new Error('Only Self-Pickup orders can be verified via Pickup Code or QR.');
       }
       if (order.orderStatus === 'Collected' || order.orderStatus === 'Completed' || order.pickupVerifiedAt) {
         throw new Error('Duplicate collection blocked: this pickup order has already been verified and collected.');
       }
       if (order.orderStatus !== 'Ready for Pickup') {
         throw new Error(
-          `Order must be marked "Ready for Pickup" before OTP verification (current status: ${order.orderStatus}).`
+          `Order must be marked "Ready for Pickup" before verification (current status: ${order.orderStatus}).`
         );
       }
+
+      parsePickupVerificationInput(params.otp, order.orderNumber);
 
       const otpMatches =
         (Boolean(order.pickupOtp) && order.pickupOtp === cleanOtp) ||
         (Boolean(order.pickupOtpHash) && Boolean(candidateHash) && order.pickupOtpHash === candidateHash);
 
       if (!otpMatches) {
-        throw new Error('Invalid 6-digit Pickup OTP. Please ask the customer to check their order receipt.');
+        throw new Error('Invalid 6-digit Pickup Code or QR. Please verify against the customer receipt.');
       }
 
       // Read all unique product documents BEFORE issuing any writes (Firestore transaction rule)
@@ -1113,6 +1250,7 @@ export async function verifyAndCollectSelfPickupOrder(params: {
 
       tx.update(orderRef, stripUndefined({
         orderStatus: 'Collected',
+        pickupStatus: 'Picked Up',
         paymentStatus: nextPaymentStatus,
         pickupVerifiedAt: nowIso,
         pickupVerifiedBy: verifier,
@@ -1134,6 +1272,7 @@ export async function verifyAndCollectSelfPickupOrder(params: {
       return {
         ...order,
         orderStatus: 'Collected' as OrderStatus,
+        pickupStatus: 'Picked Up' as const,
         paymentStatus: nextPaymentStatus,
         pickupVerifiedAt: nowIso,
         pickupVerifiedBy: verifier,
@@ -1179,6 +1318,17 @@ export async function updateShopOrderStatus(
     const ordData = ordSnap?.exists() ? (ordSnap.data() as Order) : null;
     const resolvedOrderNumber = orderNumber || ordData?.orderNumber;
     const trackingHash = ordData?.trackingTokenHash;
+
+    if (
+      ordData?.fulfillmentMethod === 'self_pickup' &&
+      updates.orderStatus &&
+      !updates.pickupStatus
+    ) {
+      await updateDoc(orderRef, {
+        pickupStatus: derivePickupStatusFromOrderStatus(updates.orderStatus),
+        updatedAt: now,
+      }).catch(() => {});
+    }
 
     const trackUpdates = stripUndefined({
       orderStatus: updates.orderStatus,
@@ -1264,6 +1414,15 @@ export async function trackShopOrder(shopId: string, ref: string, token?: string
             total: td.total || 0,
             fulfillmentMethod: td.fulfillmentMethod || 'delivery',
             pickupDetails: td.pickupDetails,
+            pickupStatus:
+              td.fulfillmentMethod === 'self_pickup'
+                ? derivePickupStatusFromOrderStatus(td.orderStatus)
+                : undefined,
+            pickupShopId: td.fulfillmentMethod === 'self_pickup' ? shopId : undefined,
+            pickupAddress: td.pickupDetails?.address,
+            pickupDate: td.pickupDetails?.pickupDate,
+            pickupTimeSlot: td.pickupDetails?.pickupSlotLabel || td.pickupDetails?.preferredTime,
+            pickupInstructions: td.pickupDetails?.instructions,
             paymentMethod: td.paymentMethod || 'cod',
             paymentStatus: td.paymentStatus || 'pending',
             orderStatus: td.orderStatus || 'Pending',
@@ -1340,6 +1499,15 @@ function normalizeStoreSettings(data: Partial<StoreSettings>): StoreSettings {
     selfPickupDetails: {
       ...INITIAL_SETTINGS.selfPickupDetails,
       ...(data.selfPickupDetails || {}),
+      enabled: data.selfPickupDetails?.enabled === true,
+      preparationTime: data.selfPickupDetails?.preparationTime || INITIAL_SETTINGS.selfPickupDetails.preparationTime,
+      requireAdvancePayment: Boolean(data.selfPickupDetails?.requireAdvancePayment),
+      cashOnPickupEnabled:
+        data.selfPickupDetails?.requireAdvancePayment === true
+          ? false
+          : typeof data.selfPickupDetails?.cashOnPickupEnabled === 'boolean'
+          ? data.selfPickupDetails.cashOnPickupEnabled
+          : true,
       advanceDays: Math.max(1, Math.min(14, Number(data.selfPickupDetails?.advanceDays ?? INITIAL_SETTINGS.selfPickupDetails.advanceDays) || 5)),
       pickupSlots: normalizePickupSlots(data.selfPickupDetails?.pickupSlots),
     },
@@ -1408,6 +1576,15 @@ export async function updateShopSettings(shopId: string, settingsPatch: Partial<
 
   const normalizedPickup = {
     ...settings.selfPickupDetails,
+    enabled: settings.selfPickupDetails?.enabled === true,
+    preparationTime: settings.selfPickupDetails?.preparationTime?.trim() || INITIAL_SETTINGS.selfPickupDetails.preparationTime,
+    requireAdvancePayment: Boolean(settings.selfPickupDetails?.requireAdvancePayment),
+    cashOnPickupEnabled:
+      settings.selfPickupDetails?.requireAdvancePayment === true
+        ? false
+        : typeof settings.selfPickupDetails?.cashOnPickupEnabled === 'boolean'
+        ? settings.selfPickupDetails.cashOnPickupEnabled
+        : true,
     advanceDays: Math.max(1, Math.min(14, Number(settings.selfPickupDetails?.advanceDays) || 5)),
     pickupSlots: normalizePickupSlots(settings.selfPickupDetails?.pickupSlots),
   };

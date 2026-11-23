@@ -15,6 +15,36 @@
       },
       "required": ["id", "shopId", "date", "slotId", "bookedCount", "maxOrders"]
     },
+    "Order": {
+      "title": "Tenant Customer Order",
+      "description": "Multi-tenant storefront order supporting Home Delivery and Self Pickup / Store Pickup",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "shopId": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "userId": { "type": "string" },
+        "fulfillmentMethod": { "type": "string", "enum": ["delivery", "self_pickup"] },
+        "pickupStatus": {
+          "type": "string",
+          "enum": ["New Pickup Order", "Preparing", "Ready for Pickup", "Picked Up", "Cancelled"]
+        },
+        "pickupShopId": { "type": "string" },
+        "pickupAddress": { "type": "string" },
+        "pickupDate": { "type": "string" },
+        "pickupTimeSlot": { "type": "string" },
+        "pickupInstructions": { "type": "string" },
+        "pickupOtpHash": { "type": "string" },
+        "pickupSlotKey": { "type": "string" },
+        "pickupVerifiedAt": { "type": "string" },
+        "paymentMethod": { "type": "string", "enum": ["cod", "bank_transfer", "easypaisa", "jazzcash", "online"] },
+        "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed"] },
+        "orderStatus": { "type": "string" },
+        "total": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "orderNumber", "userId", "paymentMethod", "paymentStatus", "orderStatus", "total", "createdAt"]
+    },
     "PlatformAdmin": {
       "title": "Platform Super Admin",
       "description": "Authorized platform owner / super administrator record",
@@ -417,7 +447,8 @@
       "description": "Tenant discount coupons"
     },
     "/shops/{shopId}/orders/{orderId}": {
-      "description": "Tenant customer orders (with trackingTokenHash)"
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Tenant customer orders (with trackingTokenHash and optional Self-Pickup fields)"
     },
     "/shops/{shopId}/order_tracking/{trackKey}": {
       "description": "Non-PII tokenized public order tracking views for a tenant"

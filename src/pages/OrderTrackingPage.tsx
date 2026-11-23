@@ -1,22 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Truck, Search, CheckCircle2, AlertCircle, ExternalLink, Store, Clock, Phone, KeyRound, MapPin, Calendar } from 'lucide-react';
+import { useSearchParams, useLocation } from 'react-router-dom';
+import { Truck, Search, CheckCircle2, AlertCircle, ExternalLink, Store, Clock, Phone, KeyRound, MapPin, Calendar, ShieldCheck, Bell } from 'lucide-react';
 import { Order } from '../types';
-import { formatPKR, COURIERS, FALLBACK_PRODUCT_IMAGE, getPaymentMethodLabel, getFulfillmentLabel } from '../data/seedData';
+import {
+  formatPKR,
+  COURIERS,
+  FALLBACK_PRODUCT_IMAGE,
+  getPaymentMethodLabel,
+  getFulfillmentLabel,
+  derivePickupStatusFromOrderStatus,
+} from '../data/seedData';
 import { trackShopOrder } from '../services/tenantService';
 import { useTenant } from '../context/TenantContext';
 import { useAuth } from '../context/AuthContext';
+import { PickupQrPass } from '../components/common/PickupQrPass';
 
 export const OrderTrackingPage: React.FC = () => {
   const { shopId, settings } = useTenant();
   const { currentUser } = useAuth();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const stateOrder = (location.state as { order?: Order } | null)?.order || null;
   const initialOrder = searchParams.get('order') || '';
   const initialToken = searchParams.get('token') || '';
 
   const [inputVal, setInputVal] = useState(initialOrder);
   const [tokenVal, setTokenVal] = useState(initialToken);
-  const [order, setOrder] = useState<Order | null>(null);
+  const [order, setOrder] = useState<Order | null>(stateOrder);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,7 +47,12 @@ export const OrderTrackingPage: React.FC = () => {
     try {
       const found = await trackShopOrder(shopId, rawRef, rawToken);
       if (found) {
-        setOrder(found);
+        const preservedOtp =
+          !found.pickupOtp &&
+          stateOrder?.orderNumber?.toUpperCase() === found.orderNumber?.toUpperCase()
+            ? stateOrder.pickupOtp
+            : undefined;
+        setOrder(preservedOtp ? { ...found, pickupOtp: preservedOtp } : found);
       } else {
         setOrder(null);
         setError(
@@ -81,10 +96,9 @@ export const OrderTrackingPage: React.FC = () => {
         case 'Ready for Pickup':
           return 3;
         case 'Collected':
-          return 4;
         case 'Completed':
         case 'Delivered':
-          return 5;
+          return 4;
         default:
           return 0;
       }
@@ -107,12 +121,11 @@ export const OrderTrackingPage: React.FC = () => {
 
   const steps = isSelfPickup
     ? [
-        { title: 'Placed', desc: 'Order received' },
-        { title: 'Accepted', desc: 'Confirmed by store' },
+        { title: 'Order Placed', desc: 'Order received' },
+        { title: 'Confirmed', desc: 'Confirmed by store' },
         { title: 'Preparing', desc: 'Packing items' },
-        { title: 'Ready', desc: 'Ready at counter' },
-        { title: 'Collected', desc: 'OTP verified' },
-        { title: 'Completed', desc: 'Handover done' },
+        { title: 'Ready for Pickup', desc: 'Ready at counter' },
+        { title: 'Picked Up', desc: 'Code / QR verified' },
       ]
     : [
         { title: 'Order Placed', desc: 'Received & verified' },
@@ -136,10 +149,10 @@ export const OrderTrackingPage: React.FC = () => {
           <Truck className="w-8 h-8" />
         </div>
         <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-          Track Your Delivery
+          Track Your Pickup &amp; Delivery
         </h1>
         <p className="text-xs text-slate-500 max-w-md mx-auto">
-          Enter your {settings.siteName} Order Number (e.g. PK-123456) to check live dispatch & courier updates.
+          Enter your {settings.siteName} Order Number (e.g. PK-123456) to check live store pickup readiness &amp; courier updates.
         </p>
       </div>
 
@@ -216,12 +229,16 @@ export const OrderTrackingPage: React.FC = () => {
                 className={`px-3 py-1 rounded-md text-xs font-bold ${
                   isCancelled
                     ? 'bg-rose-100 text-rose-800'
-                    : order.orderStatus === 'Delivered'
+                    : order.orderStatus === 'Delivered' || order.orderStatus === 'Collected' || order.orderStatus === 'Completed'
                     ? 'bg-emerald-100 text-emerald-800'
+                    : order.orderStatus === 'Ready for Pickup'
+                    ? 'bg-sky-100 text-sky-800'
                     : 'bg-amber-100 text-amber-800'
                 }`}
               >
-                Status: {order.orderStatus}
+                {isSelfPickup
+                  ? `Pickup Status: ${order.pickupStatus || derivePickupStatusFromOrderStatus(order.orderStatus)}`
+                  : `Status: ${order.orderStatus}`}
               </span>
               <span className="text-xs font-extrabold text-slate-900 tabular-nums">
                 Amount: {formatPKR(order.total)}
@@ -236,7 +253,7 @@ export const OrderTrackingPage: React.FC = () => {
           ) : (
             <div className="space-y-6">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Delivery Progress
+                {isSelfPickup ? 'Pickup Progress' : 'Delivery Progress'}
               </h4>
               <div className="relative">
                 <div className="hidden sm:block absolute top-4 left-6 right-6 h-1 bg-slate-100 z-0">
@@ -247,7 +264,7 @@ export const OrderTrackingPage: React.FC = () => {
                 </div>
                 <div className="sm:hidden absolute top-4 bottom-4 left-4 w-0.5 bg-slate-100 z-0" />
 
-                <div className={`grid grid-cols-1 ${isSelfPickup ? 'sm:grid-cols-6' : 'sm:grid-cols-5'} gap-4 relative z-10`}>
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 relative z-10">
                   {steps.map((step, idx) => {
                     const isDone = idx <= currentStep;
                     return (
@@ -279,45 +296,85 @@ export const OrderTrackingPage: React.FC = () => {
           )}
 
           {isSelfPickup && order.pickupDetails ? (
-            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-2 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-bold text-emerald-900 flex items-center gap-1.5">
-                  <Store className="w-4 h-4 text-emerald-700" />
-                  Pickup Counter: {order.pickupDetails.locationName}
+            <div className="space-y-4">
+              {order.pickupOtp && !isCancelled && (
+                <PickupQrPass
+                  orderNumber={order.orderNumber}
+                  pickupOtp={order.pickupOtp}
+                  locationName={order.pickupDetails.locationName}
+                  pickupVerifiedAt={order.pickupVerifiedAt}
+                  pickupVerifiedBy={order.pickupVerifiedBy}
+                />
+              )}
+
+              {order.pickupVerifiedAt && (
+                <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2 font-semibold">
+                  <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>
+                    Pickup confirmed on <span className="tabular-nums">{new Date(order.pickupVerifiedAt).toLocaleString()}</span>
+                    {order.pickupVerifiedBy ? ` (${order.pickupVerifiedBy})` : ''}.
+                  </span>
                 </div>
-                {order.pickupDetails.mapUrl && (
-                  <a
-                    href={order.pickupDetails.mapUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-1.5 bg-[#065F46] text-white rounded-lg font-bold text-[11px] hover:bg-emerald-900 transition inline-flex items-center gap-1"
-                  >
-                    <MapPin className="w-3.5 h-3.5" /> Google Maps Directions <ExternalLink className="w-3 h-3" />
-                  </a>
+              )}
+
+              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-bold text-emerald-900 flex items-center gap-1.5">
+                    <Store className="w-4 h-4 text-emerald-700" />
+                    Pickup Counter: {order.pickupDetails.locationName}
+                  </div>
+                  {order.pickupDetails.mapUrl && (
+                    <a
+                      href={order.pickupDetails.mapUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 bg-[#065F46] text-white rounded-lg font-bold text-[11px] hover:bg-emerald-900 transition inline-flex items-center gap-1"
+                    >
+                      <MapPin className="w-3.5 h-3.5" /> Google Maps Directions <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
+                <p className="text-slate-700">{order.pickupDetails.address}</p>
+                {(order.pickupDetails.pickupDate || order.pickupDetails.preferredTime) && (
+                  <p className="text-[11px] font-semibold text-emerald-900 tabular-nums flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-emerald-700" />
+                    Scheduled:{' '}
+                    {order.pickupDetails.pickupDate
+                      ? `${order.pickupDetails.pickupDate} · ${order.pickupDetails.pickupSlotLabel || ''}`
+                      : order.pickupDetails.preferredTime}
+                  </p>
+                )}
+                {order.pickupDetails.preparationTime && (
+                  <p className="text-[11px] text-slate-600">
+                    Estimated Preparation Time: <strong className="text-slate-900">{order.pickupDetails.preparationTime}</strong>
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600 pt-1">
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-emerald-700" /> {order.pickupDetails.timings}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Phone className="w-3.5 h-3.5 text-emerald-700" /> {order.pickupDetails.contactPhone}
+                  </span>
+                </div>
+                {order.pickupDetails.instructions && (
+                  <p className="text-[11px] text-emerald-900 bg-white/80 p-2 rounded-lg border border-emerald-100">
+                    {order.pickupDetails.instructions}
+                  </p>
                 )}
               </div>
-              <p className="text-slate-700">{order.pickupDetails.address}</p>
-              {(order.pickupDetails.pickupDate || order.pickupDetails.preferredTime) && (
-                <p className="text-[11px] font-semibold text-emerald-900 tabular-nums flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-emerald-700" />
-                  Scheduled:{' '}
-                  {order.pickupDetails.pickupDate
-                    ? `${order.pickupDetails.pickupDate} · ${order.pickupDetails.pickupSlotLabel || ''}`
-                    : order.pickupDetails.preferredTime}
-                </p>
-              )}
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600 pt-1">
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5 text-emerald-700" /> {order.pickupDetails.timings}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Phone className="w-3.5 h-3.5 text-emerald-700" /> {order.pickupDetails.contactPhone}
-                </span>
-              </div>
-              {order.pickupDetails.instructions && (
-                <p className="text-[11px] text-emerald-900 bg-white/80 p-2 rounded-lg border border-emerald-100">
-                  {order.pickupDetails.instructions}
-                </p>
+
+              {order.customerNotifications && order.customerNotifications.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1.5 text-xs">
+                  <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                    <Bell className="w-3.5 h-3.5 text-[#065F46]" /> Store Pickup Notifications
+                  </p>
+                  {order.customerNotifications.slice(-3).reverse().map((notif) => (
+                    <p key={notif.id} className="text-[11px] text-slate-600">
+                      <strong className="text-slate-900">{notif.title}:</strong> {notif.message}
+                    </p>
+                  ))}
+                </div>
               )}
             </div>
           ) : (

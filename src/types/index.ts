@@ -419,6 +419,12 @@ export interface CartItem {
 export type PaymentMethod = 'cod' | 'bank_transfer' | 'easypaisa' | 'jazzcash' | 'online';
 export type PaymentStatus = 'pending' | 'paid' | 'failed';
 export type FulfillmentMethod = 'delivery' | 'self_pickup';
+export type PickupStatus =
+  | 'New Pickup Order'
+  | 'Preparing'
+  | 'Ready for Pickup'
+  | 'Picked Up'
+  | 'Cancelled';
 export type OrderStatus =
   | 'Pending'
   | 'Confirmed'
@@ -492,6 +498,7 @@ export interface OrderPickupDetails {
   timings: string;
   contactPhone: string;
   mapUrl?: string;
+  preparationTime?: string;
   pickupDate?: string;
   pickupSlotId?: string;
   pickupSlotLabel?: string;
@@ -514,6 +521,12 @@ export interface Order {
   total: number;
   couponCode?: string;
   fulfillmentMethod?: FulfillmentMethod;
+  pickupStatus?: PickupStatus;
+  pickupShopId?: string;
+  pickupAddress?: string;
+  pickupDate?: string;
+  pickupTimeSlot?: string;
+  pickupInstructions?: string;
   pickupDetails?: OrderPickupDetails;
   pickupOtp?: string;
   pickupOtpHash?: string;
@@ -598,6 +611,9 @@ export interface SelfPickupSettings {
   timings: string;
   contactPhone: string;
   mapUrl?: string;
+  preparationTime?: string;
+  requireAdvancePayment?: boolean;
+  cashOnPickupEnabled?: boolean;
   latitude?: number;
   longitude?: number;
   advanceDays?: number;

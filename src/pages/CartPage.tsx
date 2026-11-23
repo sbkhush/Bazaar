@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { useTenant } from '../context/TenantContext';
-import { formatPKR, FALLBACK_PRODUCT_IMAGE } from '../data/seedData';
+import { formatPKR, FALLBACK_PRODUCT_IMAGE, isSelfPickupEnabled } from '../data/seedData';
 import { useToast } from '../components/common/Toast';
 
 export const CartPage: React.FC = () => {
@@ -258,7 +258,7 @@ export const CartPage: React.FC = () => {
             </form>
           )}
 
-          {settings.selfPickupDetails?.enabled !== false && (
+          {isSelfPickupEnabled(settings) && (
             <div className="grid grid-cols-2 gap-2 text-xs">
               <button
                 type="button"

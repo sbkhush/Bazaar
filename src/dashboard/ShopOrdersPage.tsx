@@ -15,6 +15,7 @@ import {
   Clock,
   KeyRound,
   PackageCheck,
+  Bell,
 } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
@@ -22,6 +23,7 @@ import {
   updateShopOrderStatus,
   updateSelfPickupStatus,
   verifyAndCollectSelfPickupOrder,
+  notifySelfPickupCustomer,
 } from '../services/tenantService';
 import { Order, OrderStatus, PaymentStatus } from '../types';
 import {
@@ -29,6 +31,7 @@ import {
   formatPKR,
   getPaymentMethodLabel,
   getFulfillmentLabel,
+  derivePickupStatusFromOrderStatus,
 } from '../data/seedData';
 import { PrivateReceiptImage } from '../components/common/PrivateReceiptImage';
 import { downloadCsvFile } from '../utils/csvUtils';
@@ -191,9 +194,26 @@ export const ShopOrdersPage: React.FC = () => {
       setSelectedOrder(updated);
       setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
       setPickupOtpInput('');
-      setModalNotice('6-digit OTP verified, stock deducted cleanly, and order marked Collected.');
+      setModalNotice('Pickup code/QR verified, stock deducted, and order marked Picked Up (Collected).');
     } catch (err: any) {
-      setErrorMsg(err?.message || 'OTP verification failed.');
+      setErrorMsg(err?.message || 'Pickup code verification failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleNotifyCustomer = async () => {
+    if (!selectedOrder || isReadOnly || saving) return;
+    setSaving(true);
+    setErrorMsg(null);
+    setModalNotice(null);
+    try {
+      const updated = await notifySelfPickupCustomer(shopId, selectedOrder.id);
+      setSelectedOrder(updated);
+      setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+      setModalNotice('Customer notification logged with pickup readiness details.');
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not notify customer.');
     } finally {
       setSaving(false);
     }
@@ -347,7 +367,14 @@ export const ShopOrdersPage: React.FC = () => {
                         {o.paymentStatus}
                       </span>
                     </td>
-                    <td className="py-3 px-4 font-bold text-slate-800">{o.orderStatus}</td>
+                    <td className="py-3 px-4 font-bold text-slate-800">
+                      <span>{o.orderStatus}</span>
+                      {o.fulfillmentMethod === 'self_pickup' && (
+                        <span className="block text-[10px] font-semibold text-emerald-800 mt-0.5">
+                          {derivePickupStatusFromOrderStatus(o.orderStatus)}
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3 px-4 text-right font-extrabold tabular-nums">{formatPKR(o.total)}</td>
                     <td className="py-3 px-4 text-right">
                       <button
@@ -418,13 +445,29 @@ export const ShopOrdersPage: React.FC = () => {
                 )}
                 {selectedOrder.fulfillmentMethod === 'self_pickup' && selectedOrder.pickupDetails && (
                   <div className="mt-2 pt-2 border-t border-slate-200 space-y-1 text-[11px]">
-                    <p className="font-semibold text-emerald-900 flex items-center gap-1">
-                      <Store className="w-3.5 h-3.5" /> {selectedOrder.pickupDetails.locationName}
-                    </p>
-                    {selectedOrder.pickupDetails.pickupDate && (
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <p className="font-semibold text-emerald-900 flex items-center gap-1">
+                        <Store className="w-3.5 h-3.5" /> {selectedOrder.pickupDetails.locationName}
+                      </p>
+                      <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 font-bold text-[10px]">
+                        {derivePickupStatusFromOrderStatus(selectedOrder.orderStatus)}
+                      </span>
+                    </div>
+                    <p className="text-slate-600">{selectedOrder.pickupAddress || selectedOrder.pickupDetails.address}</p>
+                    {(selectedOrder.pickupDate || selectedOrder.pickupDetails.pickupDate) && (
                       <p className="text-slate-700 tabular-nums flex items-center gap-1">
                         <Calendar className="w-3 h-3 text-emerald-700" />
-                        {selectedOrder.pickupDetails.pickupDate} · {selectedOrder.pickupDetails.pickupSlotLabel || selectedOrder.pickupDetails.preferredTime}
+                        {selectedOrder.pickupDate || selectedOrder.pickupDetails.pickupDate} · {selectedOrder.pickupTimeSlot || selectedOrder.pickupDetails.pickupSlotLabel || selectedOrder.pickupDetails.preferredTime}
+                      </p>
+                    )}
+                    {selectedOrder.pickupDetails.preparationTime && (
+                      <p className="text-slate-600">
+                        Est. Prep Time: <strong className="text-slate-900">{selectedOrder.pickupDetails.preparationTime}</strong>
+                      </p>
+                    )}
+                    {(selectedOrder.pickupInstructions || selectedOrder.pickupDetails.instructions) && (
+                      <p className="text-slate-600 italic">
+                        {selectedOrder.pickupInstructions || selectedOrder.pickupDetails.instructions}
                       </p>
                     )}
                     {selectedOrder.pickupDetails.mapUrl && (
@@ -590,6 +633,14 @@ export const ShopOrdersPage: React.FC = () => {
                             Mark Completed
                           </button>
                         )}
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={handleNotifyCustomer}
+                          className="px-3.5 py-2.5 border border-slate-300 text-slate-800 hover:bg-slate-50 disabled:opacity-50 rounded-lg font-bold inline-flex items-center gap-1.5 whitespace-nowrap"
+                        >
+                          <Bell className="w-3.5 h-3.5 text-[#065F46]" /> Notify Customer
+                        </button>
                         {selectedOrder.paymentStatus !== 'paid' && (
                           <button
                             type="button"
@@ -614,7 +665,7 @@ export const ShopOrdersPage: React.FC = () => {
                     </div>
                   )}
 
-                {/* Counter OTP Verification Form when Ready for Pickup */}
+                {/* Counter OTP / QR Verification Form when Ready for Pickup */}
                 {selectedOrder.orderStatus === 'Ready for Pickup' && (
                   <form
                     onSubmit={handleVerifyPickupOtp}
@@ -622,7 +673,7 @@ export const ShopOrdersPage: React.FC = () => {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <label className="font-extrabold text-slate-900 flex items-center gap-1.5">
-                        <KeyRound className="w-4 h-4 text-[#065F46]" /> Counter 6-Digit Pickup OTP Verification
+                        <KeyRound className="w-4 h-4 text-[#065F46]" /> Counter Pickup Verification (6-Digit Code or Scanned QR)
                       </label>
                       <span className="text-[11px] text-slate-500">Deducts stock once upon verification</span>
                     </div>
@@ -630,20 +681,23 @@ export const ShopOrdersPage: React.FC = () => {
                     <div className="flex flex-col sm:flex-row gap-2.5">
                       <input
                         type="text"
-                        inputMode="numeric"
-                        maxLength={6}
+                        maxLength={80}
                         value={pickupOtpInput}
-                        onChange={(e) => setPickupOtpInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                        placeholder="Enter 6-digit OTP"
-                        className="flex-1 px-3 py-2.5 border border-slate-300 rounded-lg font-mono text-sm tracking-[0.25em] tabular-nums bg-white focus:ring-2 focus:ring-[#065F46] focus:outline-none"
+                        onChange={(e) => setPickupOtpInput(e.target.value)}
+                        placeholder="Enter 6-digit code or scan QR (SBKHUSH-PICKUP|...)"
+                        className="flex-1 px-3 py-2.5 border border-slate-300 rounded-lg font-mono text-xs sm:text-sm tabular-nums bg-white focus:ring-2 focus:ring-[#065F46] focus:outline-none"
                       />
                       <button
                         type="submit"
-                        disabled={saving || pickupOtpInput.length !== 6}
+                        disabled={
+                          saving ||
+                          (!/^\d{6}$/.test(pickupOtpInput.trim()) &&
+                            !pickupOtpInput.trim().startsWith('SBKHUSH-PICKUP|'))
+                        }
                         className="px-4 py-2.5 bg-[#065F46] hover:bg-emerald-900 disabled:opacity-50 text-white rounded-lg font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
                       >
                         {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                        Verify OTP &amp; Mark Collected
+                        Verify &amp; Confirm Picked Up
                       </button>
                     </div>
 

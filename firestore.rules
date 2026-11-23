@@ -133,6 +133,12 @@ service cloud.firestore {
         data.orderStatus == 'Pending' &&
         (!('fulfillmentMethod' in data) || data.fulfillmentMethod in ['delivery', 'self_pickup']) &&
         (!('pickupDetails' in data) || data.pickupDetails is map) &&
+        (!('pickupStatus' in data) || data.pickupStatus in ['New Pickup Order', 'Preparing', 'Ready for Pickup', 'Picked Up', 'Cancelled']) &&
+        (!('pickupShopId' in data) || (data.pickupShopId is string && data.pickupShopId.size() <= 128)) &&
+        (!('pickupAddress' in data) || (data.pickupAddress is string && data.pickupAddress.size() <= 500)) &&
+        (!('pickupDate' in data) || (data.pickupDate is string && data.pickupDate.size() <= 20)) &&
+        (!('pickupTimeSlot' in data) || (data.pickupTimeSlot is string && data.pickupTimeSlot.size() <= 120)) &&
+        (!('pickupInstructions' in data) || (data.pickupInstructions is string && data.pickupInstructions.size() <= 500)) &&
         (!('paymentProofImage' in data) || (data.paymentProofImage is string && data.paymentProofImage.size() <= 300000));
     }
 
@@ -532,7 +538,8 @@ service cloud.firestore {
             resource.data.userId == request.auth.uid &&
             existing().orderStatus == 'Pending' &&
             incoming().orderStatus == 'Cancelled' &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['orderStatus', 'updatedAt'])
+            (!('pickupStatus' in incoming()) || incoming().pickupStatus == 'Cancelled') &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['orderStatus', 'pickupStatus', 'updatedAt'])
           )
         );
         allow delete: if isValidId(orderId) && isShopAdmin(shopId);

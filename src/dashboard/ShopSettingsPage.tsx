@@ -72,6 +72,12 @@ export const ShopSettingsPage: React.FC = () => {
         },
         selfPickupDetails: {
           ...form.selfPickupDetails,
+          enabled: form.selfPickupDetails.enabled === true,
+          preparationTime: form.selfPickupDetails.preparationTime?.trim() || '30–45 mins',
+          requireAdvancePayment: Boolean(form.selfPickupDetails.requireAdvancePayment),
+          cashOnPickupEnabled: form.selfPickupDetails.requireAdvancePayment
+            ? false
+            : form.selfPickupDetails.cashOnPickupEnabled !== false,
           mapUrl: form.selfPickupDetails.mapUrl?.trim() || undefined,
           advanceDays: Math.max(1, Math.min(14, Number(form.selfPickupDetails.advanceDays) || 5)),
           pickupSlots: normalizePickupSlots(form.selfPickupDetails.pickupSlots),
@@ -402,19 +408,21 @@ export const ShopSettingsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Self-Pickup Service */}
+      {/* Order Fulfillment Settings */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
-            <h3 className="text-sm font-extrabold text-slate-900">Self-Pickup Outlet &amp; Time Slots</h3>
+            <h3 className="text-sm font-extrabold text-slate-900">
+              Order Fulfillment Settings (Self Pickup / Store Pickup)
+            </h3>
             <p className="text-[11px] text-slate-500">
-              Configure counter pickup details, Google Maps directions, and customer pickup time windows with per-slot capacity.
+              Disabled by default. Enable Store Pickup, set preparation time, pickup rules, payment rules, and time-slot capacity.
             </p>
           </div>
           <label className="flex items-center gap-2 font-bold cursor-pointer">
             <input
               type="checkbox"
-              checked={form.selfPickupDetails.enabled}
+              checked={form.selfPickupDetails.enabled === true}
               onChange={(e) =>
                 setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, enabled: e.target.checked } })
               }
@@ -484,9 +492,24 @@ export const ShopSettingsPage: React.FC = () => {
               className="w-full px-3 py-2 border border-slate-200 rounded-lg"
             />
           </div>
-          <div className="sm:col-span-2">
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Estimated Preparation Time</label>
+            <input
+              type="text"
+              value={form.selfPickupDetails.preparationTime || ''}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  selfPickupDetails: { ...form.selfPickupDetails, preparationTime: e.target.value },
+                })
+              }
+              placeholder="e.g. 30–45 mins"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+            />
+          </div>
+          <div>
             <label className="block font-semibold text-slate-700 mb-1 flex items-center gap-1">
-              <MapPin className="w-3.5 h-3.5 text-[#065F46]" /> Google Maps Location Link (Optional)
+              <MapPin className="w-3.5 h-3.5 text-[#065F46]" /> Google Maps Link (Optional)
             </label>
             <input
               type="url"
@@ -525,9 +548,65 @@ export const ShopSettingsPage: React.FC = () => {
               onChange={(e) =>
                 setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, instructions: e.target.value } })
               }
-              placeholder="e.g. Show your Order Number and 6-digit Pickup OTP at the counter."
+              placeholder="e.g. Show your Order Number and 6-digit Pickup Code or QR at the store counter."
               className="w-full px-3 py-2 border border-slate-200 rounded-lg"
             />
+          </div>
+          <div className="sm:col-span-2 lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50/70 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={form.selfPickupDetails.requireAdvancePayment === true}
+                onChange={(e) => {
+                  const reqAdv = e.target.checked;
+                  setForm({
+                    ...form,
+                    selfPickupDetails: {
+                      ...form.selfPickupDetails,
+                      requireAdvancePayment: reqAdv,
+                      cashOnPickupEnabled: reqAdv ? false : form.selfPickupDetails.cashOnPickupEnabled !== false,
+                    },
+                  });
+                }}
+              />
+              <div>
+                <span className="font-bold text-slate-900 block">Require Advance Payment for Self-Pickup</span>
+                <span className="text-[11px] text-slate-500">
+                  Only allow EasyPaisa, JazzCash, or Bank Transfer on pickup orders (disables Cash on Pickup).
+                </span>
+              </div>
+            </label>
+            <label
+              className={`flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50/70 ${
+                form.selfPickupDetails.requireAdvancePayment ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                disabled={form.selfPickupDetails.requireAdvancePayment === true}
+                checked={
+                  !form.selfPickupDetails.requireAdvancePayment &&
+                  form.selfPickupDetails.cashOnPickupEnabled !== false
+                }
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    selfPickupDetails: {
+                      ...form.selfPickupDetails,
+                      cashOnPickupEnabled: e.target.checked,
+                    },
+                  })
+                }
+              />
+              <div>
+                <span className="font-bold text-slate-900 block">Enable Cash on Pickup (Pay at Counter)</span>
+                <span className="text-[11px] text-slate-500">
+                  Allow customers to pay cash directly at the store counter when collecting their order.
+                </span>
+              </div>
+            </label>
           </div>
         </div>
 

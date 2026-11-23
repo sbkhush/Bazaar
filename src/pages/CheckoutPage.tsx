@@ -33,6 +33,8 @@ import {
   isValidPakistaniPhone,
   FALLBACK_PRODUCT_IMAGE,
   buildPickupDateOptions,
+  isSelfPickupEnabled,
+  isCashOnPickupAllowed,
 } from '../data/seedData';
 import { PaymentMethod, PickupSlotAvailability } from '../types';
 import { useToast } from '../components/common/Toast';
@@ -91,8 +93,10 @@ export const CheckoutPage: React.FC = () => {
     }
   }, [pickupDateOptions, pickupDate]);
 
+  const selfPickupEnabled = isSelfPickupEnabled(settings);
+
   useEffect(() => {
-    if (fulfillmentMethod !== 'self_pickup' || settings.selfPickupDetails?.enabled === false || !pickupDate) {
+    if (fulfillmentMethod !== 'self_pickup' || !selfPickupEnabled || !pickupDate) {
       return;
     }
     let active = true;
@@ -119,13 +123,17 @@ export const CheckoutPage: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [fulfillmentMethod, shopId, pickupDate, settings.selfPickupDetails?.enabled, settings.selfPickupDetails?.pickupSlots]);
+  }, [fulfillmentMethod, shopId, pickupDate, selfPickupEnabled, settings.selfPickupDetails?.pickupSlots]);
 
   const codEnabled = settings.codEnabled !== false;
+  const allowCashPayment =
+    fulfillmentMethod === 'self_pickup' && selfPickupEnabled
+      ? isCashOnPickupAllowed(settings)
+      : codEnabled;
   const easypaisaEnabled = settings.easypaisaDetails?.enabled !== false;
   const jazzcashEnabled = settings.jazzcashDetails?.enabled !== false;
   const bankEnabled = settings.bankDetails?.enabled !== false;
-  const hasEnabledPaymentMethod = codEnabled || easypaisaEnabled || jazzcashEnabled || bankEnabled;
+  const hasEnabledPaymentMethod = allowCashPayment || easypaisaEnabled || jazzcashEnabled || bankEnabled;
 
   // Payment Selection
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod');
@@ -148,7 +156,7 @@ export const CheckoutPage: React.FC = () => {
 
   useEffect(() => {
     const enabledMap: Record<'cod' | 'easypaisa' | 'jazzcash' | 'bank_transfer', boolean> = {
-      cod: codEnabled,
+      cod: allowCashPayment,
       easypaisa: easypaisaEnabled,
       jazzcash: jazzcashEnabled,
       bank_transfer: bankEnabled,
@@ -159,7 +167,7 @@ export const CheckoutPage: React.FC = () => {
       );
       if (firstAvailable) setPaymentMethod(firstAvailable);
     }
-  }, [codEnabled, easypaisaEnabled, jazzcashEnabled, bankEnabled, paymentMethod]);
+  }, [allowCashPayment, easypaisaEnabled, jazzcashEnabled, bankEnabled, paymentMethod]);
 
   useEffect(() => {
     return () => {
@@ -349,11 +357,16 @@ export const CheckoutPage: React.FC = () => {
       return;
     }
 
+    if (paymentMethod === 'cod' && !allowCashPayment) {
+      setErrorMessage('Advance payment is required for Self-Pickup orders at this store. Please select EasyPaisa, JazzCash, or Bank Transfer.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
       const pickup = settings.selfPickupDetails;
-      const isPickup = fulfillmentMethod === 'self_pickup' && pickup?.enabled !== false;
+      const isPickup = fulfillmentMethod === 'self_pickup' && selfPickupEnabled;
       const selectedSlot = pickupSlots.find((s) => s.id === selectedSlotId);
       if (isPickup) {
         if (!pickupDate) {
@@ -409,6 +422,7 @@ export const CheckoutPage: React.FC = () => {
               timings: pickup.timings,
               contactPhone: pickup.contactPhone,
               mapUrl: pickup.mapUrl,
+              preparationTime: pickup.preparationTime || '30–45 mins',
               pickupDate,
               pickupSlotId: selectedSlot?.id,
               pickupSlotLabel: selectedSlot?.label,
@@ -528,7 +542,7 @@ export const CheckoutPage: React.FC = () => {
                     1
                   </div>
                   <h3 className="font-bold text-base text-slate-900">
-                    Delivery / Self-Pickup & Customer Info
+                    Choose Your Order Fulfillment Method
                   </h3>
                 </div>
 
@@ -562,7 +576,7 @@ export const CheckoutPage: React.FC = () => {
               </div>
 
               {/* Fulfillment Selector: Home Delivery vs Self-Pickup */}
-              {settings.selfPickupDetails?.enabled !== false && (
+              {selfPickupEnabled && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
                     type="button"
@@ -620,14 +634,14 @@ export const CheckoutPage: React.FC = () => {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-bold text-xs sm:text-sm text-slate-900">
-                          Self-Pickup Service
+                          Self Pickup / Store Pickup
                         </span>
                         <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
                           FREE (Rs. 0)
                         </span>
                       </div>
                       <span className="text-[11px] text-slate-500 block mt-0.5">
-                        Collect directly from {settings.selfPickupDetails.city} outlet
+                        Collect from {settings.selfPickupDetails.city} outlet · Ready in {settings.selfPickupDetails.preparationTime || '30–45 mins'}
                       </span>
                     </div>
                   </button>
@@ -635,7 +649,7 @@ export const CheckoutPage: React.FC = () => {
               )}
 
               {/* Store Self-Pickup Outlet Details Banner */}
-              {fulfillmentMethod === 'self_pickup' && settings.selfPickupDetails?.enabled !== false && (
+              {fulfillmentMethod === 'self_pickup' && selfPickupEnabled && (
                 <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-2.5 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-bold text-emerald-900 flex items-center gap-1.5">
@@ -676,11 +690,14 @@ export const CheckoutPage: React.FC = () => {
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
                     <span className="flex items-center gap-1">
                       <Clock className="w-3.5 h-3.5 text-emerald-700" />
-                      {settings.selfPickupDetails.timings}
+                      Hours: {settings.selfPickupDetails.timings}
                     </span>
                     <span className="flex items-center gap-1">
                       <Phone className="w-3.5 h-3.5 text-emerald-700" />
                       {settings.selfPickupDetails.contactPhone}
+                    </span>
+                    <span className="font-semibold text-emerald-800">
+                      Est. Preparation Time: {settings.selfPickupDetails.preparationTime || '30–45 mins'}
                     </span>
                   </div>
                   {settings.selfPickupDetails.instructions && (
@@ -725,7 +742,9 @@ export const CheckoutPage: React.FC = () => {
                     />
                   </div>
                   <span className="text-[10px] text-slate-400 mt-1 block">
-                    Used by TCS / Leopards courier rider prior to delivery.
+                    {fulfillmentMethod === 'self_pickup'
+                      ? 'Used by store counter staff to notify you when pickup is ready.'
+                      : 'Used by TCS / Leopards courier rider prior to delivery.'}
                   </span>
                 </div>
 
@@ -900,9 +919,20 @@ export const CheckoutPage: React.FC = () => {
                 <h3 className="font-bold text-base text-slate-900">Payment Option</h3>
               </div>
 
+              {fulfillmentMethod === 'self_pickup' && selfPickupEnabled && !allowCashPayment && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    {settings.selfPickupDetails?.requireAdvancePayment
+                      ? 'This store requires advance payment for Self-Pickup orders. Please pay via EasyPaisa, JazzCash, or Bank Transfer.'
+                      : 'Cash on Pickup is disabled for Self-Pickup at this store. Please pay via EasyPaisa, JazzCash, or Bank Transfer.'}
+                  </span>
+                </div>
+              )}
+
               <div className="space-y-3">
-                {/* Option 1: Cash on Delivery */}
-                {codEnabled && (
+                {/* Option 1: Cash on Delivery / Cash on Pickup */}
+                {allowCashPayment && (
                   <label
                     className={`block p-3.5 sm:p-4 rounded-2xl border-2 cursor-pointer transition ${
                       paymentMethod === 'cod'
@@ -923,7 +953,7 @@ export const CheckoutPage: React.FC = () => {
                         <div>
                           <span className="font-bold text-sm text-slate-900 block">
                             {fulfillmentMethod === 'self_pickup'
-                              ? 'Pay at Pickup Counter (Cash)'
+                              ? 'Cash on Pickup (Pay at Counter)'
                               : 'Cash on Delivery (COD)'}
                           </span>
                           <span className="text-xs text-slate-500">
@@ -1322,7 +1352,7 @@ export const CheckoutPage: React.FC = () => {
             </div>
 
             {/* Pre-Submit Self-Pickup Summary */}
-            {fulfillmentMethod === 'self_pickup' && settings.selfPickupDetails?.enabled !== false && (
+            {fulfillmentMethod === 'self_pickup' && selfPickupEnabled && (
               <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs space-y-1">
                 <div className="font-bold text-emerald-900 flex items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5">

@@ -27,6 +27,13 @@ import {
   restQueryWhereEqual,
   restSetDoc,
 } from './src/utils/firestoreRestServer';
+import {
+  isSelfPickupEnabled,
+  isCashOnPickupAllowed,
+  derivePickupStatusFromOrderStatus,
+  validatePickupDateInWindow,
+  getDefaultPickupSlots,
+} from './src/data/seedData';
 
 dotenv.config();
 setLogLevel('error');
@@ -557,8 +564,22 @@ Format cleanly in markdown with:
       if (!['cod', 'easypaisa', 'jazzcash', 'bank_transfer'].includes(resolvedPaymentMethod)) {
         return res.status(400).json({ error: 'Unsupported payment method selected.' });
       }
-      if (resolvedPaymentMethod === 'cod' && pubSettings.codEnabled === false) {
-        return res.status(400).json({ error: 'Cash on Delivery is disabled for this store.' });
+
+      const resolvedFulfillment = fulfillmentMethod === 'self_pickup' ? 'self_pickup' : 'delivery';
+      if (resolvedFulfillment === 'self_pickup' && !isSelfPickupEnabled(pubSettings)) {
+        return res.status(400).json({ error: 'Self-Pickup is currently disabled for this store.' });
+      }
+
+      if (resolvedPaymentMethod === 'cod') {
+        if (resolvedFulfillment === 'self_pickup') {
+          if (!isCashOnPickupAllowed(pubSettings)) {
+            return res.status(400).json({
+              error: 'Advance payment (EasyPaisa, JazzCash, or Bank Transfer) is required for Self-Pickup orders at this store.',
+            });
+          }
+        } else if (pubSettings.codEnabled === false) {
+          return res.status(400).json({ error: 'Cash on Delivery is disabled for this store.' });
+        }
       }
       if (resolvedPaymentMethod === 'easypaisa' && pubSettings.easypaisaDetails?.enabled === false) {
         return res.status(400).json({ error: 'EasyPaisa is disabled for this store.' });
@@ -568,11 +589,6 @@ Format cleanly in markdown with:
       }
       if (resolvedPaymentMethod === 'bank_transfer' && pubSettings.bankDetails?.enabled === false) {
         return res.status(400).json({ error: 'Bank Transfer is disabled for this store.' });
-      }
-
-      const resolvedFulfillment = fulfillmentMethod === 'self_pickup' ? 'self_pickup' : 'delivery';
-      if (resolvedFulfillment === 'self_pickup' && pubSettings.selfPickupDetails?.enabled === false) {
-        return res.status(400).json({ error: 'Self-Pickup is currently disabled for this store.' });
       }
 
       // Recompute authoritative line-item prices & validate product existence/stock from Firestore
@@ -669,29 +685,48 @@ Format cleanly in markdown with:
       let slotDate: string | undefined;
       let slotId: string | undefined;
       let slotMaxOrders = 10;
+      let authoritativePickupDetails: any = undefined;
 
       if (resolvedFulfillment === 'self_pickup') {
         pickupOtp = String(100000 + crypto.randomInt(0, 900000));
         pickupOtpHash = crypto.createHash('sha256').update(`OTP:${orderNumber}:${pickupOtp}`).digest('hex');
 
-        if (pickupDetails?.pickupDate && pickupDetails?.pickupSlotId) {
-          slotDate = String(pickupDetails.pickupDate).replace(/[^0-9-]/g, '').slice(0, 10);
-          slotId = String(pickupDetails.pickupSlotId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(slotDate) || !slotId) {
-            return res.status(400).json({ error: 'Invalid pickup date or slot selection.' });
-          }
-          pickupSlotKey = `${slotDate}__${slotId}`;
-          const configuredSlots = Array.isArray(pubSettings.selfPickupDetails?.pickupSlots)
-            ? pubSettings.selfPickupDetails.pickupSlots
-            : [];
-          if (configuredSlots.length > 0) {
-            const matchSlot = configuredSlots.find((s: any) => String(s?.id) === slotId);
-            if (!matchSlot || matchSlot.isActive === false) {
-              return res.status(400).json({ error: 'Selected pickup slot is not active.' });
-            }
-            slotMaxOrders = Math.max(1, Math.min(500, Math.floor(Number(matchSlot.maxOrdersPerSlot) || 10)));
-          }
+        slotDate = String(pickupDetails?.pickupDate || '').replace(/[^0-9-]/g, '').slice(0, 10);
+        slotId = String(pickupDetails?.pickupSlotId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+        const advanceDays = Number(pubSettings.selfPickupDetails?.advanceDays ?? 5) || 5;
+        if (!validatePickupDateInWindow(slotDate, advanceDays)) {
+          return res.status(400).json({ error: 'Invalid pickup date or date outside store booking window.' });
         }
+        if (!slotId) {
+          return res.status(400).json({ error: 'A valid pickup time slot selection is required.' });
+        }
+
+        pickupSlotKey = `${slotDate}__${slotId}`;
+        const rawSlots =
+          Array.isArray(pubSettings.selfPickupDetails?.pickupSlots) && pubSettings.selfPickupDetails.pickupSlots.length > 0
+            ? pubSettings.selfPickupDetails.pickupSlots
+            : getDefaultPickupSlots();
+        const matchSlot = rawSlots.find((s: any) => String(s?.id) === slotId);
+        if (!matchSlot || matchSlot.isActive === false) {
+          return res.status(400).json({ error: 'Selected pickup slot is not active or does not exist.' });
+        }
+        slotMaxOrders = Math.max(1, Math.min(500, Math.floor(Number(matchSlot.maxOrdersPerSlot) || 10)));
+
+        const sp = pubSettings.selfPickupDetails || {};
+        authoritativePickupDetails = stripUndefined({
+          locationName: sp.title || pickupDetails?.locationName || 'Store Counter',
+          address: sp.address || pickupDetails?.address || '',
+          city: sp.city || pickupDetails?.city || pubSettings.city || '',
+          timings: sp.timings || pickupDetails?.timings || '',
+          contactPhone: sp.contactPhone || pickupDetails?.contactPhone || pubSettings.contactPhone || '',
+          mapUrl: sp.mapUrl || pickupDetails?.mapUrl,
+          preparationTime: sp.preparationTime || pickupDetails?.preparationTime || '30–45 mins',
+          pickupDate: slotDate,
+          pickupSlotId: String(matchSlot.id),
+          pickupSlotLabel: String(matchSlot.label),
+          preferredTime: `${slotDate} · ${String(matchSlot.label)}`,
+          instructions: sp.instructions || pickupDetails?.instructions,
+        });
       }
 
       const initialPickupHistory = resolvedFulfillment === 'self_pickup'
@@ -699,8 +734,8 @@ Format cleanly in markdown with:
             {
               status: 'Pending',
               timestamp: now,
-              note: pickupDetails?.pickupSlotLabel
-                ? `Self-Pickup scheduled for ${pickupDetails.pickupDate} (${pickupDetails.pickupSlotLabel})`
+              note: authoritativePickupDetails?.pickupSlotLabel
+                ? `Self-Pickup scheduled for ${authoritativePickupDetails.pickupDate} (${authoritativePickupDetails.pickupSlotLabel})`
                 : 'Self-Pickup order placed',
               actor: customer.name.trim(),
             },
@@ -712,7 +747,7 @@ Format cleanly in markdown with:
             {
               id: `cnot_${Date.now()}`,
               title: `Pickup Order ${orderNumber} Received`,
-              message: `Present your 6-digit Pickup OTP at ${pickupDetails?.locationName || 'the store counter'} when collecting your order.`,
+              message: `Present your 6-digit Pickup Code & QR Pass at ${authoritativePickupDetails?.locationName || 'the store counter'} when collecting your order.`,
               status: 'Pending',
               createdAt: now,
               channel: 'in_app',
@@ -741,7 +776,13 @@ Format cleanly in markdown with:
         total: authoritativeTotal,
         couponCode: cleanCouponCode,
         fulfillmentMethod: resolvedFulfillment,
-        pickupDetails: resolvedFulfillment === 'self_pickup' ? pickupDetails : undefined,
+        pickupDetails: resolvedFulfillment === 'self_pickup' ? authoritativePickupDetails : undefined,
+        pickupStatus: resolvedFulfillment === 'self_pickup' ? 'New Pickup Order' : undefined,
+        pickupShopId: resolvedFulfillment === 'self_pickup' ? shopId : undefined,
+        pickupAddress: resolvedFulfillment === 'self_pickup' ? authoritativePickupDetails?.address : undefined,
+        pickupDate: resolvedFulfillment === 'self_pickup' ? slotDate : undefined,
+        pickupTimeSlot: resolvedFulfillment === 'self_pickup' ? authoritativePickupDetails?.pickupSlotLabel : undefined,
+        pickupInstructions: resolvedFulfillment === 'self_pickup' ? authoritativePickupDetails?.instructions : undefined,
         pickupOtp,
         pickupOtpHash,
         pickupSlotKey,
@@ -775,6 +816,7 @@ Format cleanly in markdown with:
               timings: newOrder.pickupDetails.timings,
               contactPhone: newOrder.pickupDetails.contactPhone,
               mapUrl: newOrder.pickupDetails.mapUrl,
+              preparationTime: newOrder.pickupDetails.preparationTime,
               pickupDate: newOrder.pickupDetails.pickupDate,
               pickupSlotId: newOrder.pickupDetails.pickupSlotId,
               pickupSlotLabel: newOrder.pickupDetails.pickupSlotLabel,
@@ -887,9 +929,10 @@ Format cleanly in markdown with:
       }
       const pubSnap = await getDoc(doc(db, 'shops', shopId, 'settings', 'public'));
       const pubSettings = pubSnap.exists() ? pubSnap.data() : {};
-      const rawSlots = Array.isArray(pubSettings.selfPickupDetails?.pickupSlots)
-        ? pubSettings.selfPickupDetails.pickupSlots
-        : [];
+      const rawSlots =
+        Array.isArray(pubSettings.selfPickupDetails?.pickupSlots) && pubSettings.selfPickupDetails.pickupSlots.length > 0
+          ? pubSettings.selfPickupDetails.pickupSlots
+          : getDefaultPickupSlots();
       const activeSlots = rawSlots.filter((s: any) => s && s.isActive !== false);
       const slotSnaps = await Promise.all(
         activeSlots.map((slot: any) =>
@@ -913,7 +956,7 @@ Format cleanly in markdown with:
           isFull: remaining <= 0,
         };
       });
-      return res.json({ shopId, date, slots });
+      return res.json({ shopId, date, enabled: isSelfPickupEnabled(pubSettings), slots });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'Failed to load pickup slots.' });
     }
@@ -955,6 +998,12 @@ Format cleanly in markdown with:
         orderStatus: td.orderStatus,
         fulfillmentMethod: td.fulfillmentMethod || 'delivery',
         pickupDetails: td.pickupDetails,
+        pickupStatus: td.fulfillmentMethod === 'self_pickup' ? derivePickupStatusFromOrderStatus(td.orderStatus) : undefined,
+        pickupShopId: td.fulfillmentMethod === 'self_pickup' ? shopId : undefined,
+        pickupAddress: td.pickupDetails?.address,
+        pickupDate: td.pickupDetails?.pickupDate,
+        pickupTimeSlot: td.pickupDetails?.pickupSlotLabel || td.pickupDetails?.preferredTime,
+        pickupInstructions: td.pickupDetails?.instructions,
         paymentMethod: td.paymentMethod,
         paymentStatus: td.paymentStatus,
         courierName: td.courierName,

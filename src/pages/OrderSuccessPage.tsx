@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useLocation, useSearchParams, Link } from 'react-router-dom';
 import confetti from 'canvas-confetti';
-import { CheckCircle2, Truck, Printer, ArrowRight, Store, Image as ImageIcon, Copy, Check, KeyRound, MapPin, Calendar, Clock, ShieldCheck, Bell } from 'lucide-react';
+import { CheckCircle2, Truck, Printer, ArrowRight, Store, Image as ImageIcon, Copy, Check, KeyRound, MapPin, Calendar, Clock, Bell, Phone } from 'lucide-react';
 import { getDoc, doc } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { trackShopOrder } from '../services/tenantService';
@@ -10,9 +10,11 @@ import {
   formatPKR,
   getPaymentMethodLabel,
   getFulfillmentLabel,
+  derivePickupStatusFromOrderStatus,
   FALLBACK_PRODUCT_IMAGE,
 } from '../data/seedData';
 import { useTenant } from '../context/TenantContext';
+import { PickupQrPass } from '../components/common/PickupQrPass';
 
 export const OrderSuccessPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -21,7 +23,6 @@ export const OrderSuccessPage: React.FC = () => {
   const { shopId, storeBasePath } = useTenant();
   const [order, setOrder] = useState<Order | null>(location.state?.order || null);
   const [copiedToken, setCopiedToken] = useState(false);
-  const [copiedOtp, setCopiedOtp] = useState(false);
 
   const qOrder = searchParams.get('order') || '';
   const qToken = searchParams.get('token') || '';
@@ -132,29 +133,14 @@ export const OrderSuccessPage: React.FC = () => {
           </div>
         )}
 
-        {order?.fulfillmentMethod === 'self_pickup' && order?.pickupOtp && (
-          <div className="p-4 rounded-2xl bg-slate-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="space-y-1">
-              <p className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4" /> Self-Pickup Counter Pass (6-Digit OTP)
-              </p>
-              <p className="text-xs text-slate-300">
-                Present this 6-digit verification code at <strong className="text-white">{order.pickupDetails?.locationName || 'the store counter'}</strong> when collecting your parcel.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                navigator.clipboard.writeText(order.pickupOtp || '');
-                setCopiedOtp(true);
-                setTimeout(() => setCopiedOtp(false), 2000);
-              }}
-              className="px-4 py-2.5 bg-white text-slate-900 rounded-xl font-mono text-xl font-black tracking-[0.2em] tabular-nums inline-flex items-center gap-2 self-start sm:self-auto shrink-0 hover:bg-emerald-50 transition"
-            >
-              <span>{order.pickupOtp}</span>
-              {copiedOtp ? <Check className="w-4 h-4 text-emerald-700" /> : <Copy className="w-4 h-4 text-slate-500" />}
-            </button>
-          </div>
+        {order?.fulfillmentMethod === 'self_pickup' && order?.pickupOtp && order.orderStatus !== 'Cancelled' && (
+          <PickupQrPass
+            orderNumber={order.orderNumber}
+            pickupOtp={order.pickupOtp}
+            locationName={order.pickupDetails?.locationName}
+            pickupVerifiedAt={order.pickupVerifiedAt}
+            pickupVerifiedBy={order.pickupVerifiedBy}
+          />
         )}
 
         {order ? (
@@ -179,14 +165,31 @@ export const OrderSuccessPage: React.FC = () => {
                 </div>
                 {order.fulfillmentMethod === 'self_pickup' && order.pickupDetails ? (
                   <div className="space-y-1">
-                    <p className="text-slate-900 font-semibold flex items-center gap-1">
-                      <Store className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                      {order.pickupDetails.locationName}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="text-slate-900 font-semibold flex items-center gap-1">
+                        <Store className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                        {order.pickupDetails.locationName}
+                      </p>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        {order.pickupStatus || derivePickupStatusFromOrderStatus(order.orderStatus)}
+                      </span>
+                    </div>
                     <p>{order.pickupDetails.address}</p>
-                    <p className="text-[11px] text-slate-500 flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-emerald-700" /> {order.pickupDetails.timings}
+                    <p className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                      <span className="inline-flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-emerald-700" /> {order.pickupDetails.timings}
+                      </span>
+                      {order.pickupDetails.contactPhone && (
+                        <span className="inline-flex items-center gap-1">
+                          <Phone className="w-3 h-3 text-emerald-700" /> {order.pickupDetails.contactPhone}
+                        </span>
+                      )}
                     </p>
+                    {order.pickupDetails.preparationTime && (
+                      <p className="text-[11px] text-slate-600">
+                        Estimated Preparation Time: <strong className="text-slate-900">{order.pickupDetails.preparationTime}</strong>
+                      </p>
+                    )}
                     {(order.pickupDetails.pickupDate || order.pickupDetails.preferredTime) && (
                       <p className="text-[11px] text-emerald-800 font-semibold tabular-nums flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
@@ -336,6 +339,7 @@ export const OrderSuccessPage: React.FC = () => {
       <div className="flex flex-col sm:flex-row gap-3 print:hidden">
         <Link
           to={`${storeBasePath}/tracking?order=${order?.orderNumber || ''}${order?.trackingToken ? `&token=${encodeURIComponent(order.trackingToken)}` : ''}`}
+          state={order ? { order } : undefined}
           className="flex-1 py-3 px-4 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition shadow-md"
         >
           {order?.fulfillmentMethod === 'self_pickup' ? (

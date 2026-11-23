@@ -6,6 +6,8 @@ import {
   Coupon,
   PaymentMethod,
   FulfillmentMethod,
+  OrderStatus,
+  PickupStatus,
   SubscriptionPlan,
   PlatformSettings,
   StaffPermission,
@@ -228,7 +230,83 @@ export function getPaymentMethodLabel(
 }
 
 export function getFulfillmentLabel(method?: FulfillmentMethod | string): string {
-  return method === 'self_pickup' ? 'Self-Pickup (Store Outlet)' : 'Home Delivery (Courier)';
+  return method === 'self_pickup' ? 'Self-Pickup / Store Pickup' : 'Home Delivery (Courier)';
+}
+
+export function isSelfPickupEnabled(settings?: Partial<StoreSettings> | null): boolean {
+  return Boolean(settings?.selfPickupDetails?.enabled === true);
+}
+
+export function isCashOnPickupAllowed(settings?: Partial<StoreSettings> | null): boolean {
+  const pickup = settings?.selfPickupDetails;
+  if (pickup?.requireAdvancePayment === true) return false;
+  if (typeof pickup?.cashOnPickupEnabled === 'boolean') {
+    return pickup.cashOnPickupEnabled;
+  }
+  return settings?.codEnabled !== false;
+}
+
+export function derivePickupStatusFromOrderStatus(orderStatus?: OrderStatus | string): PickupStatus {
+  switch (orderStatus) {
+    case 'Cancelled':
+    case 'Returned':
+    case 'Refunded':
+      return 'Cancelled';
+    case 'Collected':
+    case 'Completed':
+    case 'Delivered':
+      return 'Picked Up';
+    case 'Ready for Pickup':
+      return 'Ready for Pickup';
+    case 'Preparing':
+    case 'Processing':
+      return 'Preparing';
+    case 'Pending':
+    case 'Confirmed':
+    case 'Accepted':
+    default:
+      return 'New Pickup Order';
+  }
+}
+
+export function buildPickupQrPayload(orderNumber: string, pickupOtp: string): string {
+  const cleanOrd = String(orderNumber || '').trim().toUpperCase();
+  const cleanOtp = String(pickupOtp || '').replace(/\D/g, '').slice(0, 6);
+  return `SBKHUSH-PICKUP|${cleanOrd}|${cleanOtp}`;
+}
+
+export function parsePickupVerificationInput(
+  rawInput: string,
+  expectedOrderNumber?: string
+): { otp: string; orderNumber?: string } {
+  const trimmed = String(rawInput || '').trim();
+  if (trimmed.startsWith('SBKHUSH-PICKUP|')) {
+    const parts = trimmed.split('|');
+    const scannedOrder = String(parts[1] || '').trim().toUpperCase();
+    const scannedOtp = String(parts[2] || '').replace(/\D/g, '');
+    if (
+      expectedOrderNumber &&
+      scannedOrder &&
+      scannedOrder !== expectedOrderNumber.trim().toUpperCase()
+    ) {
+      throw new Error(
+        `Scanned QR belongs to order ${scannedOrder}, not ${expectedOrderNumber}.`
+      );
+    }
+    return { otp: scannedOtp, orderNumber: scannedOrder || undefined };
+  }
+  return { otp: trimmed.replace(/\D/g, '') };
+}
+
+export function validatePickupDateInWindow(
+  pickupDate: string,
+  advanceDays = 5,
+  referenceDate: Date = new Date()
+): boolean {
+  const clean = String(pickupDate || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) return false;
+  const options = buildPickupDateOptions(advanceDays, referenceDate);
+  return options.some((opt) => opt.date === clean);
 }
 
 export function getDefaultPickupSlots(): PickupSlotConfig[] {
@@ -506,9 +584,12 @@ export const INITIAL_SETTINGS: StoreSettings = {
     timings: 'Mon – Sat: 11:00 AM – 9:00 PM',
     contactPhone: '',
     mapUrl: '',
+    preparationTime: '30–45 mins',
+    requireAdvancePayment: false,
+    cashOnPickupEnabled: true,
     advanceDays: 5,
     pickupSlots: getDefaultPickupSlots(),
-    instructions: 'Bring your Order Number, registered mobile number, and 6-digit Pickup OTP when collecting your parcel.',
+    instructions: 'Bring your Order Number, registered mobile number, and 6-digit Pickup Verification Code / QR Pass when collecting your parcel.',
   },
   socialLinks: {},
 };

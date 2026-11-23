@@ -15,9 +15,8 @@ import {
   Save,
   Store,
   Clock,
-  Copy,
-  Check,
   Bell,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useWishlist } from '../context/WishlistContext';
@@ -34,9 +33,11 @@ import {
   PAKISTAN_CITIES,
   FALLBACK_PRODUCT_IMAGE,
   getPaymentMethodLabel,
+  derivePickupStatusFromOrderStatus,
 } from '../data/seedData';
 import { useToast } from '../components/common/Toast';
 import { AuthModal } from '../components/common/AuthModal';
+import { PickupQrPass } from '../components/common/PickupQrPass';
 
 export const AccountPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -65,7 +66,6 @@ export const AccountPage: React.FC = () => {
   const [addrPostal, setAddrPostal] = useState('');
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
   const [cancellingOrder, setCancellingOrder] = useState(false);
-  const [copiedOtpId, setCopiedOtpId] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveTab(searchParams.get('tab') || 'orders');
@@ -105,9 +105,19 @@ export const AccountPage: React.FC = () => {
     if (!cancelTarget) return;
     setCancellingOrder(true);
     try {
-      await updateShopOrderStatus(shopId, cancelTarget.id, { orderStatus: 'Cancelled' }, cancelTarget.orderNumber);
+      const nextPickupStatus = cancelTarget.fulfillmentMethod === 'self_pickup' ? ('Cancelled' as const) : undefined;
+      await updateShopOrderStatus(
+        shopId,
+        cancelTarget.id,
+        { orderStatus: 'Cancelled', ...(nextPickupStatus ? { pickupStatus: nextPickupStatus } : {}) },
+        cancelTarget.orderNumber
+      );
       setOrders((prev) =>
-        prev.map((o) => (o.id === cancelTarget.id ? { ...o, orderStatus: 'Cancelled' } : o))
+        prev.map((o) =>
+          o.id === cancelTarget.id
+            ? { ...o, orderStatus: 'Cancelled', ...(nextPickupStatus ? { pickupStatus: nextPickupStatus } : {}) }
+            : o
+        )
       );
       showToast('Order has been cancelled.', 'info');
       setCancelTarget(null);
@@ -414,25 +424,44 @@ export const AccountPage: React.FC = () => {
                           : 'bg-amber-100 text-amber-800'
                       }`}
                     >
-                      {ord.orderStatus}
+                      {ord.fulfillmentMethod === 'self_pickup'
+                        ? ord.pickupStatus || derivePickupStatusFromOrderStatus(ord.orderStatus)
+                        : ord.orderStatus}
                     </span>
                     <span className="text-xs font-bold text-slate-900 tabular-nums">{formatPKR(ord.total)}</span>
                   </div>
                 </div>
 
                 {ord.fulfillmentMethod === 'self_pickup' && (
-                  <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                    <div className="space-y-0.5">
+                  <div className="space-y-2.5">
+                    <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-1 text-xs">
                       <p className="font-bold text-emerald-950 flex items-center gap-1.5">
                         <Store className="w-3.5 h-3.5 text-emerald-700" />
                         {ord.pickupDetails?.locationName || 'Store Counter Pickup'}
                       </p>
+                      {(ord.pickupAddress || ord.pickupDetails?.address) && (
+                        <p className="text-[11px] text-slate-600">{ord.pickupAddress || ord.pickupDetails?.address}</p>
+                      )}
                       {(ord.pickupDetails?.pickupDate || ord.pickupDetails?.preferredTime) && (
                         <p className="text-[11px] text-slate-700 tabular-nums flex items-center gap-1">
                           <Clock className="w-3 h-3 text-emerald-700" />
                           {ord.pickupDetails.pickupDate
                             ? `${ord.pickupDetails.pickupDate} · ${ord.pickupDetails.pickupSlotLabel || ''}`
                             : ord.pickupDetails.preferredTime}
+                        </p>
+                      )}
+                      {ord.pickupDetails?.preparationTime && (
+                        <p className="text-[11px] text-slate-600">
+                          Prep Time: <strong className="text-slate-800">{ord.pickupDetails.preparationTime}</strong>
+                        </p>
+                      )}
+                      {ord.pickupDetails?.instructions && (
+                        <p className="text-[11px] text-slate-600">{ord.pickupDetails.instructions}</p>
+                      )}
+                      {ord.pickupVerifiedAt && (
+                        <p className="text-[11px] font-semibold text-emerald-800 flex items-center gap-1 pt-0.5 tabular-nums">
+                          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                          Picked Up &amp; Verified on {new Date(ord.pickupVerifiedAt).toLocaleString()}
                         </p>
                       )}
                       {ord.pickupDetails?.mapUrl && (
@@ -454,28 +483,14 @@ export const AccountPage: React.FC = () => {
                     </div>
 
                     {ord.pickupOtp && ord.orderStatus !== 'Cancelled' && (
-                      <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-                        <div className="text-right">
-                          <span className="block text-[10px] font-semibold text-emerald-800">Pickup OTP</span>
-                          <span className="font-mono font-black text-base tracking-[0.18em] text-slate-900 tabular-nums">
-                            {ord.pickupOtp}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(ord.pickupOtp || '');
-                            setCopiedOtpId(ord.id);
-                            showToast('Pickup OTP copied!', 'info');
-                            setTimeout(() => setCopiedOtpId(null), 2000);
-                          }}
-                          className="p-2 rounded-lg bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-100"
-                          title="Copy Pickup OTP"
-                          aria-label="Copy Pickup OTP"
-                        >
-                          {copiedOtpId === ord.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
+                      <PickupQrPass
+                        compact
+                        orderNumber={ord.orderNumber}
+                        pickupOtp={ord.pickupOtp}
+                        locationName={ord.pickupDetails?.locationName}
+                        pickupVerifiedAt={ord.pickupVerifiedAt}
+                        pickupVerifiedBy={ord.pickupVerifiedBy}
+                      />
                     )}
                   </div>
                 )}
@@ -506,6 +521,7 @@ export const AccountPage: React.FC = () => {
                   <div className="flex flex-wrap items-center gap-4">
                     <Link
                       to={`${storeBasePath}/tracking?order=${ord.orderNumber}`}
+                      state={{ order: ord }}
                       className="text-emerald-700 font-bold hover:underline flex items-center gap-1"
                     >
                       {ord.fulfillmentMethod === 'self_pickup' ? (
