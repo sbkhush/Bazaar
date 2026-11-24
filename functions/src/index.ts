@@ -6,14 +6,6 @@ import { getStorage } from 'firebase-admin/storage';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import {
-  DEMO_ACCOUNT_TYPE,
-  DEMO_ADMIN_DISPLAY_NAME,
-  DEMO_ADMIN_EMAIL,
-  DEMO_ENV_ID,
-  DEMO_ENV_ROOT,
-  buildDemoAdminWriteOperations,
-} from './demoSeed';
 
 const app = initializeApp();
 const FIRESTORE_DB_ID =
@@ -119,20 +111,9 @@ function toCleanShopPublic(
   });
 }
 
-function isDemoIdentity(email?: string | null, tokenClaims?: Record<string, any> | null): boolean {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
-  if (normalizedEmail === DEMO_ADMIN_EMAIL) return true;
-  if (tokenClaims?.account_type === DEMO_ACCOUNT_TYPE) return true;
-  if (tokenClaims?.demo_super_admin === true) return true;
-  return false;
-}
-
 async function assertSuperAdmin(uid?: string, email?: string, emailVerified?: boolean, tokenClaims?: Record<string, any>) {
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
-  }
-  if (isDemoIdentity(email, tokenClaims)) {
-    throw new HttpsError('permission-denied', 'Demo accounts are strictly blocked from production Super Admin operations.');
   }
   if (tokenClaims?.super_admin === true) return;
   if (email === SUPER_ADMIN_EMAIL && emailVerified) return;
@@ -148,28 +129,8 @@ async function assertSuperAdmin(uid?: string, email?: string, emailVerified?: bo
 
 async function rebuildCustomClaimsForUser(
   uid: string
-): Promise<{
-  super_admin: boolean;
-  shops: Record<string, string>;
-  sales_role: string | null;
-  demo_super_admin?: boolean;
-  account_type?: string;
-  demo_scope?: string;
-}> {
+): Promise<{ super_admin: boolean; shops: Record<string, string>; sales_role: string | null }> {
   const userRecord = await auth.getUser(uid);
-  if (isDemoIdentity(userRecord.email, userRecord.customClaims || {})) {
-    const demoClaims = {
-      super_admin: false,
-      demo_super_admin: true,
-      account_type: DEMO_ACCOUNT_TYPE,
-      demo_scope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-      shops: {},
-      sales_role: null,
-    };
-    await auth.setCustomUserClaims(uid, demoClaims);
-    return demoClaims;
-  }
-
   const [adminSnap, legacyAdminSnap] = await Promise.all([
     db.collection('platform_admins').doc(uid).get(),
     db.collection('admins').doc(uid).get(),
@@ -478,9 +439,6 @@ export const registerShopWithCnic = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Please sign in before registering a shop.');
-  }
-  if (isDemoIdentity(request.auth?.token?.email, request.auth?.token)) {
-    throw new HttpsError('permission-denied', 'Demo accounts cannot register production shops.');
   }
 
   const data = (request.data || {}) as Record<string, any>;
@@ -993,218 +951,3 @@ export const enforceExpiredSubscriptions = onSchedule('every 24 hours', async ()
     await batch.commit();
   }
 });
-
-// ====================================================
-// SB KHUSH DEMO SUPER ADMIN PROVISIONING, AUTH & RESET
-// ====================================================
-
-async function clearAndSeedDemoEnvironment(): Promise<{ writtenDocs: number }> {
-  const demoRootRef = db.collection(DEMO_ENV_ROOT).doc(DEMO_ENV_ID);
-  await db.recursiveDelete(demoRootRef);
-  try {
-    await storage.bucket().deleteFiles({ prefix: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}/` });
-  } catch (err) {
-    console.warn('Demo storage prefix cleanup note:', err);
-  }
-
-  const ops = buildDemoAdminWriteOperations();
-  const CHUNK_SIZE = 400;
-  for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
-    const batch = db.batch();
-    const slice = ops.slice(i, i + CHUNK_SIZE);
-    for (const op of slice) {
-      const ref = db.doc(op.pathSegments.join('/'));
-      batch.set(ref, op.data);
-    }
-    await batch.commit();
-  }
-  return { writtenDocs: ops.length };
-}
-
-/**
- * Production Super Admin ONLY: Creates or repairs the dedicated Firebase Auth user
- * for demo-admin@sbkhush.com with strict DEMO claims (super_admin: false) and seeds
- * `/demo_env/default/...`. Password is read strictly from `process.env.DEMO_ADMIN_PASSWORD`
- * or an explicit admin call argument — never hardcoded in source.
- */
-export const provisionDemoSuperAdmin = onCall(async (request) => {
-  await assertSuperAdmin(
-    request.auth?.uid,
-    request.auth?.token?.email,
-    request.auth?.token?.email_verified,
-    request.auth?.token
-  );
-
-  const suppliedPassword = String(
-    request.data?.password || process.env.DEMO_ADMIN_PASSWORD || ''
-  ).trim();
-
-  let userRecord;
-  try {
-    userRecord = await auth.getUserByEmail(DEMO_ADMIN_EMAIL);
-    const updatePayload: Record<string, any> = {
-      displayName: DEMO_ADMIN_DISPLAY_NAME,
-      emailVerified: true,
-      disabled: false,
-    };
-    if (suppliedPassword.length >= 12) {
-      updatePayload.password = suppliedPassword;
-    }
-    userRecord = await auth.updateUser(userRecord.uid, updatePayload);
-  } catch (err: any) {
-    if (err?.code === 'auth/user-not-found') {
-      if (suppliedPassword.length < 12) {
-        throw new HttpsError(
-          'failed-precondition',
-          'DEMO_ADMIN_PASSWORD environment variable (min 12 chars) or admin password parameter is required for initial Demo Super Admin provisioning.'
-        );
-      }
-      userRecord = await auth.createUser({
-        email: DEMO_ADMIN_EMAIL,
-        password: suppliedPassword,
-        displayName: DEMO_ADMIN_DISPLAY_NAME,
-        emailVerified: true,
-        disabled: false,
-      });
-    } else {
-      throw new HttpsError('internal', err?.message || 'Failed to provision demo auth user.');
-    }
-  }
-
-  const demoClaims = {
-    super_admin: false,
-    demo_super_admin: true,
-    account_type: DEMO_ACCOUNT_TYPE,
-    demo_scope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-    shops: {},
-    sales_role: null,
-  };
-  await auth.setCustomUserClaims(userRecord.uid, demoClaims);
-
-  const nowIso = new Date().toISOString();
-  await db.collection('demo_admins').doc(userRecord.uid).set({
-    uid: userRecord.uid,
-    email: DEMO_ADMIN_EMAIL,
-    displayName: DEMO_ADMIN_DISPLAY_NAME,
-    role: 'super_admin',
-    accountType: DEMO_ACCOUNT_TYPE,
-    status: 'active',
-    demoScope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-    updatedBy: request.auth?.token?.email || 'Super Admin',
-    updatedAt: nowIso,
-  });
-
-  const seeded = await clearAndSeedDemoEnvironment();
-
-  const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-  await db.collection('platform_activity_logs').doc(logId).set({
-    id: logId,
-    actorId: request.auth?.uid || 'super_admin',
-    actorEmail: request.auth?.token?.email || 'Super Admin',
-    action: 'Provisioned Demo Super Admin',
-    targetType: 'settings',
-    targetId: 'demo_env/default',
-    details: `Provisioned ${DEMO_ADMIN_EMAIL} (${userRecord.uid}) and seeded ${seeded.writtenDocs} demo documents`,
-    createdAt: nowIso,
-  }).catch(() => {});
-
-  return {
-    ok: true,
-    uid: userRecord.uid,
-    email: DEMO_ADMIN_EMAIL,
-    accountType: DEMO_ACCOUNT_TYPE,
-    writtenDocs: seeded.writtenDocs,
-  };
-});
-
-/**
- * Public "Explore Demo Admin" real Firebase Authentication bridge.
- * Never embeds or returns any password. Issues a short-lived Firebase Custom Token strictly
- * scoped with `{ super_admin: false, demo_super_admin: true, account_type: 'DEMO' }`.
- */
-export const issueDemoAdminToken = onCall(async () => {
-  let userRecord;
-  try {
-    userRecord = await auth.getUserByEmail(DEMO_ADMIN_EMAIL);
-  } catch (err: any) {
-    if (err?.code === 'auth/user-not-found') {
-      throw new HttpsError(
-        'failed-precondition',
-        'Demo Super Admin account is not yet provisioned. Ask a platform administrator to run demo provisioning.'
-      );
-    }
-    throw new HttpsError('internal', err?.message || 'Unable to verify demo account.');
-  }
-
-  if (userRecord.disabled) {
-    throw new HttpsError('permission-denied', 'Demo Super Admin account is currently disabled.');
-  }
-
-  const demoAdminSnap = await db.collection('demo_admins').doc(userRecord.uid).get();
-  if (!demoAdminSnap.exists || demoAdminSnap.data()?.status !== 'active') {
-    throw new HttpsError(
-      'permission-denied',
-      'Demo Super Admin profile is inactive or awaiting provisioning.'
-    );
-  }
-
-  const demoClaims = {
-    super_admin: false,
-    demo_super_admin: true,
-    account_type: DEMO_ACCOUNT_TYPE,
-    demo_scope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-    shops: {},
-    sales_role: null,
-  };
-  await auth.setCustomUserClaims(userRecord.uid, demoClaims);
-
-  // Ensure demo dataset exists before entering dashboard
-  const envMarker = await db.collection(DEMO_ENV_ROOT).doc(DEMO_ENV_ID).get();
-  if (!envMarker.exists) {
-    await clearAndSeedDemoEnvironment();
-  }
-
-  const customToken = await auth.createCustomToken(userRecord.uid, {
-    super_admin: false,
-    demo_super_admin: true,
-    account_type: DEMO_ACCOUNT_TYPE,
-    demo_scope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-  });
-
-  return {
-    customToken,
-    email: DEMO_ADMIN_EMAIL,
-    displayName: DEMO_ADMIN_DISPLAY_NAME,
-    accountType: DEMO_ACCOUNT_TYPE,
-  };
-});
-
-/**
- * Production Super Admin ONLY: Resets `/demo_env/default` & `/demo_env/default/` Storage
- * back to the clean baseline dataset. Strictly denies the demo account itself.
- */
-export const resetDemoEnvironmentAdmin = onCall(async (request) => {
-  await assertSuperAdmin(
-    request.auth?.uid,
-    request.auth?.token?.email,
-    request.auth?.token?.email_verified,
-    request.auth?.token
-  );
-
-  const result = await clearAndSeedDemoEnvironment();
-  const nowIso = new Date().toISOString();
-  const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-  await db.collection('platform_activity_logs').doc(logId).set({
-    id: logId,
-    actorId: request.auth?.uid || 'super_admin',
-    actorEmail: request.auth?.token?.email || 'Super Admin',
-    action: 'Reset Demo Environment',
-    targetType: 'settings',
-    targetId: 'demo_env/default',
-    details: `Reset isolated demo sandbox (${result.writtenDocs} documents re-seeded)`,
-    createdAt: nowIso,
-  }).catch(() => {});
-
-  return { ok: true, writtenDocs: result.writtenDocs, resetAt: nowIso };
-});
-

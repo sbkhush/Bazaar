@@ -76,11 +76,7 @@ export function getPortalLoginPathForRoute(pathname: string): string {
   return '/login';
 }
 
-export function canAccessPortalRoute(
-  role: AuthorizedPortalRole | null,
-  pathname: string,
-  isDemoAdmin = false
-): boolean {
+export function canAccessPortalRoute(role: AuthorizedPortalRole | null, pathname: string): boolean {
   const normalized = pathname.trim().toLowerCase();
 
   // Public auth entry routes are always reachable
@@ -97,12 +93,7 @@ export function canAccessPortalRoute(
 
   // Protected Super Admin portal routes (/admin/* and /super-admin/*)
   if (normalized === '/admin' || normalized.startsWith('/admin/') || normalized === '/super-admin' || normalized.startsWith('/super-admin/')) {
-    return role === 'super_admin' || isDemoAdmin;
-  }
-
-  // Demo account cannot access production Sales, Referral, or Merchant portals
-  if (isDemoAdmin) {
-    return false;
+    return role === 'super_admin';
   }
 
   // Protected Sales Manager portal (/sales-manager/*)

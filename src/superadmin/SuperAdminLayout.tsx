@@ -31,15 +31,13 @@ import {
   Sliders,
   ChevronDown,
   ChevronRight,
-  FlaskConical,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { BRAND } from '../config/brand';
-import { DEMO_SCOPE_PATH } from '../demo/demoConfig';
 
 export const SuperAdminLayout: React.FC = () => {
-  const { currentUser, isSuperAdmin, isDemoAdmin, authorizedHomePath, loading, logout } = useAuth();
+  const { currentUser, isSuperAdmin, authorizedHomePath, loading, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [salesOpen, setSalesOpen] = useState(true);
   const navigate = useNavigate();
@@ -59,9 +57,7 @@ export const SuperAdminLayout: React.FC = () => {
 
   // Strict route guard: any non-Super Admin (salesman, sales_manager, referral_agent, shop_owner, customer) -> redirect away immediately
   if (!isSuperAdmin) {
-    if (!isDemoAdmin) {
-      return <Navigate to={authorizedHomePath} replace />;
-    }
+    return <Navigate to={authorizedHomePath} replace />;
   }
 
   const navItems = [
@@ -119,12 +115,8 @@ export const SuperAdminLayout: React.FC = () => {
             <BrandLogo variant="icon" tone="light" size="sm" />
             <div>
               <p className="text-sm font-extrabold text-white leading-none">{BRAND.name}</p>
-              <p
-                className={`text-[10px] font-semibold uppercase tracking-wider mt-0.5 ${
-                  isDemoAdmin ? 'text-amber-400' : 'text-emerald-400'
-                }`}
-              >
-                {isDemoAdmin ? 'Demo Super Admin' : 'Super Admin'}
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">
+                Super Admin
               </p>
             </div>
           </Link>
@@ -196,9 +188,7 @@ export const SuperAdminLayout: React.FC = () => {
         <div className="p-4 border-t border-slate-800 space-y-2">
           <div className="px-2 py-1">
             <p className="text-[11px] font-semibold text-white truncate">{currentUser.email}</p>
-            <p className="text-[10px] text-slate-400">
-              {isDemoAdmin ? 'DEMO ACCOUNT · Isolated' : 'Platform Owner'}
-            </p>
+            <p className="text-[10px] text-slate-400">Platform Owner</p>
           </div>
           <Link
             to="/"
@@ -235,46 +225,14 @@ export const SuperAdminLayout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            {isDemoAdmin ? (
-              <span className="px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-xs font-extrabold text-amber-900 flex items-center gap-1.5">
-                <FlaskConical className="w-3.5 h-3.5 text-amber-700" />
-                DEMO MODE
-              </span>
-            ) : (
-              <Link
-                to="/dashboard"
-                className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
-              >
-                Shop Workspace
-              </Link>
-            )}
+            <Link
+              to="/dashboard"
+              className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+            >
+              Shop Workspace
+            </Link>
           </div>
         </header>
-
-        {isDemoAdmin && (
-          <div
-            data-testid="demo-mode-banner"
-            className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-2.5 text-xs text-amber-950 flex flex-wrap items-center justify-between gap-2"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="px-2 py-0.5 rounded bg-amber-200/80 text-amber-950 text-[10px] font-extrabold uppercase tracking-wider">
-                DEMO MODE
-              </span>
-              <span className="font-semibold">{currentUser.email}</span>
-              <span className="text-amber-800">·</span>
-              <span className="text-amber-900">
-                Isolated Sandbox (<code className="font-mono">/{DEMO_SCOPE_PATH}</code>) — Production Data Locked (Resets managed by Production Super Admin)
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="px-2.5 py-1 rounded-lg border border-amber-300 bg-white hover:bg-amber-100 text-[11px] font-bold text-amber-950 transition"
-            >
-              Exit Demo
-            </button>
-          </div>
-        )}
 
         <main className="flex-1 p-4 sm:p-6 max-w-7xl w-full mx-auto">
           <Outlet />

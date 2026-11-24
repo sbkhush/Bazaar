@@ -10,29 +10,12 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    function isNotDemoAccount() {
-      return !isSignedIn() || (
-        request.auth.token.email != 'demo-admin@sbkhush.com' &&
-        (!('account_type' in request.auth.token) || request.auth.token.account_type != 'DEMO') &&
-        (!('demo_super_admin' in request.auth.token) || request.auth.token.demo_super_admin != true)
-      );
-    }
-
     function isSuperAdmin() {
-      return isSignedIn() && isNotDemoAccount() && (
+      return isSignedIn() && (
         request.auth.token.super_admin == true ||
         (request.auth.token.email == 'hasanaamir815@gmail.com' &&
          request.auth.token.email_verified == true)
       );
-    }
-
-    function isDemoSuperAdmin() {
-      return isSignedIn() &&
-        request.auth.token.email == 'demo-admin@sbkhush.com' &&
-        request.auth.token.email_verified == true &&
-        ('account_type' in request.auth.token && request.auth.token.account_type == 'DEMO') &&
-        ('demo_super_admin' in request.auth.token && request.auth.token.demo_super_admin == true) &&
-        (!('super_admin' in request.auth.token) || request.auth.token.super_admin != true);
     }
 
     // Tenant authorization via Firebase Auth Custom Claims (provisioned by Cloud Functions)
@@ -155,16 +138,9 @@ service firebase.storage {
 
     // User Profile Avatars
     match /users/{userId}/profile/{fileName} {
-      allow read: if isSignedIn() && ((isNotDemoAccount() && request.auth.uid == userId) || isSuperAdmin());
-      allow create, update: if isSignedIn() && isNotDemoAccount() && request.auth.uid == userId && isValidImageUpload();
-      allow delete: if isSignedIn() && ((isNotDemoAccount() && request.auth.uid == userId) || isSuperAdmin());
-    }
-
-    // Isolated Demo Sandbox Storage Prefix (Demo Admin CANNOT read or write production paths)
-    match /demo_env/default/{allPaths=**} {
-      allow read: if isSuperAdmin() || isDemoSuperAdmin();
-      allow create, update: if (isSuperAdmin() || isDemoSuperAdmin()) && isValidImageUpload();
-      allow delete: if isSuperAdmin() || isDemoSuperAdmin();
+      allow read: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isValidImageUpload();
+      allow delete: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
     }
   }
 }

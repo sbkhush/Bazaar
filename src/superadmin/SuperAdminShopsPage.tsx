@@ -35,7 +35,7 @@ import { SafeImage } from '../components/common/SafeImage';
 import { CitySelect } from '../components/common/CitySelect';
 
 export const SuperAdminShopsPage: React.FC = () => {
-  const { currentUser, isDemoAdmin } = useAuth();
+  const { currentUser } = useAuth();
   const [shops, setShops] = useState<Shop[]>([]);
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -277,17 +277,15 @@ export const SuperAdminShopsPage: React.FC = () => {
             {auditLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSearch className="w-4 h-4 text-[#065F46]" />}
             Demo &amp; Legacy Audit
           </button>
-          {!isDemoAdmin && (
-            <button
-              type="button"
-              onClick={() => setMigrateModalOpen(true)}
-              disabled={migrating}
-              className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition"
-            >
-              {migrating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
-              Migrate Legacy Store -&gt; Tenant
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setMigrateModalOpen(true)}
+            disabled={migrating}
+            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition"
+          >
+            {migrating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+            Migrate Legacy Store -&gt; Tenant
+          </button>
         </div>
       </div>
 
@@ -657,15 +655,13 @@ export const SuperAdminShopsPage: React.FC = () => {
                         >
                           <SlidersHorizontal className="w-3.5 h-3.5" />
                         </Link>
-                        {!isDemoAdmin && (
-                          <Link
-                            to={`/dashboard?inspectShopId=${s.id}`}
-                            title="Inspect Dashboard (Read-Only)"
-                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </Link>
-                        )}
+                        <Link
+                          to={`/dashboard?inspectShopId=${s.id}`}
+                          title="Inspect Dashboard (Read-Only)"
+                          className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </Link>
                         <Link
                           to={`/s/${s.slug}`}
                           target="_blank"
@@ -869,7 +865,7 @@ export const SuperAdminShopsPage: React.FC = () => {
       )}
 
       {/* Migration Confirmation Modal */}
-      {!isDemoAdmin && migrateModalOpen && (
+      {migrateModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-4">
             <h3 className="text-base font-extrabold text-slate-900">Confirm Legacy Store Migration</h3>
