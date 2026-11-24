@@ -2,11 +2,23 @@ import React, { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { Loader2, ShieldAlert, Lock } from 'lucide-react';
 import { auth, db } from '../../firebase/config';
+import { buildApiUrl } from '../../utils/apiClient';
 
 interface PrivateReceiptImageProps {
   src?: string;
   alt?: string;
   className?: string;
+}
+
+function isProtectedReceiptRef(value?: string): boolean {
+  if (!value) return false;
+  if (value.startsWith('/api/payments/proof')) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.pathname.endsWith('/api/payments/proof');
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -35,7 +47,7 @@ export const PrivateReceiptImage: React.FC<PrivateReceiptImageProps> = ({
       return;
     }
 
-    if (!src.startsWith('/api/payments/proof')) {
+    if (!isProtectedReceiptRef(src)) {
       setResolvedSrc(src);
       setError(null);
       return;
@@ -50,7 +62,7 @@ export const PrivateReceiptImage: React.FC<PrivateReceiptImageProps> = ({
         // 1. Try authenticated Express API stream if running
         if (token) {
           try {
-            const res = await fetch(src, {
+            const res = await fetch(buildApiUrl(src), {
               headers: { Authorization: `Bearer ${token}` },
             });
             const ct = res.headers.get('content-type') || '';
@@ -139,7 +151,7 @@ export const PrivateReceiptImage: React.FC<PrivateReceiptImageProps> = ({
   return (
     <div className="space-y-1">
       <img src={resolvedSrc} alt={alt} className={className} />
-      {src.startsWith('/api/payments/proof') && (
+      {isProtectedReceiptRef(src) && (
         <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
           <Lock className="w-3 h-3" /> Protected private receipt (authorized access only)
         </span>

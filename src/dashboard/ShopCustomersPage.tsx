@@ -7,9 +7,10 @@ import {
   saveShopCustomerProfile,
 } from '../services/retailService';
 import { ShopCustomerSummary } from '../types';
-import { formatPKR, PAKISTAN_CITIES } from '../data/seedData';
+import { formatPKR } from '../data/seedData';
 import { CsvImportModal } from '../components/common/CsvImportModal';
 import { downloadCsvFile } from '../utils/csvUtils';
+import { CitySelect } from '../components/common/CitySelect';
 
 export const ShopCustomersPage: React.FC = () => {
   const { shopId, shop, isReadOnly, canUseFeature } = useDashboard();
@@ -20,6 +21,7 @@ export const ShopCustomersPage: React.FC = () => {
   const [csvModalOpen, setCsvModalOpen] = useState(false);
   const [form, setForm] = useState({ name: '', phone: '', city: 'Karachi', email: '', address: '', notes: '' });
   const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadCustomers = () => {
     if (!shopId) return;
@@ -37,11 +39,14 @@ export const ShopCustomersPage: React.FC = () => {
     e.preventDefault();
     if (isReadOnly) return;
     setSaving(true);
+    setActionError(null);
     try {
       await saveShopCustomerProfile(shopId, form);
       setModalOpen(false);
       setForm({ name: '', phone: '', city: 'Karachi', email: '', address: '', notes: '' });
       loadCustomers();
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not save customer profile.');
     } finally {
       setSaving(false);
     }
@@ -95,22 +100,26 @@ export const ShopCustomersPage: React.FC = () => {
         skipped++;
         continue;
       }
-      await saveShopCustomerProfile(shopId, {
-        name,
-        phone,
-        city: r.city || 'Karachi',
-        email: r.email || '',
-        address: r.address || '',
-        notes: r.notes || '',
-      });
-      existingPhones.add(cleanPhone);
-      imported++;
+      try {
+        await saveShopCustomerProfile(shopId, {
+          name,
+          phone,
+          city: r.city || 'Karachi',
+          email: r.email || '',
+          address: r.address || '',
+          notes: r.notes || '',
+        });
+        existingPhones.add(cleanPhone);
+        imported++;
+      } catch {
+        skipped++;
+      }
     }
     loadCustomers();
     return {
       imported,
       skipped,
-      notes: skipped > 0 ? 'Duplicate phone numbers or incomplete rows were skipped.' : undefined,
+      notes: skipped > 0 ? 'Duplicate phone numbers, failed writes, or incomplete rows were skipped.' : undefined,
     };
   };
 
@@ -161,6 +170,15 @@ export const ShopCustomersPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {actionError && (
+        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center justify-between gap-2">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss error">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-xl p-4">
         <div className="relative max-w-md">
@@ -262,15 +280,12 @@ export const ShopCustomersPage: React.FC = () => {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">City</label>
-                <select
+                <CitySelect
                   value={form.city}
-                  onChange={(e) => setForm({ ...form, city: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
-                >
-                  {PAKISTAN_CITIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                  onChange={(c) => setForm({ ...form, city: c })}
+                  required
+                  placeholder="Select city..."
+                />
               </div>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Email (Optional)</label>

@@ -11,18 +11,18 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { auth } from '../firebase/config';
 import {
-  PAKISTAN_CITIES,
   BUSINESS_TYPE_OPTIONS,
   formatPKR,
   isValidPakistaniPhone,
-  sanitizeShopSlug,
   isValidShopSlug,
+  sanitizeShopSlug,
 } from '../data/seedData';
 import { BillingCycle, BusinessType, PlatformSettings, SubscriptionPlan } from '../types';
 import {
   checkSlugAvailability,
   getPlatformSettings,
   getSubscriptionPlans,
+  ownerHasPendingCnicAudit,
   registerNewShop,
 } from '../services/platformService';
 import {
@@ -30,6 +30,8 @@ import {
   getReferralCodeOwner,
   getStoredReferralContext,
 } from '../services/salesService';
+import { CitySelect } from '../components/common/CitySelect';
+import { CNIC_AUDIT_BLOCK_MESSAGE, formatCnicInput, isValidCnic } from '../utils/cnic';
 import { ImageUploader } from '../components/common/ImageUploader';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { BRAND } from '../config/brand';
@@ -55,6 +57,8 @@ export const RegisterShopPage: React.FC = () => {
     checking: false,
   });
   const [ownerPhone, setOwnerPhone] = useState('');
+  const [cnic, setCnic] = useState('');
+  const [pendingCnicAudit, setPendingCnicAudit] = useState(false);
   const [businessType, setBusinessType] = useState<BusinessType>('general_store');
   const [city, setCity] = useState('Karachi');
   const [address, setAddress] = useState('');
@@ -104,6 +108,11 @@ export const RegisterShopPage: React.FC = () => {
     if (currentUser) {
       setOwnerName((prev) => prev || currentUser.displayName || '');
       setOwnerEmail((prev) => prev || currentUser.email || '');
+      ownerHasPendingCnicAudit(currentUser.uid)
+        .then(setPendingCnicAudit)
+        .catch(() => setPendingCnicAudit(false));
+    } else {
+      setPendingCnicAudit(false);
     }
   }, [currentUser]);
 
@@ -148,8 +157,20 @@ export const RegisterShopPage: React.FC = () => {
       setError(slugStatus.reason || 'Please choose an available store URL slug.');
       return;
     }
+    if (pendingCnicAudit) {
+      setError(CNIC_AUDIT_BLOCK_MESSAGE);
+      return;
+    }
     if (!isValidPakistaniPhone(ownerPhone)) {
       setError('Please enter a valid Pakistani mobile number (e.g. 03001234567).');
+      return;
+    }
+    if (!isValidCnic(cnic)) {
+      setError('Please enter a valid 13-digit Pakistani CNIC number (e.g. 35202-1234567-1).');
+      return;
+    }
+    if (!city.trim()) {
+      setError('Please select your store city.');
       return;
     }
     if (!address.trim()) {
@@ -191,6 +212,7 @@ export const RegisterShopPage: React.FC = () => {
         ownerName: finalName,
         ownerEmail: finalEmail,
         ownerPhone: ownerPhone.trim(),
+        cnic: cnic.trim(),
         shopName: shopName.trim(),
         shopSlug,
         businessType,
@@ -247,6 +269,13 @@ export const RegisterShopPage: React.FC = () => {
               Provision your isolated multi-tenant storefront, inventory admin, and checkout in 60 seconds.
             </p>
           </div>
+
+          {pendingCnicAudit && (
+            <div className="mb-6 p-3.5 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs font-medium flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-700" />
+              <span>{CNIC_AUDIT_BLOCK_MESSAGE}</span>
+            </div>
+          )}
 
           {error && (
             <div className="mb-6 p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium flex items-start gap-2">
@@ -388,16 +417,32 @@ export const RegisterShopPage: React.FC = () => {
                 </div>
 
                 <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Owner CNIC Number (13 digits) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    inputMode="numeric"
+                    maxLength={15}
+                    value={cnic}
+                    onChange={(e) => setCnic(formatCnicInput(e.target.value))}
+                    placeholder="35202-1234567-1"
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs font-mono focus:ring-2 focus:ring-[#065F46] focus:outline-none"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    One SB Khush shop is allowed per CNIC. Verified securely on the server.
+                  </p>
+                </div>
+
+                <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">City *</label>
-                  <select
+                  <CitySelect
                     value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-2 focus:ring-[#065F46] focus:outline-none"
-                  >
-                    {PAKISTAN_CITIES.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
+                    onChange={setCity}
+                    required
+                    placeholder="Select store city..."
+                  />
                 </div>
 
                 <div>

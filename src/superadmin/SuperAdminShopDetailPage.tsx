@@ -18,6 +18,8 @@ import {
   extendShopSubscription,
   deleteShopComplete,
   updateShopAdminNotes,
+  auditShopCnicStatus,
+  manageShopCnic,
 } from '../services/platformService';
 import {
   getShopProductsAdmin,
@@ -40,6 +42,7 @@ import {
   PlatformPayment,
 } from '../types';
 import { formatPKR, BUSINESS_TYPE_OPTIONS } from '../data/seedData';
+import { formatCnicInput, isValidCnic } from '../utils/cnic';
 
 const TABS = [
   'Overview',
@@ -81,6 +84,11 @@ export const SuperAdminShopDetailPage: React.FC = () => {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [confirmDeleteSlug, setConfirmDeleteSlug] = useState('');
   const [deleting, setDeleting] = useState(false);
+
+  const [cnicInput, setCnicInput] = useState('');
+  const [cnicReason, setCnicReason] = useState('');
+  const [cnicBusy, setCnicBusy] = useState(false);
+  const [cnicMsg, setCnicMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const loadAll = async () => {
     setLoading(true);
@@ -205,6 +213,21 @@ export const SuperAdminShopDetailPage: React.FC = () => {
                   <p><strong>Owner Email:</strong> {shop.ownerEmail}</p>
                   <p><strong>Phone:</strong> {shop.ownerPhone}</p>
                   <p><strong>City / Address:</strong> {shop.city} — {shop.address}</p>
+                  <p>
+                    <strong>CNIC Verification:</strong>{' '}
+                    <span className="font-mono">{shop.cnicMasked || 'Not Assigned'}</span>{' '}
+                    <span
+                      className={`ml-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        auditShopCnicStatus(shop) === 'verified'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : auditShopCnicStatus(shop) === 'released'
+                          ? 'bg-slate-200 text-slate-700'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {auditShopCnicStatus(shop).replace('_', ' ')}
+                    </span>
+                  </p>
                   <p><strong>Registered:</strong> {new Date(shop.createdAt).toLocaleString()}</p>
                   <p><strong>Last Activity:</strong> {shop.lastActivityAt ? new Date(shop.lastActivityAt).toLocaleString() : 'N/A'}</p>
                 </div>
@@ -485,35 +508,156 @@ export const SuperAdminShopDetailPage: React.FC = () => {
         )}
 
         {tab === 'Actions' && (
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => updateShopStatus(shop.id, 'active').then(loadAll)}
-              className="px-4 py-2.5 bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1.5"
-            >
-              <CheckCircle2 className="w-4 h-4" /> Activate / Reactivate Shop
-            </button>
-            <button
-              type="button"
-              onClick={() => updateShopStatus(shop.id, 'suspended').then(loadAll)}
-              className="px-4 py-2.5 bg-amber-600 text-white rounded-xl font-bold flex items-center gap-1.5"
-            >
-              <PauseCircle className="w-4 h-4" /> Suspend Shop
-            </button>
-            <button
-              type="button"
-              onClick={() => updateShopStatus(shop.id, 'inactive').then(loadAll)}
-              className="px-4 py-2.5 border border-slate-300 text-slate-800 rounded-xl font-bold"
-            >
-              Set Inactive
-            </button>
-            <button
-              type="button"
-              onClick={() => setDeleteModalOpen(true)}
-              className="px-4 py-2.5 bg-red-600 text-white rounded-xl font-bold flex items-center gap-1.5 ml-auto"
-            >
-              <Trash2 className="w-4 h-4" /> Delete Shop
-            </button>
+          <div className="space-y-6">
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => updateShopStatus(shop.id, 'active').then(loadAll)}
+                className="px-4 py-2.5 bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" /> Activate / Reactivate Shop
+              </button>
+              <button
+                type="button"
+                onClick={() => updateShopStatus(shop.id, 'suspended').then(loadAll)}
+                className="px-4 py-2.5 bg-amber-600 text-white rounded-xl font-bold flex items-center gap-1.5"
+              >
+                <PauseCircle className="w-4 h-4" /> Suspend Shop
+              </button>
+              <button
+                type="button"
+                onClick={() => updateShopStatus(shop.id, 'inactive').then(loadAll)}
+                className="px-4 py-2.5 border border-slate-300 text-slate-800 rounded-xl font-bold"
+              >
+                Set Inactive
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteModalOpen(true)}
+                className="px-4 py-2.5 bg-red-600 text-white rounded-xl font-bold flex items-center gap-1.5 ml-auto"
+              >
+                <Trash2 className="w-4 h-4" /> Delete Shop
+              </button>
+            </div>
+
+            <div className="p-5 rounded-xl border border-slate-200 bg-slate-50 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">
+                    CNIC Verification &amp; Global Ownership Lock (Super Admin Only)
+                  </h4>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Assign or correct a merchant CNIC using server-side HMAC hashing, or release the CNIC binding when closing/re-auditing a store.
+                  </p>
+                </div>
+                <span className="px-2.5 py-1 rounded-md bg-white border border-slate-200 font-mono text-[11px] font-semibold text-slate-800">
+                  Current: {shop.cnicMasked || 'Unverified'} ({auditShopCnicStatus(shop).replace('_', ' ')})
+                </span>
+              </div>
+
+              {cnicMsg && (
+                <div
+                  className={`p-3 rounded-lg text-xs font-medium ${
+                    cnicMsg.type === 'success'
+                      ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                      : 'bg-rose-50 border border-rose-200 text-rose-700'
+                  }`}
+                >
+                  {cnicMsg.text}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Assign / Correct CNIC (13 Digits)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={15}
+                    inputMode="numeric"
+                    value={cnicInput}
+                    onChange={(e) => setCnicInput(formatCnicInput(e.target.value))}
+                    placeholder="35202-1234567-1"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Audit Reason / Remarks
+                  </label>
+                  <input
+                    type="text"
+                    value={cnicReason}
+                    onChange={(e) => setCnicReason(e.target.value)}
+                    placeholder="e.g. Verified original CNIC via compliance check"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={cnicBusy}
+                  onClick={async () => {
+                    setCnicMsg(null);
+                    if (!isValidCnic(cnicInput)) {
+                      setCnicMsg({ type: 'error', text: 'Please enter a valid 13-digit CNIC before assigning.' });
+                      return;
+                    }
+                    setCnicBusy(true);
+                    try {
+                      await manageShopCnic({
+                        shopId: shop.id,
+                        action: 'assign',
+                        cnic: cnicInput,
+                        reason: cnicReason.trim() || undefined,
+                      });
+                      setCnicInput('');
+                      setCnicReason('');
+                      setCnicMsg({ type: 'success', text: 'CNIC verified and bound to this shop securely.' });
+                      await loadAll();
+                    } catch (err: any) {
+                      setCnicMsg({ type: 'error', text: err?.message || 'Could not assign CNIC.' });
+                    } finally {
+                      setCnicBusy(false);
+                    }
+                  }}
+                  className="px-4 py-2 bg-[#065F46] hover:bg-emerald-900 disabled:opacity-50 text-white rounded-lg font-bold"
+                >
+                  {cnicBusy ? 'Processing...' : 'Assign & Verify CNIC'}
+                </button>
+
+                {shop.cnicHash && (
+                  <button
+                    type="button"
+                    disabled={cnicBusy}
+                    onClick={async () => {
+                      setCnicMsg(null);
+                      setCnicBusy(true);
+                      try {
+                        await manageShopCnic({
+                          shopId: shop.id,
+                          action: 'release',
+                          reason: cnicReason.trim() || 'Super Admin released CNIC binding',
+                        });
+                        setCnicReason('');
+                        setCnicMsg({ type: 'success', text: 'CNIC binding released from global registry.' });
+                        await loadAll();
+                      } catch (err: any) {
+                        setCnicMsg({ type: 'error', text: err?.message || 'Could not release CNIC binding.' });
+                      } finally {
+                        setCnicBusy(false);
+                      }
+                    }}
+                    className="px-4 py-2 border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50 rounded-lg font-bold"
+                  >
+                    Release CNIC Binding
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

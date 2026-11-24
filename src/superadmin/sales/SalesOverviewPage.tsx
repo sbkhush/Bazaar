@@ -28,8 +28,9 @@ import {
   computeSalesDashboardAnalytics,
 } from '../../services/salesService';
 import { getAllShopsAdmin, getAllPlatformPayments } from '../../services/platformService';
-import { BUSINESS_TYPE_OPTIONS, PAKISTAN_CITIES, formatPKR } from '../../data/seedData';
+import { BUSINESS_TYPE_OPTIONS, formatPKR } from '../../data/seedData';
 import { SimpleBarChart, DistributionMeters } from '../../components/common/SimpleCharts';
+import { CitySelect } from '../../components/common/CitySelect';
 import {
   CommissionLedgerEntry,
   PlatformPayment,
@@ -240,18 +241,13 @@ export const SalesOverviewPage: React.FC = () => {
 
           <div>
             <label className="block text-[11px] font-semibold text-slate-500 mb-1">City</label>
-            <select
+            <CitySelect
               value={filter.city || 'all'}
-              onChange={(e) => setFilter((f) => ({ ...f, city: e.target.value }))}
-              className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white"
-            >
-              <option value="all">All Cities</option>
-              {PAKISTAN_CITIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+              onChange={(c) => setFilter((f) => ({ ...f, city: c }))}
+              includeAllOption
+              allLabel="All Cities"
+              placeholder="Filter city..."
+            />
           </div>
 
           <div>

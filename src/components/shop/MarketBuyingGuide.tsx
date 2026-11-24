@@ -11,6 +11,7 @@ import {
   ArrowRight,
   TrendingUp,
 } from 'lucide-react';
+import { apiFetch } from '../../utils/apiClient';
 
 interface GroundedSource {
   title: string;
@@ -105,7 +106,7 @@ export const MarketBuyingGuide: React.FC<MarketBuyingGuideProps> = ({
     setIsOpen(true);
 
     try {
-      const response = await fetch('/api/buying-guide', {
+      const response = await apiFetch('/api/buying-guide', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

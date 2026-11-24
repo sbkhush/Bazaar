@@ -28,7 +28,6 @@ import { useTenant } from '../context/TenantContext';
 import { createShopOrder, getSelfPickupSlotAvailability } from '../services/tenantService';
 import { uploadCheckoutPaymentProof } from '../services/storageService';
 import {
-  PAKISTAN_CITIES,
   formatPKR,
   isValidPakistaniPhone,
   FALLBACK_PRODUCT_IMAGE,
@@ -37,6 +36,7 @@ import {
   isCashOnPickupAllowed,
 } from '../data/seedData';
 import { PaymentMethod, PickupSlotAvailability } from '../types';
+import { CitySelect } from '../components/common/CitySelect';
 import { useToast } from '../components/common/Toast';
 
 export const CheckoutPage: React.FC = () => {
@@ -53,7 +53,7 @@ export const CheckoutPage: React.FC = () => {
     setFulfillmentMethod,
   } = useCart();
   const { currentUser, userProfile } = useAuth();
-  const { shopId, storeBasePath } = useTenant();
+  const { shopId, shop, storeBasePath } = useTenant();
   const { showToast } = useToast();
   const navigate = useNavigate();
 
@@ -389,7 +389,7 @@ export const CheckoutPage: React.FC = () => {
               email: email.trim(),
               phone: phone.trim(),
               address: `SELF-PICKUP: ${pickup.title} — ${pickup.address}`,
-              city: pickup.city || 'Karachi',
+              city: pickup.city || settings.city || shop?.city || 'Pakistan',
               postalCode: 'PICKUP',
             }
           : {
@@ -788,17 +788,12 @@ export const CheckoutPage: React.FC = () => {
                       <label className="block text-xs font-semibold text-slate-700 mb-1">
                         City / Destination *
                       </label>
-                      <select
+                      <CitySelect
                         value={city}
-                        onChange={(e) => setCity(e.target.value)}
-                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-600 bg-white"
-                      >
-                        {PAKISTAN_CITIES.map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setCity}
+                        required
+                        placeholder="Select destination city..."
+                      />
                     </div>
 
                     <div>

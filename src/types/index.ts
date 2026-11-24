@@ -146,6 +146,12 @@ export interface Shop {
   ownerPhone: string;
   city: string;
   address: string;
+  cnicHash?: string;
+  cnicLast4?: string;
+  cnicMasked?: string;
+  cnicVerified?: boolean;
+  cnicStatus?: 'verified' | 'pending_audit' | 'released';
+  cnicUpdatedAt?: string;
   logoUrl?: string;
   status: ShopStatus;
   subscription: ShopSubscription;

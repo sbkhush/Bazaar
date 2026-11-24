@@ -151,11 +151,46 @@
         "theme": { "type": "object" },
         "onboardingChecklist": { "type": "object" },
         "adminNotes": { "type": "string" },
+        "cnicHash": { "type": "string" },
+        "cnicLast4": { "type": "string" },
+        "cnicMasked": { "type": "string" },
+        "cnicVerified": { "type": "boolean" },
+        "cnicStatus": { "type": "string", "enum": ["verified", "pending_audit", "released"] },
+        "cnicUpdatedAt": { "type": "string" },
         "lastActivityAt": { "type": "string" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "slug", "name", "ownerId", "status", "subscription"]
+    },
+    "CnicRegistry": {
+      "title": "Global CNIC Uniqueness Index",
+      "description": "Server-side HMAC-SHA256 keyed lock enforcing one active SB Khush shop per CNIC",
+      "type": "object",
+      "properties": {
+        "hmacKey": { "type": "string" },
+        "shopId": { "type": "string" },
+        "shopSlug": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "cnicLast4": { "type": "string" },
+        "cnicMasked": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "released"] },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["hmacKey", "shopId", "ownerId", "status"]
+    },
+    "ArchivedShop": {
+      "title": "Archived Deleted Shop Tombstone",
+      "description": "Immutable Super Admin deletion audit record preserved after complete shop purge",
+      "type": "object",
+      "properties": {
+        "shopId": { "type": "string" },
+        "slug": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "deletedAt": { "type": "string" },
+        "deletedBy": { "type": "string" }
+      },
+      "required": ["shopId", "deletedAt"]
     },
     "ShopPublic": {
       "title": "Public Shop Directory Profile",
@@ -420,6 +455,14 @@
     "/shops_public/{shopId}": {
       "schema": { "$ref": "#/entities/ShopPublic" },
       "description": "Public storefront metadata mirror exposing zero private owner or billing data"
+    },
+    "/cnic_registry/{hmacKey}": {
+      "schema": { "$ref": "#/entities/CnicRegistry" },
+      "description": "Global server-enforced HMAC-SHA256 CNIC uniqueness locks (Super Admin read-only; zero client writes)"
+    },
+    "/archived_shops/{shopId}": {
+      "schema": { "$ref": "#/entities/ArchivedShop" },
+      "description": "Deleted shop archival audit tombstones managed by Super Admin / Cloud Functions"
     },
     "/shops/{shopId}": {
       "schema": { "$ref": "#/entities/Shop" },

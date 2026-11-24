@@ -327,12 +327,33 @@ service cloud.firestore {
       );
       allow update: if isValidId(shopId) && isValidShopPublicDoc(incoming(), shopId) && (
         isSuperAdmin() || (
-          isShopAdmin(shopId) &&
+          (isShopAdmin(shopId) || hasShopPermission(shopId, 'settings') || hasShopPermission(shopId, 'appearance')) &&
           incoming().status == existing().status &&
           incoming().slug == existing().slug
         )
       );
       allow delete: if isValidId(shopId) && isSuperAdmin();
+    }
+
+    // ====================================================
+    // GLOBAL ONE-CNIC-ONE-SHOP REGISTRY & ARCHIVED RETENTION (PRIVACY-PRESERVING)
+    // ====================================================
+
+    match /cnic_registry/{hmacKey} {
+      allow get, list: if isValidId(hmacKey) && isSuperAdmin();
+      allow create: if isValidId(hmacKey) && isSignedIn() && (
+        isSuperAdmin() || (
+          incoming().ownerId == request.auth.uid &&
+          incoming().hmacKey == hmacKey &&
+          !exists(/databases/$(database)/documents/cnic_registry/$(hmacKey)) &&
+          incoming().keys().hasAll(['hmacKey', 'ownerId', 'shopId', 'cnicMasked', 'status', 'createdAt'])
+        )
+      );
+      allow update, delete: if isValidId(hmacKey) && isSuperAdmin();
+    }
+
+    match /archived_shops/{shopId} {
+      allow read, write: if isValidId(shopId) && isSuperAdmin();
     }
 
     // ====================================================
@@ -398,7 +419,10 @@ service cloud.firestore {
       allow update: if isValidId(shopId) && (
         isSuperAdmin() || (
           isShopMember(shopId) &&
-          !incoming().diff(existing()).affectedKeys().hasAny(['ownerId', 'slug', 'status', 'subscription'])
+          !incoming().diff(existing()).affectedKeys().hasAny([
+            'ownerId', 'slug', 'status', 'subscription',
+            'cnicHash', 'cnicLast4', 'cnicMasked', 'cnicVerified', 'cnicStatus', 'cnicUpdatedAt'
+          ])
         )
       );
 

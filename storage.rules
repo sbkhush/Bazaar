@@ -53,7 +53,7 @@ service firebase.storage {
       allow delete: if isShopAdmin(shopId);
     }
 
-    match /shops/{shopId}/products/{productId}/{allPaths=**} {
+    match /shops/{shopId}/products/{allPaths=**} {
       allow read: if true;
       allow create, update: if isShopMember(shopId) && isValidImageUpload();
       allow delete: if isShopMember(shopId);

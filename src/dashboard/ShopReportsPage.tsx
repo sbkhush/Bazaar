@@ -5,6 +5,7 @@ import {
   Plus,
   Trash2,
   AlertCircle,
+  X,
 } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
@@ -22,6 +23,7 @@ import {
 import { Order, Product, PosSale, ShopExpense, Supplier } from '../types';
 import { formatPKR } from '../data/seedData';
 import { DistributionMeters, SimpleBarChart } from '../components/common/SimpleCharts';
+import { downloadCsvFile } from '../utils/csvUtils';
 
 export const ShopReportsPage: React.FC = () => {
   const { shopId, shop, canUseFeature, isReadOnly } = useDashboard();
@@ -42,6 +44,7 @@ export const ShopReportsPage: React.FC = () => {
   const [expAmount, setExpAmount] = useState('');
   const [expNote, setExpNote] = useState('');
   const [savingExp, setSavingExp] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadAll = async () => {
     if (!shopId) return;
@@ -140,6 +143,7 @@ export const ShopReportsPage: React.FC = () => {
     e.preventDefault();
     if (isReadOnly || !expAmount) return;
     setSavingExp(true);
+    setActionError(null);
     try {
       await saveShopExpense(shopId, {
         title: expTitle.trim() || `${expCategory.toUpperCase()} Expense`,
@@ -152,31 +156,39 @@ export const ShopReportsPage: React.FC = () => {
       setExpAmount('');
       setExpNote('');
       await loadAll();
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not save expense entry.');
     } finally {
       setSavingExp(false);
     }
   };
 
+  const handleDeleteExpense = async (expenseId: string) => {
+    if (isReadOnly) return;
+    setActionError(null);
+    try {
+      await deleteShopExpense(shopId, expenseId);
+      await loadAll();
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not delete expense entry.');
+    }
+  };
+
   const exportReport = () => {
-    const rows = [
+    downloadCsvFile(
+      `${shop?.slug || shopId}-retail-profit-report.csv`,
       ['Metric', 'Value'],
-      ['Store', shop?.name || shopId],
-      ['Online Revenue PKR', String(profit.onlineRevenue)],
-      ['POS Revenue PKR', String(profit.posRevenue)],
-      ['Total Revenue PKR', String(profit.totalRevenue)],
-      ['COGS PKR' + (profit.hasEstimatedCogs ? ' (Estimated)' : ''), String(profit.cogs)],
-      ['Gross Profit PKR', String(profit.grossProfit)],
-      ['Operating Expenses PKR', String(profit.totalExpenses)],
-      ['Net Profit PKR', String(profit.netProfit)],
-    ];
-    const csv = rows.map((r) => r.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${shop?.slug || shopId}-retail-profit-report.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+      [
+        ['Store', shop?.name || shopId],
+        ['Online Revenue PKR', String(profit.onlineRevenue)],
+        ['POS Revenue PKR', String(profit.posRevenue)],
+        ['Total Revenue PKR', String(profit.totalRevenue)],
+        ['COGS PKR' + (profit.hasEstimatedCogs ? ' (Estimated)' : ''), String(profit.cogs)],
+        ['Gross Profit PKR', String(profit.grossProfit)],
+        ['Operating Expenses PKR', String(profit.totalExpenses)],
+        ['Net Profit PKR', String(profit.netProfit)],
+      ]
+    );
   };
 
   if (loading) {
@@ -244,6 +256,15 @@ export const ShopReportsPage: React.FC = () => {
               className="ml-1 px-2.5 py-1.5 border border-slate-200 rounded-lg"
             />
           </label>
+        </div>
+      )}
+
+      {actionError && (
+        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center justify-between gap-2">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss error">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -407,7 +428,7 @@ export const ShopReportsPage: React.FC = () => {
                     {!isReadOnly && (
                       <button
                         type="button"
-                        onClick={() => deleteShopExpense(shopId, ex.id).then(loadAll)}
+                        onClick={() => handleDeleteExpense(ex.id)}
                         className="p-1 text-slate-400 hover:text-rose-600"
                       >
                         <Trash2 className="w-3.5 h-3.5" />

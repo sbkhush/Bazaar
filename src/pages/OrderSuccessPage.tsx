@@ -15,6 +15,7 @@ import {
 } from '../data/seedData';
 import { useTenant } from '../context/TenantContext';
 import { PickupQrPass } from '../components/common/PickupQrPass';
+import { PrivateReceiptImage } from '../components/common/PrivateReceiptImage';
 
 export const OrderSuccessPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -251,10 +252,10 @@ export const OrderSuccessPage: React.FC = () => {
                 )}
                 {order.paymentProofImage && (
                   <div className="mt-2 pt-2 border-t border-slate-200 flex items-center gap-2.5">
-                    <img
+                    <PrivateReceiptImage
                       src={order.paymentProofImage}
                       alt="Uploaded payment proof"
-                      className="w-12 h-12 rounded-lg object-cover border border-emerald-200 bg-white shrink-0"
+                      className="w-16 h-16 rounded-lg object-cover border border-emerald-200 bg-white shrink-0"
                     />
                     <span className="text-[11px] font-semibold text-emerald-800 flex items-center gap-1">
                       <ImageIcon className="w-3.5 h-3.5" /> Payment Proof Attached

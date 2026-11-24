@@ -49,6 +49,7 @@ import {
   generateQrDataUrl,
 } from '../utils/qrPdfUtils';
 import { useToast } from '../components/common/Toast';
+import { CitySelect } from '../components/common/CitySelect';
 import {
   BusinessType,
   CommissionLedgerEntry,
@@ -1138,12 +1139,11 @@ export const SalesmanDashboardPage: React.FC = () => {
                 onChange={(e) => setLeadForm({ ...leadForm, phone: e.target.value })}
                 className="w-full px-3 py-2 border border-slate-200 rounded-xl"
               />
-              <input
+              <CitySelect
                 required
+                value={leadForm.city || 'Karachi'}
+                onChange={(c) => setLeadForm({ ...leadForm, city: c })}
                 placeholder="City *"
-                value={leadForm.city}
-                onChange={(e) => setLeadForm({ ...leadForm, city: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-200 rounded-xl"
               />
             </div>
             <div className="grid grid-cols-2 gap-2.5">

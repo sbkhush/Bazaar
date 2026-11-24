@@ -113,51 +113,9 @@ export const ALL_STAFF_PERMISSIONS: { key: StaffPermission; label: string }[] = 
 export const FALLBACK_PRODUCT_IMAGE =
   'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=800&auto=format&fit=crop&q=80';
 
-export const PAKISTAN_CITIES = [
-  'Karachi',
-  'Lahore',
-  'Islamabad',
-  'Rawalpindi',
-  'Faisalabad',
-  'Multan',
-  'Peshawar',
-  'Quetta',
-  'Sialkot',
-  'Gujranwala',
-  'Hyderabad',
-  'Abbottabad',
-  'Bahawalpur',
-  'Sargodha',
-  'Sukkur',
-  'Larkana',
-  'Sheikhupura',
-  'Rahim Yar Khan',
-  'Jhang',
-  'Dera Ghazi Khan',
-  'Gujrat',
-  'Sahiwal',
-  'Wah Cantt',
-  'Mardan',
-  'Kasur',
-  'Okara',
-  'Mingora',
-  'Nawabshah',
-  'Chiniot',
-  'Kotri',
-  'Mirpur Khas',
-  'Kohat',
-  'Dera Ismail Khan',
-  'Muzaffargarh',
-  'Mandi Bahauddin',
-  'Jhelum',
-  'Attock',
-  'Vehari',
-  'Chakwal',
-  'Mirpur (AJK)',
-  'Muzaffarabad (AJK)',
-  'Gilgit',
-  'Skardu',
-];
+import { PAKISTAN_CITY_NAMES } from './locations';
+
+export const PAKISTAN_CITIES = PAKISTAN_CITY_NAMES;
 
 export const COURIERS = [
   { id: 'tcs', name: 'TCS Express', trackingUrl: 'https://www.tcsexpress.com/tracking' },

@@ -195,10 +195,12 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
     : { 'Content-Type': 'application/json' };
 }
 
+import { buildApiUrl } from '../utils/apiClient';
+
 async function trySalesApi<T>(path: string, method: 'GET' | 'POST' = 'POST', body?: unknown): Promise<T | null> {
   try {
     const headers = await getAuthHeaders();
-    const res = await fetch(path, {
+    const res = await fetch(buildApiUrl(path), {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,

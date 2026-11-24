@@ -134,10 +134,15 @@ export const ShopProductsPage: React.FC = () => {
 
   const handleConfirmDelete = async () => {
     if (!confirmDeleteProduct || isReadOnly) return;
-    await deleteShopProduct(shopId, confirmDeleteProduct.id);
-    setConfirmDeleteProduct(null);
-    setSuccessMsg('Product deleted from catalog.');
-    await loadCatalog();
+    setError(null);
+    try {
+      await deleteShopProduct(shopId, confirmDeleteProduct.id);
+      setConfirmDeleteProduct(null);
+      setSuccessMsg('Product deleted from catalog.');
+      await loadCatalog();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete product.');
+    }
   };
 
   const handleArchiveToggle = async (product: Product, archive: boolean) => {
@@ -194,25 +199,29 @@ export const ShopProductsPage: React.FC = () => {
       const reg = Number(r.regularprice || r.price) || 0;
       const saleRaw = Number(r.saleprice);
       const costRaw = Number(r.purchaseprice || r.costprice);
-      await saveShopProduct(shopId, {
-        title,
-        sku,
-        barcode: r.barcode || undefined,
-        category: r.category || categories[0]?.slug || 'general',
-        regularPrice: Math.max(1, reg),
-        salePrice: saleRaw > 0 ? saleRaw : undefined,
-        purchasePrice: costRaw > 0 ? costRaw : undefined,
-        stock: Math.max(0, Number(r.stock) || 0),
-        minStockAlert: Math.max(0, Number(r.minstockalert) || 5),
-        unit: r.unit || 'pcs',
-        brand: r.brand || shop?.name || '',
-        description: r.description || title,
-        images: [],
-        isPublished: true,
-        status: 'active',
-      });
-      existingSkus.add(sku.toLowerCase());
-      imported++;
+      try {
+        await saveShopProduct(shopId, {
+          title,
+          sku,
+          barcode: r.barcode || undefined,
+          category: r.category || categories[0]?.slug || 'general',
+          regularPrice: Math.max(1, reg),
+          salePrice: saleRaw > 0 ? saleRaw : undefined,
+          purchasePrice: costRaw > 0 ? costRaw : undefined,
+          stock: Math.max(0, Number(r.stock) || 0),
+          minStockAlert: Math.max(0, Number(r.minstockalert) || 5),
+          unit: r.unit || 'pcs',
+          brand: r.brand || shop?.name || '',
+          description: r.description || title,
+          images: [],
+          isPublished: true,
+          status: 'active',
+        });
+        existingSkus.add(sku.toLowerCase());
+        imported++;
+      } catch {
+        skipped++;
+      }
     }
 
     await loadCatalog();

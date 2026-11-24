@@ -23,6 +23,7 @@ import {
   extendShopSubscription,
   deleteShopComplete,
   getShopSubscriptionStatus,
+  auditShopCnicStatus,
 } from '../services/platformService';
 import { migrateLegacyBazaarPKToTenant } from '../services/migrationService';
 import { getAllSalesLeads } from '../services/salesService';
@@ -31,6 +32,7 @@ import { Shop, SubscriptionPlan, MigrationResult, BillingCycle, BusinessType } f
 import { BUSINESS_TYPE_OPTIONS } from '../data/seedData';
 import { useAuth } from '../context/AuthContext';
 import { SafeImage } from '../components/common/SafeImage';
+import { CitySelect } from '../components/common/CitySelect';
 
 export const SuperAdminShopsPage: React.FC = () => {
   const { currentUser } = useAuth();
@@ -40,6 +42,7 @@ export const SuperAdminShopsPage: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'suspended'>('all');
+  const [cityFilter, setCityFilter] = useState<string>('all');
   const [businessTypeFilter, setBusinessTypeFilter] = useState<'all' | BusinessType>('all');
   const [planFilter, setPlanFilter] = useState<string>('all');
   const [subFilter, setSubFilter] = useState<'all' | 'free' | 'paid' | 'trial' | 'expired' | 'active_sub'>('all');
@@ -102,6 +105,9 @@ export const SuperAdminShopsPage: React.FC = () => {
     if (statusFilter !== 'all') {
       res = res.filter((s) => s.status === statusFilter);
     }
+    if (cityFilter !== 'all') {
+      res = res.filter((s) => (s.city || '').toLowerCase() === cityFilter.toLowerCase());
+    }
     if (businessTypeFilter !== 'all') {
       res = res.filter((s) => (s.businessType || 'general_store') === businessTypeFilter);
     }
@@ -129,7 +135,7 @@ export const SuperAdminShopsPage: React.FC = () => {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
     return res;
-  }, [shops, plans, searchQuery, statusFilter, businessTypeFilter, planFilter, subFilter, sortBy]);
+  }, [shops, plans, searchQuery, statusFilter, cityFilter, businessTypeFilter, planFilter, subFilter, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -470,7 +476,7 @@ export const SuperAdminShopsPage: React.FC = () => {
       )}
 
       {/* Search & Filters */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+      <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
@@ -481,6 +487,13 @@ export const SuperAdminShopsPage: React.FC = () => {
             className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-[#065F46] focus:outline-none"
           />
         </div>
+        <CitySelect
+          value={cityFilter}
+          onChange={(v) => { setCityFilter(v); setPage(1); }}
+          includeAllOption
+          allLabel="All Cities"
+          placeholder="Filter city..."
+        />
         <select
           value={businessTypeFilter}
           onChange={(e) => { setBusinessTypeFilter(e.target.value as any); setPage(1); }}
@@ -586,7 +599,29 @@ export const SuperAdminShopsPage: React.FC = () => {
                     <td className="py-3.5 px-4">
                       <p className="font-semibold text-slate-800">{s.ownerName}</p>
                       <p className="text-[11px] text-slate-500">{s.ownerEmail}</p>
-                      <p className="text-[11px] text-slate-400">{s.ownerPhone}</p>
+                      <p className="text-[11px] text-slate-400">
+                        {s.ownerPhone} · {s.city || 'N/A'}
+                      </p>
+                      {(() => {
+                        const cnicAudit = auditShopCnicStatus(s);
+                        return (
+                          <span
+                            className={`inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              cnicAudit === 'verified'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : cnicAudit === 'released'
+                                ? 'bg-slate-100 text-slate-600'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {cnicAudit === 'verified'
+                              ? `CNIC: ${s.cnicMasked || 'Verified'}`
+                              : cnicAudit === 'released'
+                              ? 'CNIC Released'
+                              : 'CNIC Audit Pending'}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="py-3.5 px-4">
                       <p className="font-semibold text-slate-900">{s.subscription?.planName || 'Starter'}</p>

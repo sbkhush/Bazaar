@@ -30,11 +30,11 @@ import {
 import { Order, Product, UserAddress } from '../types';
 import {
   formatPKR,
-  PAKISTAN_CITIES,
   FALLBACK_PRODUCT_IMAGE,
   getPaymentMethodLabel,
   derivePickupStatusFromOrderStatus,
 } from '../data/seedData';
+import { CitySelect } from '../components/common/CitySelect';
 import { useToast } from '../components/common/Toast';
 import { AuthModal } from '../components/common/AuthModal';
 import { PickupQrPass } from '../components/common/PickupQrPass';
@@ -665,17 +665,12 @@ export const AccountPage: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 mb-1">City</label>
-                      <select
+                      <CitySelect
                         value={addrCity}
-                        onChange={(e) => setAddrCity(e.target.value)}
-                        className="w-full px-3 py-2 text-xs border rounded-xl bg-white"
-                      >
-                        {PAKISTAN_CITIES.map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setAddrCity}
+                        required
+                        placeholder="Select city..."
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 mb-1">Postal Code</label>

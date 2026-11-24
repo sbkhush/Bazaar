@@ -5,8 +5,9 @@ import {
   deleteObject,
   getMetadata,
 } from 'firebase/storage';
-import { doc, getDoc, setDoc, updateDoc, increment } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { storage, db, auth } from '../firebase/config';
+import { apiFetch } from '../utils/apiClient';
 
 export type StorageFolder =
   | 'logo'
@@ -342,12 +343,21 @@ export async function uploadShopImage(
       }
     }
 
-    // Record exact storage usage bytes on shop doc
+    // Record exact storage usage bytes safely using nested object merge (never dot-notation)
     if (folder !== 'payments' && shopId) {
-      await updateDoc(doc(db, 'shops', shopId), {
-        'usage.storageBytes': increment(processedBlob.size),
-        updatedAt: new Date().toISOString(),
-      }).catch((e) => console.warn('Could not increment shop storageBytes:', e));
+      const latestSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
+      if (latestSnap && latestSnap.exists()) {
+        const currentUsage = latestSnap.data()?.usage || {};
+        const nextBytes = calculateNextStorageBytes(Number(currentUsage.storageBytes || 0), processedBlob.size);
+        await setDoc(
+          doc(db, 'shops', shopId),
+          {
+            usage: { ...currentUsage, storageBytes: nextBytes },
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        ).catch((e) => console.warn('Could not update shop storageBytes:', e));
+      }
     }
 
     onProgress?.(100);
@@ -379,16 +389,35 @@ export async function uploadPlatformLogo(
   const storagePath = `platform/brand/${Date.now()}_${baseName}.${ext}`;
 
   try {
-    const downloadUrl = await runResumableStorageUpload(
-      storagePath,
-      processedBlob,
-      processedBlob.type || file.type,
-      {
-        purpose: 'platform_branding',
-        uploaderUid: auth.currentUser?.uid || 'super_admin',
-      },
-      onProgress
-    );
+    let downloadUrl: string;
+    try {
+      downloadUrl = await runResumableStorageUpload(
+        storagePath,
+        processedBlob,
+        processedBlob.type || file.type,
+        {
+          purpose: 'platform_branding',
+          uploaderUid: auth.currentUser?.uid || 'super_admin',
+        },
+        onProgress
+      );
+    } catch (firstErr: any) {
+      if (firstErr?.code === 'storage/unauthorized' && auth.currentUser) {
+        await auth.currentUser.getIdToken(true).catch(() => {});
+        downloadUrl = await runResumableStorageUpload(
+          storagePath,
+          processedBlob,
+          processedBlob.type || file.type,
+          {
+            purpose: 'platform_branding',
+            uploaderUid: auth.currentUser?.uid || 'super_admin',
+          },
+          onProgress
+        );
+      } else {
+        throw firstErr;
+      }
+    }
     onProgress?.(100);
     return {
       url: downloadUrl,
@@ -430,7 +459,7 @@ export async function uploadCheckoutPaymentProof(
 
   // 1. Prefer server-side private upload endpoint when Express API is available
   try {
-    const response = await fetch('/api/uploads/payment-proof', {
+    const response = await apiFetch('/api/uploads/payment-proof', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -574,13 +603,29 @@ export async function uploadUserProfileAvatar(
   const storagePath = `users/${userId}/profile/${Date.now()}_avatar.${ext}`;
 
   try {
-    const downloadUrl = await runResumableStorageUpload(
-      storagePath,
-      processedBlob,
-      processedBlob.type || file.type,
-      { userId, purpose: 'profile_avatar' },
-      onProgress
-    );
+    let downloadUrl: string;
+    try {
+      downloadUrl = await runResumableStorageUpload(
+        storagePath,
+        processedBlob,
+        processedBlob.type || file.type,
+        { userId, purpose: 'profile_avatar' },
+        onProgress
+      );
+    } catch (firstErr: any) {
+      if (firstErr?.code === 'storage/unauthorized' && auth.currentUser) {
+        await auth.currentUser.getIdToken(true).catch(() => {});
+        downloadUrl = await runResumableStorageUpload(
+          storagePath,
+          processedBlob,
+          processedBlob.type || file.type,
+          { userId, purpose: 'profile_avatar' },
+          onProgress
+        );
+      } else {
+        throw firstErr;
+      }
+    }
     onProgress?.(100);
     return {
       url: downloadUrl,
@@ -611,9 +656,14 @@ export async function deleteStorageImageByUrl(url?: string, shopId?: string): Pr
     if (shopId && exactBytes > 0) {
       const shopSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
       if (shopSnap && shopSnap.exists()) {
-        const current = Number(shopSnap.data()?.usage?.storageBytes || 0);
+        const currentUsage = shopSnap.data()?.usage || {};
+        const current = Number(currentUsage.storageBytes || 0);
         const next = calculateNextStorageBytes(current, -exactBytes);
-        await updateDoc(doc(db, 'shops', shopId), { 'usage.storageBytes': next }).catch(() => {});
+        await setDoc(
+          doc(db, 'shops', shopId),
+          { usage: { ...currentUsage, storageBytes: next }, updatedAt: new Date().toISOString() },
+          { merge: true }
+        ).catch(() => {});
       }
     }
     return true;

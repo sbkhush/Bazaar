@@ -28,6 +28,11 @@ import {
   restSetDoc,
 } from './src/utils/firestoreRestServer';
 import {
+  DEFAULT_SUBSCRIPTION_PLANS,
+  INITIAL_SETTINGS,
+  getDefaultCategoriesForBusinessType,
+  sanitizeShopSlug,
+  isValidShopSlug,
   isSelfPickupEnabled,
   isCashOnPickupAllowed,
   derivePickupStatusFromOrderStatus,
@@ -230,26 +235,45 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  // Clean CORS middleware (configurable via ALLOWED_ORIGINS or allows GitHub Pages / localhost in preview)
-  const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  // Strict CORS allowlist for GitHub Pages frontend, sbkhush.com domains, and localhost dev
+  const staticTrustedOrigins = new Set<string>([
+    'https://sbkhush.github.io',
+    'https://sbkhush.com',
+    'https://www.sbkhush.com',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+  ]);
+  const appUrlRaw = String(process.env.APP_URL || '').trim();
+  if (appUrlRaw) {
+    try {
+      staticTrustedOrigins.add(new URL(appUrlRaw).origin);
+    } catch {}
+  }
+  const extraOrigins = (process.env.ALLOWED_ORIGINS || '')
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
+  extraOrigins.forEach((o) => staticTrustedOrigins.add(o));
 
   app.use((req: Request, res: Response, next: NextFunction) => {
     const origin = req.headers.origin;
     if (origin) {
+      const requestHost = req.headers.host || '';
+      const sameOrigin =
+        origin === `https://${requestHost}` || origin === `http://${requestHost}`;
+      const isLocalDevOrigin =
+        process.env.NODE_ENV !== 'production' &&
+        /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
       const isAllowed =
-        allowedOrigins.length === 0 ||
-        allowedOrigins.includes(origin) ||
-        origin.endsWith('.github.io') ||
-        origin.startsWith('http://localhost') ||
-        origin.startsWith('http://127.0.0.1');
+        sameOrigin || staticTrustedOrigins.has(origin) || isLocalDevOrigin;
+
       if (isAllowed) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      } else if (req.path.startsWith('/api')) {
+        return res.status(403).json({ error: 'Origin not permitted by CORS policy.' });
       }
     }
     if (req.method === 'OPTIONS') {
@@ -2556,6 +2580,513 @@ Format cleanly in markdown with:
       return res.json({ role: 'super_admin' });
     } catch (err: any) {
       return res.status(err?.status || 500).json({ error: err?.message || 'Failed to load scoped summary.' });
+    }
+  });
+
+  const DUPLICATE_CNIC_MSG =
+    'This CNIC is already associated with a registered SB Khush shop. Only one shop can be registered against one CNIC. Please contact SB Khush Support if you believe this is an error.';
+  const CNIC_AUDIT_BLOCK_MSG =
+    'Your existing SB Khush shop account has a pending CNIC verification audit. Please contact SB Khush Support or complete CNIC verification before registering another store.';
+
+  const normalizeCnicServer = (raw: unknown): string =>
+    String(raw || '')
+      .replace(/\D/g, '')
+      .slice(0, 13);
+
+  const isValidCnicServer = (digits: string): boolean =>
+    /^\d{13}$/.test(digits) && !/^(\d)\1{12}$/.test(digits);
+
+  const maskCnicServer = (digits: string): string =>
+    digits.length === 13 ? `XXXXX-XXXX${digits.slice(9, 12)}-${digits.slice(12, 13)}` : '';
+
+  const computeServerCnicHmac = (normalizedCnic: string): string => {
+    const configuredSecret = String(process.env.CNIC_HMAC_SECRET || '').trim();
+    if (!configuredSecret && process.env.NODE_ENV === 'production') {
+      const err = new Error('Server CNIC verification secret (CNIC_HMAC_SECRET) is not configured.') as Error & {
+        status?: number;
+      };
+      err.status = 500;
+      throw err;
+    }
+    const secret = configuredSecret || 'dev-local-cnic-hmac-fallback';
+    return crypto.createHmac('sha256', secret).update(normalizedCnic).digest('hex');
+  };
+
+  // Global One-CNIC-One-Shop Atomic Registration Endpoint
+  app.post('/api/shops/register', async (req, res) => {
+    const clientIp = req.ip || 'unknown';
+    if (!checkRateLimit(clientIp, 'shop-register', 15, 60_000)) {
+      return res.status(429).json({ error: 'Too many registration requests. Please wait a minute and try again.' });
+    }
+
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser) {
+      return res.status(401).json({ error: 'Authentication required to register a shop.' });
+    }
+
+    try {
+      const body = req.body || {};
+      const shopName = String(body.shopName || '').trim();
+      const rawSlug = String(body.shopSlug || '').trim();
+      const ownerName = String(body.ownerName || '').trim();
+      const ownerEmail = String(body.ownerEmail || verifiedUser.email || '').trim();
+      const ownerPhone = String(body.ownerPhone || '').trim();
+      const city = String(body.city || '').trim();
+      const address = String(body.address || '').trim();
+      const normalizedCnic = normalizeCnicServer(body.cnic);
+
+      if (!shopName || !rawSlug || !ownerName || !ownerEmail || !ownerPhone || !city || !address) {
+        return res.status(400).json({ error: 'All required shop, owner, and location fields must be provided.' });
+      }
+      if (!isValidCnicServer(normalizedCnic)) {
+        return res.status(400).json({ error: 'Please enter a valid 13-digit Pakistani CNIC (XXXXX-XXXXXXX-X).' });
+      }
+
+      const cleanSlug = sanitizeShopSlug(rawSlug);
+      if (!isValidShopSlug(cleanSlug)) {
+        return res.status(400).json({ error: 'Invalid or reserved shop URL slug.' });
+      }
+
+      // Legacy owner safeguard: block accounts owning an existing shop without verified CNIC
+      const existingOwnedShops = await restQueryWhereEqual<Record<string, any>>(
+        'shops',
+        'ownerId',
+        verifiedUser.uid,
+        verifiedUser.idToken
+      ).catch(() => []);
+      const legacyPending = existingOwnedShops.find(
+        (s) => s.status !== 'deleted' && !s.cnicHash && s.cnicVerified !== true
+      );
+      if (legacyPending) {
+        return res.status(403).json({ error: CNIC_AUDIT_BLOCK_MSG });
+      }
+
+      const cnicHash = computeServerCnicHmac(normalizedCnic);
+      const cnicMasked = maskCnicServer(normalizedCnic);
+      const cnicLast4 = normalizedCnic.slice(-4);
+      const shopId = cleanSlug;
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const freePlan = DEFAULT_SUBSCRIPTION_PLANS[0];
+      const expiryDate = new Date(
+        now.getTime() + (freePlan.durationDays || 36500) * 24 * 60 * 60 * 1000
+      ).toISOString();
+      const businessType =
+        body.businessType === 'cosmetics' ||
+        body.businessType === 'clothing' ||
+        body.businessType === 'other_retail'
+          ? body.businessType
+          : 'general_store';
+
+      const newShop = stripUndefined({
+        id: shopId,
+        slug: cleanSlug,
+        name: shopName,
+        businessType,
+        ownerId: verifiedUser.uid,
+        ownerName,
+        ownerEmail,
+        ownerPhone,
+        city,
+        address,
+        cnicHash,
+        cnicMasked,
+        cnicLast4,
+        cnicVerified: true,
+        cnicStatus: 'verified',
+        cnicUpdatedAt: nowIso,
+        logoUrl: '',
+        status: 'active',
+        subscription: {
+          planId: freePlan.id,
+          planName: freePlan.name,
+          status: 'active',
+          billingCycle: 'monthly',
+          pricePaid: 0,
+          startDate: nowIso,
+          expiryDate,
+          autoRenew: false,
+        },
+        usage: {
+          productsCount: 0,
+          ordersCount: 0,
+          storageBytes: 0,
+          staffCount: 1,
+        },
+        theme: {
+          primaryColor: '#065f46',
+          accentColor: '#d97706',
+          heroTitle: `Welcome to ${shopName}`,
+          heroSubtitle:
+            'Authentic curated essentials delivered across Pakistan with Cash on Delivery & Self-Pickup.',
+          showTestimonials: true,
+          showBuyingGuide: freePlan.features.buyingGuide,
+        },
+        onboardingChecklist: {
+          accountCreated: true,
+          logoUploaded: false,
+          paymentConfigured: false,
+          firstProductAdded: false,
+        },
+        lastActivityAt: nowIso,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+
+      const newPublicShop = stripUndefined({
+        id: shopId,
+        slug: cleanSlug,
+        name: shopName,
+        businessType,
+        logoUrl: '',
+        city,
+        publicContactPhone: ownerPhone,
+        publicSupportEmail: ownerEmail,
+        storefrontAddress: `${address}, ${city}`,
+        status: 'active',
+        theme: newShop.theme,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+
+      const cnicRegistryPayload = {
+        hmacKey: cnicHash,
+        cnicLast4,
+        cnicMasked,
+        shopId,
+        shopSlug: cleanSlug,
+        shopName,
+        ownerId: verifiedUser.uid,
+        status: 'active',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      const ownerStaffPayload = {
+        uid: verifiedUser.uid,
+        email: ownerEmail,
+        name: ownerName,
+        role: 'shop_owner',
+        permissions: [
+          'overview',
+          'products',
+          'categories',
+          'orders',
+          'customers',
+          'inventory',
+          'coupons',
+          'banners',
+          'appearance',
+          'settings',
+          'staff',
+          'reports',
+          'subscription',
+          'pos',
+          'suppliers',
+          'purchases',
+          'khata',
+        ],
+        status: 'active',
+        createdAt: nowIso,
+      };
+
+      const membershipPayload = {
+        shopId,
+        shopName,
+        shopSlug: cleanSlug,
+        role: 'shop_owner',
+        joinedAt: nowIso,
+      };
+
+      const fullSettings = {
+        ...INITIAL_SETTINGS,
+        siteName: shopName,
+        contactPhone: ownerPhone,
+        whatsappNumber: ownerPhone,
+        contactEmail: ownerEmail,
+        address: `${address}, ${city}`,
+        city,
+        bankDetails: { ...INITIAL_SETTINGS.bankDetails, accountTitle: shopName },
+        easypaisaDetails: {
+          ...INITIAL_SETTINGS.easypaisaDetails,
+          accountTitle: shopName,
+          accountNumber: ownerPhone,
+        },
+        jazzcashDetails: {
+          ...INITIAL_SETTINGS.jazzcashDetails,
+          accountTitle: shopName,
+          accountNumber: ownerPhone,
+        },
+        selfPickupDetails: {
+          ...INITIAL_SETTINGS.selfPickupDetails,
+          title: `${shopName} Outlet (${city})`,
+          address,
+          city,
+          contactPhone: ownerPhone,
+        },
+      };
+
+      const publicSettingsPayload = stripUndefined({
+        siteName: fullSettings.siteName,
+        logoUrl: fullSettings.logoUrl,
+        primaryColor: fullSettings.primaryColor,
+        accentColor: fullSettings.accentColor,
+        announcement: fullSettings.announcement,
+        contactPhone: fullSettings.contactPhone,
+        whatsappNumber: fullSettings.whatsappNumber,
+        contactEmail: fullSettings.contactEmail,
+        address: fullSettings.address,
+        city: fullSettings.city,
+        shippingFee: fullSettings.shippingFee,
+        freeShippingThreshold: fullSettings.freeShippingThreshold,
+        currency: fullSettings.currency,
+        currencySymbol: fullSettings.currencySymbol,
+        aboutUs: fullSettings.aboutUs,
+        selfPickupDetails: fullSettings.selfPickupDetails,
+        socialLinks: fullSettings.socialLinks,
+        easypaisaDetails: { enabled: false, accountTitle: '', accountNumber: '' },
+        jazzcashDetails: { enabled: false, accountTitle: '', accountNumber: '' },
+        bankDetails: fullSettings.bankDetails,
+        updatedAt: nowIso,
+      });
+
+      const privateSettingsPayload = stripUndefined({
+        bankDetails: fullSettings.bankDetails,
+        easypaisaDetails: fullSettings.easypaisaDetails,
+        jazzcashDetails: fullSettings.jazzcashDetails,
+        ownerBillingEmail: ownerEmail,
+        ownerPrivatePhone: ownerPhone,
+        updatedAt: nowIso,
+      });
+
+      const defaultCats = getDefaultCategoriesForBusinessType(businessType);
+
+      // Atomic Firestore REST commit with exists=false preconditions on BOTH cnic_registry and shop_slugs
+      try {
+        await restCommitWrites(
+          [
+            {
+              type: 'create',
+              pathSegments: ['cnic_registry', cnicHash],
+              data: cnicRegistryPayload,
+            },
+            {
+              type: 'create',
+              pathSegments: ['shop_slugs', cleanSlug],
+              data: {
+                slug: cleanSlug,
+                shopId,
+                ownerId: verifiedUser.uid,
+                name: shopName,
+                createdAt: nowIso,
+              },
+            },
+            {
+              type: 'create',
+              pathSegments: ['shops', shopId],
+              data: newShop,
+            },
+            {
+              type: 'set',
+              pathSegments: ['shops_public', shopId],
+              data: newPublicShop,
+            },
+            {
+              type: 'set',
+              pathSegments: ['shops', shopId, 'staff', verifiedUser.uid],
+              data: ownerStaffPayload,
+            },
+            {
+              type: 'set',
+              pathSegments: ['users', verifiedUser.uid, 'shopMemberships', shopId],
+              data: membershipPayload,
+            },
+            {
+              type: 'set',
+              pathSegments: ['shops', shopId, 'settings', 'public'],
+              data: publicSettingsPayload,
+            },
+            {
+              type: 'set',
+              pathSegments: ['shops', shopId, 'settings', 'private'],
+              data: privateSettingsPayload,
+            },
+            ...defaultCats.map((cat) => {
+              const catId = `cat_${cat.slug}`;
+              return {
+                type: 'set' as const,
+                pathSegments: ['shops', shopId, 'categories', catId],
+                data: stripUndefined({ ...cat, id: catId, shopId }),
+              };
+            }),
+          ],
+          verifiedUser.idToken
+        );
+      } catch (commitErr: any) {
+        const msg = String(commitErr?.message || '');
+        if (commitErr?.status === 409 || /already exists|ALREADY_EXISTS|FAILED_PRECONDITION/i.test(msg)) {
+          // Disambiguate slug collision vs CNIC collision via slug check (cnic_registry is unreadable by non-SuperAdmin)
+          const existingSlug = await restGetDoc(['shop_slugs', cleanSlug], verifiedUser.idToken).catch(() => null);
+          if (existingSlug) {
+            return res.status(409).json({
+              code: 'SLUG_TAKEN',
+              error: `Store URL slug "${cleanSlug}" is already taken.`,
+            });
+          }
+          return res.status(409).json({
+            code: 'DUPLICATE_CNIC',
+            error: DUPLICATE_CNIC_MSG,
+          });
+        }
+        throw commitErr;
+      }
+
+      return res.json({ shop: newShop });
+    } catch (err: any) {
+      return res.status(err?.status || 500).json({
+        error: err?.message || 'Failed to register shop with CNIC verification.',
+      });
+    }
+  });
+
+  // Super Admin Audited CNIC Assignment / Correction / Release Endpoint
+  app.post('/api/super-admin/cnic/manage', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser || !(await isAuthorizedSuperAdmin(verifiedUser))) {
+      return res.status(403).json({ error: 'Forbidden: Super Admin authentication required.' });
+    }
+
+    try {
+      const shopId = sanitizeShopId(req.body?.shopId);
+      const action = String(req.body?.action || '').trim();
+      const reason = String(req.body?.reason || '').trim() || 'Super Admin CNIC audit action';
+
+      if (!shopId || !['assign', 'release'].includes(action)) {
+        return res.status(400).json({ error: 'Valid shopId and action (assign | release) are required.' });
+      }
+
+      const shopDoc = await restGetDoc<Record<string, any>>(['shops', shopId], verifiedUser.idToken);
+      if (!shopDoc) {
+        return res.status(404).json({ error: `Shop "${shopId}" not found.` });
+      }
+
+      const nowIso = new Date().toISOString();
+      const oldHash = typeof shopDoc.cnicHash === 'string' ? shopDoc.cnicHash : '';
+      const logId = `log_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+
+      if (action === 'release') {
+        if (!oldHash) {
+          return res.status(400).json({ error: 'This shop has no bound CNIC to release.' });
+        }
+        await restCommitWrites(
+          [
+            { type: 'delete', pathSegments: ['cnic_registry', oldHash] },
+            {
+              type: 'update',
+              pathSegments: ['shops', shopId],
+              data: {
+                cnicHash: null,
+                cnicMasked: '',
+                cnicLast4: '',
+                cnicVerified: false,
+                cnicStatus: 'released',
+                cnicUpdatedAt: nowIso,
+                updatedAt: nowIso,
+              },
+            },
+            {
+              type: 'set',
+              pathSegments: ['platform_activity_logs', logId],
+              data: {
+                id: logId,
+                actorId: verifiedUser.uid,
+                actorEmail: verifiedUser.email,
+                action: 'Released Shop CNIC Binding',
+                targetType: 'shop',
+                targetId: shopId,
+                details: `Released CNIC binding for shop ${shopId}. Reason: ${reason}`,
+                createdAt: nowIso,
+              },
+            },
+          ],
+          verifiedUser.idToken
+        );
+        return res.json({ ok: true, cnicStatus: 'released', cnicMasked: '' });
+      }
+
+      const normalizedCnic = normalizeCnicServer(req.body?.cnic);
+      if (!isValidCnicServer(normalizedCnic)) {
+        return res.status(400).json({ error: 'Valid 13-digit Pakistani CNIC is required.' });
+      }
+
+      const newHash = computeServerCnicHmac(normalizedCnic);
+      const masked = maskCnicServer(normalizedCnic);
+      const last4 = normalizedCnic.slice(-4);
+
+      const existingRegistry = await restGetDoc<Record<string, any>>(
+        ['cnic_registry', newHash],
+        verifiedUser.idToken
+      ).catch(() => null);
+      if (existingRegistry && existingRegistry.shopId !== shopId) {
+        return res.status(409).json({ code: 'DUPLICATE_CNIC', error: DUPLICATE_CNIC_MSG });
+      }
+
+      const ops: any[] = [];
+      if (oldHash && oldHash !== newHash) {
+        ops.push({ type: 'delete', pathSegments: ['cnic_registry', oldHash] });
+      }
+      ops.push(
+        {
+          type: 'set',
+          pathSegments: ['cnic_registry', newHash],
+          data: {
+            hmacKey: newHash,
+            cnicLast4: last4,
+            cnicMasked: masked,
+            shopId,
+            shopSlug: shopDoc.slug || shopId,
+            shopName: shopDoc.name || shopId,
+            ownerId: shopDoc.ownerId || '',
+            status: 'active',
+            createdAt: existingRegistry?.createdAt || nowIso,
+            updatedAt: nowIso,
+            assignedBySuperAdmin: verifiedUser.email,
+            auditReason: reason,
+          },
+        },
+        {
+          type: 'update',
+          pathSegments: ['shops', shopId],
+          data: {
+            cnicHash: newHash,
+            cnicMasked: masked,
+            cnicLast4: last4,
+            cnicVerified: true,
+            cnicStatus: 'verified',
+            cnicUpdatedAt: nowIso,
+            updatedAt: nowIso,
+          },
+        },
+        {
+          type: 'set',
+          pathSegments: ['platform_activity_logs', logId],
+          data: {
+            id: logId,
+            actorId: verifiedUser.uid,
+            actorEmail: verifiedUser.email,
+            action: 'Assigned Shop CNIC',
+            targetType: 'shop',
+            targetId: shopId,
+            details: `Bound verified CNIC (${masked}) to shop ${shopId}. Reason: ${reason}`,
+            createdAt: nowIso,
+          },
+        }
+      );
+
+      await restCommitWrites(ops, verifiedUser.idToken);
+      return res.json({ ok: true, cnicStatus: 'verified', cnicMasked: masked });
+    } catch (err: any) {
+      return res.status(err?.status || 500).json({ error: err?.message || 'CNIC management failed.' });
     }
   });
 

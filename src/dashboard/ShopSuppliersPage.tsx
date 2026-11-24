@@ -22,6 +22,7 @@ export const ShopSuppliersPage: React.FC = () => {
   const [payNotes, setPayNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [csvModalOpen, setCsvModalOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadSuppliers = async () => {
     if (!shopId) return;
@@ -41,10 +42,13 @@ export const ShopSuppliersPage: React.FC = () => {
     e.preventDefault();
     if (!editing || isReadOnly) return;
     setSaving(true);
+    setActionError(null);
     try {
       await saveShopSupplier(shopId, editing);
       setEditing(null);
       await loadSuppliers();
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not save supplier.');
     } finally {
       setSaving(false);
     }
@@ -54,12 +58,15 @@ export const ShopSuppliersPage: React.FC = () => {
     e.preventDefault();
     if (!paySupplier || isReadOnly) return;
     setSaving(true);
+    setActionError(null);
     try {
       await recordSupplierPayment(shopId, paySupplier.id, Number(payAmount), payNotes.trim());
       setPaySupplier(null);
       setPayAmount('');
       setPayNotes('');
       await loadSuppliers();
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not record supplier payment.');
     } finally {
       setSaving(false);
     }
@@ -105,16 +112,20 @@ export const ShopSuppliersPage: React.FC = () => {
         skipped++;
         continue;
       }
-      await saveShopSupplier(shopId, {
-        name,
-        phone,
-        email: r.email || '',
-        address: r.address || '',
-        openingBalance: Math.max(0, Number(r.openingbalance || r.openingbalancepkr) || 0),
-      });
-      existingNames.add(name.toLowerCase());
-      existingPhones.add(cleanPhone);
-      imported++;
+      try {
+        await saveShopSupplier(shopId, {
+          name,
+          phone,
+          email: r.email || '',
+          address: r.address || '',
+          openingBalance: Math.max(0, Number(r.openingbalance || r.openingbalancepkr) || 0),
+        });
+        existingNames.add(name.toLowerCase());
+        existingPhones.add(cleanPhone);
+        imported++;
+      } catch {
+        skipped++;
+      }
     }
     await loadSuppliers();
     return { imported, skipped };
@@ -162,6 +173,15 @@ export const ShopSuppliersPage: React.FC = () => {
             )}
           </div>
         </div>
+
+        {actionError && (
+          <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center justify-between gap-2">
+            <span>{actionError}</span>
+            <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss error">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           {loading ? (

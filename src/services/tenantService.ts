@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
+import { apiFetch } from '../utils/apiClient';
 import {
   Product,
   Category,
@@ -231,7 +232,7 @@ export async function logShopActivity(
       createdAt: new Date().toISOString(),
     };
     await setDoc(doc(db, 'shops', shopId, 'activity_logs', id), payload);
-    await updateDoc(doc(db, 'shops', shopId), { lastActivityAt: payload.createdAt }).catch(() => {});
+    await setDoc(doc(db, 'shops', shopId), { lastActivityAt: payload.createdAt }, { merge: true }).catch(() => {});
   } catch (err) {
     console.warn('Shop activity log warning:', err);
   }
@@ -261,7 +262,7 @@ export async function getShopNotifications(shopId: string): Promise<Notification
 
 export async function markNotificationRead(shopId: string, notifId: string): Promise<void> {
   try {
-    await updateDoc(doc(db, 'shops', shopId, 'notifications', notifId), { isRead: true });
+    await setDoc(doc(db, 'shops', shopId, 'notifications', notifId), { isRead: true }, { merge: true });
   } catch {}
 }
 
@@ -384,11 +385,21 @@ export async function saveShopProduct(shopId: string, product: Partial<Product>)
     await setDoc(doc(db, 'shops', shopId, 'products', id), docData);
     invalidateShopCache(shopId, 'products');
     if (isNew) {
-      await updateDoc(doc(db, 'shops', shopId), {
-        'usage.productsCount': increment(1),
-        'onboardingChecklist.firstProductAdded': true,
-        lastActivityAt: now,
-      }).catch(() => {});
+      const shopSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
+      if (shopSnap && shopSnap.exists()) {
+        const shopData = shopSnap.data() || {};
+        const usage = shopData.usage || {};
+        const checklist = shopData.onboardingChecklist || {};
+        await setDoc(
+          doc(db, 'shops', shopId),
+          {
+            usage: { ...usage, productsCount: Number(usage.productsCount || 0) + 1 },
+            onboardingChecklist: { ...checklist, firstProductAdded: true },
+            lastActivityAt: now,
+          },
+          { merge: true }
+        ).catch(() => {});
+      }
     }
     await logShopActivity(shopId, isNew ? 'Created Product' : 'Updated Product', 'product', id, docData.title);
     return id;
@@ -429,12 +440,17 @@ export async function deleteShopProduct(shopId: string, id: string): Promise<voi
   try {
     await deleteDoc(doc(db, 'shops', shopId, 'products', id));
     invalidateShopCache(shopId, 'products');
-    const snap = await getDoc(doc(db, 'shops', shopId));
-    if (snap.exists()) {
-      const currentCount = Number(snap.data()?.usage?.productsCount || 0);
-      await updateDoc(doc(db, 'shops', shopId), {
-        'usage.productsCount': Math.max(0, currentCount - 1),
-      }).catch(() => {});
+    const snap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
+    if (snap && snap.exists()) {
+      const currentUsage = snap.data()?.usage || {};
+      const currentCount = Number(currentUsage.productsCount || 0);
+      await setDoc(
+        doc(db, 'shops', shopId),
+        {
+          usage: { ...currentUsage, productsCount: Math.max(0, currentCount - 1) },
+        },
+        { merge: true }
+      ).catch(() => {});
     }
     await logShopActivity(shopId, 'Deleted Product', 'product', id, `Removed product ${id}`);
   } catch (err) {
@@ -576,7 +592,7 @@ export async function createShopOrder(
 
   if (effectiveUserId === 'guest') {
     try {
-      const response = await fetch('/api/orders/create', {
+      const response = await apiFetch('/api/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...orderData, shopId, userId: 'guest', idempotencyKey: idemKey || undefined }),
@@ -1312,23 +1328,20 @@ export async function updateShopOrderStatus(
 
   try {
     const orderRef = doc(db, 'shops', shopId, 'orders', orderId);
-    await updateDoc(orderRef, cleanUpdates);
-
     const ordSnap = await getDoc(orderRef).catch(() => null);
     const ordData = ordSnap?.exists() ? (ordSnap.data() as Order) : null;
     const resolvedOrderNumber = orderNumber || ordData?.orderNumber;
     const trackingHash = ordData?.trackingTokenHash;
 
-    if (
-      ordData?.fulfillmentMethod === 'self_pickup' &&
-      updates.orderStatus &&
-      !updates.pickupStatus
-    ) {
-      await updateDoc(orderRef, {
-        pickupStatus: derivePickupStatusFromOrderStatus(updates.orderStatus),
-        updatedAt: now,
-      }).catch(() => {});
-    }
+    const finalUpdates = stripUndefined({
+      ...cleanUpdates,
+      pickupStatus:
+        ordData?.fulfillmentMethod === 'self_pickup' && updates.orderStatus && !updates.pickupStatus
+          ? derivePickupStatusFromOrderStatus(updates.orderStatus)
+          : updates.pickupStatus,
+    });
+
+    await updateDoc(orderRef, finalUpdates);
 
     const trackUpdates = stripUndefined({
       orderStatus: updates.orderStatus,
@@ -1341,10 +1354,10 @@ export async function updateShopOrderStatus(
     if (Object.keys(trackUpdates).length > 1) {
       if (trackingHash) {
         const trackDocId = `trk_${trackingHash.slice(0, 32)}`;
-        await updateDoc(doc(db, 'shops', shopId, 'order_tracking', trackDocId), trackUpdates).catch(() => {});
+        await setDoc(doc(db, 'shops', shopId, 'order_tracking', trackDocId), trackUpdates, { merge: true }).catch(() => {});
       }
       if (resolvedOrderNumber) {
-        await updateDoc(doc(db, 'shops', shopId, 'order_tracking', resolvedOrderNumber), trackUpdates).catch(() => {});
+        await setDoc(doc(db, 'shops', shopId, 'order_tracking', resolvedOrderNumber), trackUpdates, { merge: true }).catch(() => {});
       }
     }
 
@@ -1437,7 +1450,7 @@ export async function trackShopOrder(shopId: string, ref: string, token?: string
 
     // Server backend fallback if running Node API
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/orders/track?shopId=${encodeURIComponent(shopId)}&ref=${encodeURIComponent(upperRef)}&token=${encodeURIComponent(cleanToken)}`
       );
       const contentType = res.headers.get('content-type') || '';
@@ -1669,24 +1682,31 @@ export async function updateShopSettings(shopId: string, settingsPatch: Partial<
     const batch = writeBatch(db);
     batch.set(doc(db, 'shops', shopId, 'settings', 'public'), publicSettingsPayload, { merge: true });
     batch.set(doc(db, 'shops', shopId, 'settings', 'private'), privateSettingsPayload, { merge: true });
-    batch.update(
+    batch.set(
       doc(db, 'shops', shopId),
       stripUndefined({
         name: settings.siteName,
         logoUrl: settings.logoUrl || '',
         city: settings.city,
         address: settings.address,
-        'theme.primaryColor': settings.primaryColor || '#065f46',
-        'theme.accentColor': settings.accentColor || '#d97706',
-        'onboardingChecklist.logoUploaded': Boolean(settings.logoUrl),
-        'onboardingChecklist.paymentConfigured': Boolean(
-          settings.codEnabled !== false ||
-            settings.easypaisaDetails?.enabled ||
-            settings.jazzcashDetails?.enabled ||
-            (settings.bankDetails?.enabled !== false && settings.bankDetails?.accountNumber)
-        ),
+        theme: {
+          ...(existingShopData?.theme || {}),
+          primaryColor: settings.primaryColor || '#065f46',
+          accentColor: settings.accentColor || '#d97706',
+        },
+        onboardingChecklist: {
+          ...(existingShopData?.onboardingChecklist || {}),
+          logoUploaded: Boolean(settings.logoUrl),
+          paymentConfigured: Boolean(
+            settings.codEnabled !== false ||
+              settings.easypaisaDetails?.enabled ||
+              settings.jazzcashDetails?.enabled ||
+              (settings.bankDetails?.enabled !== false && settings.bankDetails?.accountNumber)
+          ),
+        },
         updatedAt: nowIso,
-      })
+      }),
+      { merge: true }
     );
     batch.set(doc(db, 'shops_public', shopId), cleanPublicShopDoc);
     await batch.commit();
@@ -2156,16 +2176,24 @@ export async function updateShopStaffRole(
   status: 'active' | 'inactive'
 ): Promise<void> {
   try {
-    await updateDoc(doc(db, 'shops', shopId, 'staff', staffUid), {
-      role,
-      permissions,
-      status,
-      updatedAt: new Date().toISOString(),
-    });
-    await updateDoc(doc(db, 'users', staffUid, 'shopMemberships', shopId), {
-      role,
-      permissions,
-    }).catch(() => {});
+    await setDoc(
+      doc(db, 'shops', shopId, 'staff', staffUid),
+      {
+        role,
+        permissions,
+        status,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+    await setDoc(
+      doc(db, 'users', staffUid, 'shopMemberships', shopId),
+      {
+        role,
+        permissions,
+      },
+      { merge: true }
+    ).catch(() => {});
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}/staff/${staffUid}`);
   }

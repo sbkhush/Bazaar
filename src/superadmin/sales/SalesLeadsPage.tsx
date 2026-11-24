@@ -22,10 +22,11 @@ import {
   recordSalesActivity,
   updateSalesLead,
 } from '../../services/salesService';
-import { BUSINESS_TYPE_OPTIONS, PAKISTAN_CITIES } from '../../data/seedData';
+import { BUSINESS_TYPE_OPTIONS } from '../../data/seedData';
 import { downloadCsvFile } from '../../utils/csvUtils';
 import { CsvImportModal } from '../../components/common/CsvImportModal';
 import { useToast } from '../../components/common/Toast';
+import { CitySelect } from '../../components/common/CitySelect';
 import {
   BusinessType,
   SalesActivity,
@@ -413,21 +414,16 @@ export const SalesLeadsPage: React.FC = () => {
             </option>
           ))}
         </select>
-        <select
+        <CitySelect
           value={cityFilter}
-          onChange={(e) => {
-            setCityFilter(e.target.value);
+          onChange={(c) => {
+            setCityFilter(c);
             setPage(1);
           }}
-          className="px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white"
-        >
-          <option value="all">All Cities</option>
-          {PAKISTAN_CITIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
+          includeAllOption
+          allLabel="All Cities"
+          placeholder="Filter city..."
+        />
       </div>
 
       {/* Bulk Assignment Bar */}
@@ -633,9 +629,12 @@ export const SalesLeadsPage: React.FC = () => {
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">City *</label>
-                  <select value={city} onChange={(e) => setCity(e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white">
-                    {PAKISTAN_CITIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  <CitySelect
+                    value={city}
+                    onChange={setCity}
+                    required
+                    placeholder="Select city..."
+                  />
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Business Industry</label>

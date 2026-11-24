@@ -22,9 +22,10 @@ import {
   updateSalesMember,
   sendSalesmanPortalReset,
 } from '../../services/salesService';
-import { PAKISTAN_CITIES, BUSINESS_TYPE_OPTIONS, formatPKR } from '../../data/seedData';
-import { buildCsvContent, downloadCsvFile } from '../../utils/csvUtils';
+import { BUSINESS_TYPE_OPTIONS, formatPKR } from '../../data/seedData';
+import { downloadCsvFile } from '../../utils/csvUtils';
 import { useToast } from '../../components/common/Toast';
+import { CitySelect } from '../../components/common/CitySelect';
 import {
   BusinessType,
   PayoutMethod,
@@ -415,21 +416,16 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
           <option value="inactive">Inactive</option>
           <option value="suspended">Suspended</option>
         </select>
-        <select
+        <CitySelect
           value={cityFilter}
-          onChange={(e) => {
-            setCityFilter(e.target.value);
+          onChange={(c) => {
+            setCityFilter(c);
             setPage(1);
           }}
-          className="px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white"
-        >
-          <option value="all">All Cities</option>
-          {PAKISTAN_CITIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
+          includeAllOption
+          allLabel="All Cities"
+          placeholder="Filter city..."
+        />
       </div>
 
       {/* Table */}
@@ -680,17 +676,12 @@ export const SalesMembersPage: React.FC<{ defaultCreateOpen?: boolean }> = ({ de
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">City *</label>
-                  <select
+                  <CitySelect
                     value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white"
-                  >
-                    {PAKISTAN_CITIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setCity}
+                    required
+                    placeholder="Select city..."
+                  />
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Territory / Zone</label>

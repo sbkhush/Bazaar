@@ -11,6 +11,7 @@ import {
 import { StoreSettings, PickupSlotConfig } from '../types';
 import { BRAND, buildShopLegalStarterTemplates } from '../config/brand';
 import { getDefaultPickupSlots } from '../data/seedData';
+import { CitySelect } from '../components/common/CitySelect';
 
 export const ShopSettingsPage: React.FC = () => {
   const { shopId, shop, settings, refreshDashboard, isReadOnly } = useDashboard();
@@ -234,15 +235,13 @@ export const ShopSettingsPage: React.FC = () => {
         </div>
         <div>
           <label className="block font-semibold text-slate-700 mb-1">Store City</label>
-          <input
-            type="text"
-            value={form.city || ''}
-            onChange={(e) => setForm({ ...form, city: e.target.value })}
-            placeholder="Karachi / Lahore / Islamabad"
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+          <CitySelect
+            value={form.city || 'Karachi'}
+            onChange={(nextCity) => setForm({ ...form, city: nextCity })}
+            placeholder="Select store city..."
           />
         </div>
-        <div className="sm:col-span-2 lg:col-span-3">
+        <div className="sm:col-span-2 lg:col-span-2">
           <label className="block font-semibold text-slate-700 mb-1">Store Street Address</label>
           <input
             type="text"
@@ -250,6 +249,29 @@ export const ShopSettingsPage: React.FC = () => {
             onChange={(e) => setForm({ ...form, address: e.target.value })}
             className="w-full px-3 py-2 border border-slate-200 rounded-lg"
           />
+        </div>
+        <div>
+          <label className="block font-semibold text-slate-700 mb-1">Owner CNIC Verification</label>
+          <div className="px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
+            <span className="font-mono text-slate-700">
+              {shop?.cnicMasked || 'Pending Platform Audit'}
+            </span>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                shop?.cnicVerified
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : shop?.cnicStatus === 'released'
+                  ? 'bg-slate-200 text-slate-700'
+                  : 'bg-amber-100 text-amber-800'
+              }`}
+            >
+              {shop?.cnicVerified
+                ? 'Verified'
+                : shop?.cnicStatus === 'released'
+                ? 'Released'
+                : 'Audit Pending'}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -446,14 +468,12 @@ export const ShopSettingsPage: React.FC = () => {
           </div>
           <div>
             <label className="block font-semibold text-slate-700 mb-1">Outlet City</label>
-            <input
-              type="text"
-              value={form.selfPickupDetails.city}
-              onChange={(e) =>
-                setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, city: e.target.value } })
+            <CitySelect
+              value={form.selfPickupDetails.city || form.city || 'Karachi'}
+              onChange={(nextCity) =>
+                setForm({ ...form, selfPickupDetails: { ...form.selfPickupDetails, city: nextCity } })
               }
-              placeholder="City"
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+              placeholder="Select outlet city..."
             />
           </div>
           <div>

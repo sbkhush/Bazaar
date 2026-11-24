@@ -15,9 +15,10 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { auth } from '../firebase/config';
-import { PAKISTAN_CITIES, isValidPakistaniPhone } from '../data/seedData';
+import { isValidPakistaniPhone } from '../data/seedData';
 import { submitReferralPartnerApplication } from '../services/salesService';
 import { BrandLogo } from '../components/common/BrandLogo';
+import { CitySelect } from '../components/common/CitySelect';
 
 export const ReferralRegisterPage: React.FC = () => {
   const {
@@ -305,17 +306,12 @@ export const ReferralRegisterPage: React.FC = () => {
 
                   <div>
                     <label className="block font-bold text-slate-700 mb-1">City *</label>
-                    <select
+                    <CitySelect
                       value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white"
-                    >
-                      {PAKISTAN_CITIES.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={setCity}
+                      required
+                      placeholder="Select city..."
+                    />
                   </div>
 
                   <div>

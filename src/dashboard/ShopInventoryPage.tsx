@@ -34,6 +34,7 @@ export const ShopInventoryPage: React.FC = () => {
   const [moveNote, setMoveNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [csvModalOpen, setCsvModalOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadData = async () => {
     if (!shopId) return;
@@ -56,21 +57,27 @@ export const ShopInventoryPage: React.FC = () => {
 
   const handleQuickAdjust = async (productId: string, delta: number) => {
     if (isReadOnly) return;
-    await adjustShopStock(
-      shopId,
-      productId,
-      delta,
-      delta > 0 ? 'Quick Stock In' : 'Quick Stock Out',
-      currentUser?.email || 'Admin',
-      delta > 0 ? 'stock_in' : 'stock_out'
-    );
-    await loadData();
+    setActionError(null);
+    try {
+      await adjustShopStock(
+        shopId,
+        productId,
+        delta,
+        delta > 0 ? 'Quick Stock In' : 'Quick Stock Out',
+        currentUser?.email || 'Admin',
+        delta > 0 ? 'stock_in' : 'stock_out'
+      );
+      await loadData();
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not update inventory quantity.');
+    }
   };
 
   const handleModalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!modalProduct || isReadOnly) return;
     setSubmitting(true);
+    setActionError(null);
     try {
       const isNegative =
         moveType === 'stock_out' || moveType === 'damaged' || moveType === 'wastage';
@@ -87,6 +94,8 @@ export const ShopInventoryPage: React.FC = () => {
       setMoveQty(1);
       setMoveNote('');
       await loadData();
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not record stock movement.');
     } finally {
       setSubmitting(false);
     }
@@ -150,21 +159,25 @@ export const ShopInventoryPage: React.FC = () => {
         : deltaRaw > 0
         ? 'stock_in'
         : 'adjustment';
-      await adjustShopStock(
-        shopId,
-        match.id,
-        deltaRaw,
-        (r.reason || 'CSV Stock Adjustment').trim(),
-        currentUser?.email || 'Admin',
-        movementType
-      );
-      imported++;
+      try {
+        await adjustShopStock(
+          shopId,
+          match.id,
+          deltaRaw,
+          (r.reason || 'CSV Stock Adjustment').trim(),
+          currentUser?.email || 'Admin',
+          movementType
+        );
+        imported++;
+      } catch {
+        skipped++;
+      }
     }
     await loadData();
     return {
       imported,
       skipped,
-      notes: skipped > 0 ? 'Unmatched SKU/barcode rows or zero-delta rows were skipped.' : undefined,
+      notes: skipped > 0 ? 'Unmatched SKU/barcode rows, zero-delta rows, or failed adjustments were skipped.' : undefined,
     };
   };
 
@@ -196,6 +209,15 @@ export const ShopInventoryPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {actionError && (
+        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center justify-between gap-2">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss error">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Valuation Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

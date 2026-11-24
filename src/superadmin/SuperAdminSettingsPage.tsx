@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Save,
   Loader2,
@@ -16,6 +17,7 @@ import { PlatformSettings } from '../types';
 import { DEFAULT_PLATFORM_SETTINGS } from '../data/seedData';
 import { ImageUploader } from '../components/common/ImageUploader';
 import { SOCIAL_PLATFORM_META, getConfiguredSocialLinks } from '../utils/socialLinks';
+import { apiFetch, isExternalApiConfigured } from '../utils/apiClient';
 import {
   BRAND,
   DEFAULT_PLATFORM_PRIVACY_POLICY,
@@ -49,17 +51,24 @@ export const SuperAdminSettingsPage: React.FC = () => {
     try {
       const [sh, apiRes] = await Promise.all([
         checkStorageHealth(),
-        fetch('/api/health')
+        apiFetch('/api/health')
           .then(async (r) => {
             const ct = r.headers.get('content-type') || '';
             if (r.ok && ct.includes('application/json')) {
               return (await r.json()) as ApiHealthReport;
             }
-            return { ok: false, message: 'Static SPA hosting active (Express API not running on this origin).' };
+            return {
+              ok: false,
+              message: isExternalApiConfigured()
+                ? 'Configured Express API returned non-JSON response.'
+                : 'Static SPA hosting active (configure VITE_API_BASE_URL to connect an external Express API).',
+            };
           })
-          .catch(() => ({
+          .catch((err: any) => ({
             ok: false,
-            message: 'Static SPA hosting active (Express API not reachable from this origin).',
+            message: err?.isUnconfiguredBackend
+              ? 'Static SPA hosting active (configure VITE_API_BASE_URL to connect an external Express API).'
+              : 'Express API not reachable from this origin.',
           })),
       ]);
       setStorageHealth(sh);
@@ -497,22 +506,22 @@ export const SuperAdminSettingsPage: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <a
-              href="/privacy-policy"
+            <Link
+              to="/privacy-policy"
               target="_blank"
               rel="noopener noreferrer"
               className="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-[11px] font-semibold inline-flex items-center gap-1"
             >
               Preview Privacy <ExternalLink className="w-3 h-3" />
-            </a>
-            <a
-              href="/terms-and-conditions"
+            </Link>
+            <Link
+              to="/terms-and-conditions"
               target="_blank"
               rel="noopener noreferrer"
               className="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-[11px] font-semibold inline-flex items-center gap-1"
             >
               Preview Terms <ExternalLink className="w-3 h-3" />
-            </a>
+            </Link>
           </div>
         </div>
 

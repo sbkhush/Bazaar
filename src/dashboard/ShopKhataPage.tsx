@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BookOpen, Loader2, Plus, Printer } from 'lucide-react';
+import { BookOpen, Loader2, Plus, Printer, X } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
   getShopCustomersWithKhata,
@@ -22,6 +22,7 @@ export const ShopKhataPage: React.FC = () => {
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadData = async (custId?: string) => {
     if (!shopId) return;
@@ -62,6 +63,7 @@ export const ShopKhataPage: React.FC = () => {
     e.preventDefault();
     if (!selectedCustomer || isReadOnly || !amount) return;
     setSubmitting(true);
+    setActionError(null);
     try {
       await recordKhataTransaction(shopId, {
         customerId: selectedCustomer.id,
@@ -76,6 +78,8 @@ export const ShopKhataPage: React.FC = () => {
       setReference('');
       setNotes('');
       await loadData(selectedCustomer.id);
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not record Khata transaction.');
     } finally {
       setSubmitting(false);
     }
@@ -104,6 +108,15 @@ export const ShopKhataPage: React.FC = () => {
             </button>
           )}
         </div>
+
+        {actionError && (
+          <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center justify-between gap-2 no-print">
+            <span>{actionError}</span>
+            <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss error">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {loading ? (
           <div className="py-16 flex justify-center text-xs text-slate-500 gap-2">

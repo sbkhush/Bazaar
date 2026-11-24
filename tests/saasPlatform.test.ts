@@ -77,7 +77,8 @@ describe('Priority 1 & 2: Multi-Tenant Firestore & Storage Rules Audit', () => {
   });
 
   it('prevents staff self-escalation, owner tampering, and subscription forgery', () => {
-    expect(firestoreRules).toContain("!incoming().diff(existing()).affectedKeys().hasAny(['ownerId', 'slug', 'status', 'subscription'])");
+    expect(firestoreRules).toContain("'ownerId', 'slug', 'status', 'subscription'");
+    expect(firestoreRules).toContain("'cnicHash', 'cnicLast4', 'cnicMasked', 'cnicVerified', 'cnicStatus', 'cnicUpdatedAt'");
     expect(firestoreRules).toContain("!incoming().diff(existing()).affectedKeys().hasAny(['role', 'isBlocked'])");
     expect(firestoreRules).toContain("existing().role != 'shop_owner'");
     expect(firestoreRules).toContain("incoming().role == get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.role");
@@ -87,7 +88,7 @@ describe('Priority 1 & 2: Multi-Tenant Firestore & Storage Rules Audit', () => {
   it('enforces claim-based tenant isolation, private payment/subscription receipts, 5MB limit, and image MIME types in Storage', () => {
     expect(storageRules).toContain('request.auth.token.shops[shopId]');
     expect(storageRules).toContain('match /shops/{shopId}/logo/{allPaths=**}');
-    expect(storageRules).toContain('match /shops/{shopId}/products/{productId}/{allPaths=**}');
+    expect(storageRules).toContain('match /shops/{shopId}/products/{allPaths=**}');
     expect(storageRules).toContain('match /shops/{shopId}/banners/{allPaths=**}');
     expect(storageRules).toContain('match /shops/{shopId}/categories/{allPaths=**}');
     expect(storageRules).toContain('match /shops/{shopId}/pages/{allPaths=**}');

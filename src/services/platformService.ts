@@ -13,7 +13,15 @@ import {
   limit,
   runTransaction,
 } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db, auth } from '../firebase/config';
+import { apiFetch } from '../utils/apiClient';
+import {
+  DUPLICATE_CNIC_ERROR_MESSAGE,
+  CNIC_AUDIT_BLOCK_MESSAGE,
+  isValidCnic,
+  normalizeCnic,
+} from '../utils/cnic';
 import {
   Shop,
   ShopPublic,
@@ -548,11 +556,40 @@ export async function getAllShopsAdmin(): Promise<Shop[]> {
   }
 }
 
+export async function getShopsByOwner(ownerUid: string): Promise<Shop[]> {
+  if (!ownerUid) return [];
+  const q = query(collection(db, 'shops'), where('ownerId', '==', ownerUid));
+  const snap = await getDocs(q);
+  const shops: Shop[] = [];
+  snap.forEach((d) => shops.push({ ...(d.data() as Shop), id: d.id }));
+  return shops;
+}
+
+export function auditShopCnicStatus(shop?: Partial<Shop> | null): 'verified' | 'pending_audit' | 'released' {
+  if (!shop) return 'pending_audit';
+  if (shop.cnicStatus === 'released') return 'released';
+  if (shop.cnicHash && shop.cnicVerified !== false) return 'verified';
+  return 'pending_audit';
+}
+
+export async function ownerHasPendingCnicAudit(ownerUid: string): Promise<boolean> {
+  if (!ownerUid) return false;
+  try {
+    const owned = await getShopsByOwner(ownerUid);
+    return owned.some(
+      (s: Shop) => String(s.status) !== 'deleted' && auditShopCnicStatus(s) === 'pending_audit'
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function registerNewShop(input: {
   ownerId: string;
   ownerName: string;
   ownerEmail: string;
   ownerPhone: string;
+  cnic: string;
   shopName: string;
   shopSlug: string;
   businessType?: BusinessType;
@@ -571,247 +608,155 @@ export async function registerNewShop(input: {
     proofUrl: string;
   };
 }): Promise<Shop> {
+  const cnicCheck = isValidCnic(input.cnic);
+  if (!cnicCheck.valid) {
+    throw new Error(cnicCheck.error || 'Please enter a valid 13-digit Pakistani CNIC.');
+  }
+
   const slugCheck = await checkSlugAvailability(input.shopSlug);
   if (!slugCheck.available) {
     throw new Error(slugCheck.reason || 'Shop URL slug is unavailable.');
   }
 
+  const hasPendingAudit = await ownerHasPendingCnicAudit(input.ownerId);
+  if (hasPendingAudit) {
+    throw new Error(CNIC_AUDIT_BLOCK_MESSAGE);
+  }
+
   const plans = await getSubscriptionPlans();
   const freePlan = plans.find((p) => p.id === 'free-starter') || DEFAULT_SUBSCRIPTION_PLANS[0];
   const requestedPlan = plans.find((p) => p.id === input.planId) || freePlan;
-  // All new registrations start on Free Plan by default until manual upgrade payment is approved by Super Admin
-  const assignedPlan = freePlan;
-  const now = new Date();
-  const nowIso = now.toISOString();
-
-  const expiryDate = new Date(now.getTime() + (assignedPlan.durationDays || 36500) * 24 * 60 * 60 * 1000).toISOString();
-  const shopId = slugCheck.cleanSlug;
   const businessType: BusinessType = input.businessType || 'general_store';
 
-  const newShop: Shop = {
-    id: shopId,
-    slug: slugCheck.cleanSlug,
-    name: input.shopName.trim(),
-    businessType,
-    ownerId: input.ownerId,
+  const currentUser = auth.currentUser;
+  if (!currentUser || currentUser.uid !== input.ownerId) {
+    throw new Error('Please sign in with the shop owner account before registering.');
+  }
+
+  let registeredShop: Shop | null = null;
+
+  const payload = {
     ownerName: input.ownerName.trim(),
     ownerEmail: input.ownerEmail.trim(),
     ownerPhone: input.ownerPhone.trim(),
+    cnic: cnicCheck.normalized,
+    shopName: input.shopName.trim(),
+    shopSlug: slugCheck.cleanSlug,
+    businessType,
     city: input.city.trim(),
     address: input.address.trim(),
-    logoUrl: '',
-    status: 'active',
-    subscription: {
-      planId: assignedPlan.id,
-      planName: assignedPlan.name,
-      status: 'active',
-      billingCycle: 'monthly',
-      pricePaid: 0,
-      startDate: nowIso,
-      expiryDate,
-      autoRenew: false,
-    },
-    usage: {
-      productsCount: 0,
-      ordersCount: 0,
-      storageBytes: 0,
-      staffCount: 1,
-    },
-    theme: {
-      primaryColor: '#065f46',
-      accentColor: '#d97706',
-      heroTitle: `Welcome to ${input.shopName.trim()}`,
-      heroSubtitle: `Authentic curated essentials delivered across Pakistan with Cash on Delivery & Self-Pickup.`,
-      showTestimonials: true,
-      showBuyingGuide: assignedPlan.features.buyingGuide,
-    },
-    onboardingChecklist: {
-      accountCreated: true,
-      logoUploaded: false,
-      paymentConfigured: false,
-      firstProductAdded: false,
-    },
-    lastActivityAt: nowIso,
-    createdAt: nowIso,
-    updatedAt: nowIso,
+    planId: input.planId,
+    billingCycle: input.billingCycle,
   };
 
+  // Primary atomic path: Firebase Cloud Function registerShopWithCnic (server-side HMAC + transaction)
   try {
-    // Step 1: Reserve slug first atomically (rule rejects if /shops/{shopId} already exists)
-    await setDoc(doc(db, 'shop_slugs', slugCheck.cleanSlug), {
-      slug: slugCheck.cleanSlug,
-      shopId,
-      ownerId: input.ownerId,
-      name: newShop.name,
-      createdAt: nowIso,
-    });
-
-    // Step 2: Create private master shop doc
-    await setDoc(doc(db, 'shops', shopId), stripUndefined(newShop));
-
-    // Step 3: Batch initialize public mirror, owner staff, membership, split settings (public + private), starter categories
-    const batch = writeBatch(db);
-
-    const publicDoc = toShopPublic(newShop, { city: newShop.city, address: newShop.address });
-    batch.set(doc(db, 'shops_public', shopId), stripUndefined(publicDoc));
-
-    const ownerStaff: StaffMember = {
-      uid: input.ownerId,
-      email: input.ownerEmail.trim(),
-      name: input.ownerName.trim(),
-      role: 'shop_owner',
-      permissions: [
-        'overview',
-        'products',
-        'categories',
-        'orders',
-        'customers',
-        'inventory',
-        'coupons',
-        'banners',
-        'appearance',
-        'settings',
-        'staff',
-        'reports',
-        'subscription',
-        'pos',
-        'suppliers',
-        'purchases',
-        'khata',
-      ],
-      status: 'active',
-      createdAt: nowIso,
-    };
-    batch.set(doc(db, 'shops', shopId, 'staff', input.ownerId), stripUndefined(ownerStaff));
-
-    const membership: ShopMembership = {
-      shopId,
-      shopName: newShop.name,
-      shopSlug: newShop.slug,
-      role: 'shop_owner',
-      joinedAt: nowIso,
-    };
-    batch.set(doc(db, 'users', input.ownerId, 'shopMemberships', shopId), stripUndefined(membership));
-
-    const fullSettings: StoreSettings = {
-      ...INITIAL_SETTINGS,
-      siteName: newShop.name,
-      contactPhone: input.ownerPhone.trim(),
-      whatsappNumber: input.ownerPhone.trim(),
-      contactEmail: input.ownerEmail.trim(),
-      address: `${input.address.trim()}, ${input.city.trim()}`,
-      city: input.city.trim(),
-      bankDetails: {
-        ...INITIAL_SETTINGS.bankDetails,
-        accountTitle: newShop.name,
-      },
-      easypaisaDetails: {
-        ...INITIAL_SETTINGS.easypaisaDetails,
-        accountTitle: newShop.name,
-        accountNumber: input.ownerPhone.trim(),
-      },
-      jazzcashDetails: {
-        ...INITIAL_SETTINGS.jazzcashDetails,
-        accountTitle: newShop.name,
-        accountNumber: input.ownerPhone.trim(),
-      },
-      selfPickupDetails: {
-        ...INITIAL_SETTINGS.selfPickupDetails,
-        title: `${newShop.name} Outlet (${input.city.trim()})`,
-        address: input.address.trim(),
-        city: input.city.trim(),
-        contactPhone: input.ownerPhone.trim(),
-      },
-    };
-
-    const publicSettingsPayload = {
-      siteName: fullSettings.siteName,
-      logoUrl: fullSettings.logoUrl,
-      primaryColor: fullSettings.primaryColor,
-      accentColor: fullSettings.accentColor,
-      announcement: fullSettings.announcement,
-      contactPhone: fullSettings.contactPhone,
-      whatsappNumber: fullSettings.whatsappNumber,
-      contactEmail: fullSettings.contactEmail,
-      address: fullSettings.address,
-      city: fullSettings.city,
-      shippingFee: fullSettings.shippingFee,
-      freeShippingThreshold: fullSettings.freeShippingThreshold,
-      currency: fullSettings.currency,
-      currencySymbol: fullSettings.currencySymbol,
-      aboutUs: fullSettings.aboutUs,
-      selfPickupDetails: fullSettings.selfPickupDetails,
-      socialLinks: fullSettings.socialLinks,
-      easypaisaDetails: fullSettings.easypaisaDetails.enabled ? fullSettings.easypaisaDetails : { enabled: false, accountTitle: '', accountNumber: '' },
-      jazzcashDetails: fullSettings.jazzcashDetails.enabled ? fullSettings.jazzcashDetails : { enabled: false, accountTitle: '', accountNumber: '' },
-      bankDetails: fullSettings.bankDetails,
-      updatedAt: nowIso,
-    };
-
-    const privateSettingsPayload = {
-      bankDetails: fullSettings.bankDetails,
-      easypaisaDetails: fullSettings.easypaisaDetails,
-      jazzcashDetails: fullSettings.jazzcashDetails,
-      ownerBillingEmail: input.ownerEmail.trim(),
-      ownerPrivatePhone: input.ownerPhone.trim(),
-      updatedAt: nowIso,
-    };
-
-    batch.set(doc(db, 'shops', shopId, 'settings', 'public'), stripUndefined(publicSettingsPayload));
-    batch.set(doc(db, 'shops', shopId, 'settings', 'private'), stripUndefined(privateSettingsPayload));
-
-    const defaultCats = getDefaultCategoriesForBusinessType(businessType);
-    for (const cat of defaultCats) {
-      const catId = `cat_${cat.slug}`;
-      batch.set(
-        doc(db, 'shops', shopId, 'categories', catId),
-        stripUndefined({ ...cat, id: catId, shopId })
+    const functions = getFunctions(auth.app);
+    const registerFn = httpsCallable<typeof payload, { shop: Shop }>(functions, 'registerShopWithCnic');
+    const result = await registerFn(payload);
+    if (result?.data?.shop) {
+      registeredShop = result.data.shop;
+    }
+  } catch (cfErr: any) {
+    const code = String(cfErr?.code || '');
+    const msg = String(cfErr?.message || '');
+    // Reject duplicates, slug conflicts, or audit blocks immediately — NEVER bypass!
+    if (
+      code.includes('already-exists') ||
+      msg.includes('Only one shop can be registered against one CNIC')
+    ) {
+      throw new Error(
+        msg.toLowerCase().includes('slug') ? msg : DUPLICATE_CNIC_ERROR_MESSAGE
       );
     }
+    if (
+      code.includes('invalid-argument') ||
+      code.includes('permission-denied') ||
+      code.includes('failed-precondition') ||
+      code.includes('unauthenticated')
+    ) {
+      throw new Error(msg || 'CNIC shop registration rejected.');
+    }
 
-    await batch.commit();
-
-    if (requestedPlan.monthlyPrice > 0 && input.paymentProof) {
-      const amount = input.billingCycle === 'yearly' ? requestedPlan.yearlyPrice : requestedPlan.monthlyPrice;
-      await submitSubscriptionPayment({
-        shopId,
-        shopName: newShop.name,
-        shopSlug: newShop.slug,
-        ownerId: input.ownerId,
-        ownerEmail: input.ownerEmail,
-        planId: requestedPlan.id,
-        planName: requestedPlan.name,
-        billingCycle: input.billingCycle,
-        amount,
-        method: input.paymentProof.method,
-        transactionId: input.paymentProof.transactionId,
-        senderNumber: input.paymentProof.senderNumber,
-        proofUrl: input.paymentProof.proofUrl,
+    // Reachability fallback ONLY to trusted Express backend /api/shops/register (never unverified direct client DB)
+    const idToken = await currentUser.getIdToken();
+    try {
+      const apiRes = await apiFetch('/api/shops/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify(payload),
       });
+      const contentType = apiRes.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(
+          'Shop registration verification service is temporarily unreachable. Please try again or contact SB Khush Support.'
+        );
+      }
+      const json = await apiRes.json();
+      if (!apiRes.ok) {
+        if (apiRes.status === 409 && json?.code === 'DUPLICATE_CNIC') {
+          throw new Error(DUPLICATE_CNIC_ERROR_MESSAGE);
+        }
+        throw new Error(json?.error || 'Failed to verify CNIC and register shop.');
+      }
+      registeredShop = json.shop as Shop;
+    } catch (apiErr: any) {
+      if (apiErr?.isUnconfiguredBackend) {
+        throw new Error(
+          'CNIC verification backend (Cloud Functions or VITE_API_BASE_URL) is unreachable. Registration halted to enforce One-CNIC-One-Shop.'
+        );
+      }
+      throw apiErr;
     }
-
-    if (input.referralCode?.trim()) {
-      await recordReferralAttribution({
-        referralCode: input.referralCode.trim(),
-        shopId,
-        shopSlug: newShop.slug,
-        shopName: newShop.name,
-        ownerId: input.ownerId,
-        ownerEmail: input.ownerEmail,
-        ownerPhone: input.ownerPhone,
-        city: newShop.city,
-        industry: businessType,
-        leadId: input.leadId,
-        source: input.referralSource || 'code_entry',
-        capturedAt: input.referralCapturedAt,
-      }).catch((e) => console.warn('Referral attribution note:', e));
-    }
-
-    await logPlatformActivity('Registered Shop', 'shop', shopId, `New ${businessType} shop "${newShop.name}" registered on ${assignedPlan.name}`);
-    return newShop;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}`);
   }
+
+  if (!registeredShop) {
+    throw new Error('Could not complete atomic CNIC shop registration.');
+  }
+
+  // Refresh Firebase Auth custom claims so the new owner immediately receives shopRoles claims
+  await currentUser.getIdToken(true).catch(() => {});
+
+  if (requestedPlan.monthlyPrice > 0 && input.paymentProof) {
+    const amount = input.billingCycle === 'yearly' ? requestedPlan.yearlyPrice : requestedPlan.monthlyPrice;
+    await submitSubscriptionPayment({
+      shopId: registeredShop.id,
+      shopName: registeredShop.name,
+      shopSlug: registeredShop.slug,
+      ownerId: input.ownerId,
+      ownerEmail: input.ownerEmail,
+      planId: requestedPlan.id,
+      planName: requestedPlan.name,
+      billingCycle: input.billingCycle,
+      amount,
+      method: input.paymentProof.method,
+      transactionId: input.paymentProof.transactionId,
+      senderNumber: input.paymentProof.senderNumber,
+      proofUrl: input.paymentProof.proofUrl,
+    });
+  }
+
+  if (input.referralCode?.trim()) {
+    await recordReferralAttribution({
+      referralCode: input.referralCode.trim(),
+      shopId: registeredShop.id,
+      shopSlug: registeredShop.slug,
+      shopName: registeredShop.name,
+      ownerId: input.ownerId,
+      ownerEmail: input.ownerEmail,
+      ownerPhone: input.ownerPhone,
+      city: registeredShop.city,
+      industry: businessType,
+      leadId: input.leadId,
+      source: input.referralSource || 'code_entry',
+      capturedAt: input.referralCapturedAt,
+    }).catch((e) => console.warn('Referral attribution note:', e));
+  }
+
+  return registeredShop;
 }
 
 export async function updateShopStatus(shopId: string, status: ShopStatus): Promise<void> {
@@ -942,61 +887,82 @@ export async function extendShopSubscription(shopId: string, extraDays: number):
   }
 }
 
-export async function deleteShopComplete(shopId: string): Promise<void> {
+export async function manageShopCnic(params: {
+  shopId: string;
+  action: 'assign' | 'release';
+  cnic?: string;
+  reason?: string;
+}): Promise<{ ok: boolean; cnicStatus: string; cnicMasked: string }> {
+  const cleanPayload = {
+    shopId: params.shopId,
+    action: params.action,
+    cnic: params.cnic ? normalizeCnic(params.cnic) : undefined,
+    reason: params.reason?.trim() || 'Super Admin CNIC audit action',
+  };
+
+  if (params.action === 'assign') {
+    const check = isValidCnic(cleanPayload.cnic || '');
+    if (!check.valid) {
+      throw new Error(check.error || 'Valid 13-digit CNIC is required.');
+    }
+  }
+
   try {
-    const shop = await getShopById(shopId);
-    const subcollections = [
-      'products',
-      'categories',
-      'banners',
-      'orders',
-      'order_tracking',
-      'coupons',
-      'reviews',
-      'inventory_logs',
-      'contact_messages',
-      'settings',
-      'staff',
-      'notifications',
-      'activity_logs',
-      'customers',
-      'suppliers',
-      'purchases',
-      'pos_sales',
-      'stock_movements',
-      'khata_ledger',
-      'expenses',
-      'pages',
-      'carts',
-      'wishlists',
-      'pickup_slots',
-      'newsletter_subscribers',
-    ];
-
-    for (const sub of subcollections) {
-      const snap = await getDocs(collection(db, 'shops', shopId, sub));
-      if (!snap.empty) {
-        const docs = snap.docs;
-        for (let i = 0; i < docs.length; i += 400) {
-          const chunk = docs.slice(i, i + 400);
-          const batch = writeBatch(db);
-          chunk.forEach((d) => batch.delete(d.ref));
-          await batch.commit();
-        }
-      }
+    const functions = getFunctions(auth.app);
+    const manageFn = httpsCallable<typeof cleanPayload, { ok: boolean; cnicStatus: string; cnicMasked: string }>(
+      functions,
+      'manageShopCnicAdmin'
+    );
+    const res = await manageFn(cleanPayload);
+    return res.data;
+  } catch (cfErr: any) {
+    const code = String(cfErr?.code || '');
+    const msg = String(cfErr?.message || '');
+    if (code.includes('already-exists') || msg.includes('Only one shop can be registered against one CNIC')) {
+      throw new Error(DUPLICATE_CNIC_ERROR_MESSAGE);
+    }
+    if (code.includes('permission-denied') || code.includes('invalid-argument') || code.includes('not-found')) {
+      throw new Error(msg || 'CNIC audit update failed.');
     }
 
-    if (shop?.slug) {
-      await deleteDoc(doc(db, 'shop_slugs', shop.slug)).catch(() => {});
+    const token = await auth.currentUser?.getIdToken().catch(() => '');
+    const res = await apiFetch('/api/super-admin/cnic/manage', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(cleanPayload),
+    });
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      throw new Error('Could not reach CNIC management backend.');
     }
-    if (shop?.ownerId) {
-      await deleteDoc(doc(db, 'users', shop.ownerId, 'shopMemberships', shopId)).catch(() => {});
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json?.error || 'CNIC management failed.');
     }
-    await deleteDoc(doc(db, 'shops_public', shopId)).catch(() => {});
-    await deleteDoc(doc(db, 'shops', shopId));
-    await logPlatformActivity('Deleted Shop', 'shop', shopId, `Permanently removed shop ${shop?.name || shopId}`);
-  } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}`);
+    return json;
+  }
+}
+
+export async function deleteShopComplete(shopId: string): Promise<void> {
+  if (!auth.currentUser) {
+    throw new Error('Super Admin authentication required to delete a shop.');
+  }
+  try {
+    const functions = getFunctions(auth.app);
+    const deleteFn = httpsCallable<{ shopId: string }, { ok: boolean }>(
+      functions,
+      'deleteShopCompleteAdmin'
+    );
+    await deleteFn({ shopId });
+  } catch (err: any) {
+    const msg = String(err?.message || '');
+    throw new Error(
+      msg ||
+        'Complete shop deletion requires the deployed Super Admin Cloud Function (deleteShopCompleteAdmin).'
+    );
   }
 }
 
@@ -1320,10 +1286,14 @@ export async function getPlatformAnalytics(): Promise<PlatformAnalyticsSummary> 
 
 export async function updateShopAdminNotes(shopId: string, adminNotes: string): Promise<void> {
   try {
-    await updateDoc(doc(db, 'shops', shopId), {
-      adminNotes,
-      updatedAt: new Date().toISOString(),
-    });
+    await setDoc(
+      doc(db, 'shops', shopId),
+      {
+        adminNotes,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
     await logPlatformActivity('Updated Admin Notes', 'shop', shopId, `Updated internal Super Admin notes for ${shopId}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}`);
