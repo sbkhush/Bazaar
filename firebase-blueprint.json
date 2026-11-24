@@ -57,6 +57,21 @@
       },
       "required": ["email", "role"]
     },
+    "DemoAdmin": {
+      "title": "Demo Super Admin Identity",
+      "description": "Isolated DEMO Super Admin account profile strictly restricted to /demo_env/default",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "accountType": { "type": "string", "enum": ["DEMO"] },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "demoScope": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "accountType", "status"]
+    },
     "PlatformSettings": {
       "title": "Platform Settings",
       "description": "SaaS platform configuration, branding, social links, SEO, and Super Admin billing accounts",
@@ -428,6 +443,13 @@
     "/platform_admins/{uid}": {
       "schema": { "$ref": "#/entities/PlatformAdmin" },
       "description": "Platform Super Admin identities"
+    },
+    "/demo_admins/{uid}": {
+      "schema": { "$ref": "#/entities/DemoAdmin" },
+      "description": "Isolated Demo Super Admin registry (writable strictly by production Super Admin)"
+    },
+    "/demo_env/{envId}": {
+      "description": "Isolated Demo Sandbox namespace (`/demo_env/default/...`) air-gapped from production collections"
     },
     "/platform_settings/{docId}": {
       "schema": { "$ref": "#/entities/PlatformSettings" },

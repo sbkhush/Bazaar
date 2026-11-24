@@ -44,3 +44,8 @@
 10. Public unauthenticated query on `shops/{shopId}/inventory_logs`, `contact_messages`, or `settings/private` -> DENIED
 11. Slug hijacking existing `shop_slugs/{slug}` or registering duplicate CNIC on `cnic_registry/{hmacKey}` -> DENIED / ATOMIC REJECT
 12. Uploading non-image, >5MB payload, or reading private `payments/` / `subscription/` receipts publicly -> DENIED
+13. **Demo Super Admin Air-Gap (`demo-admin@sbkhush.com`, `account_type: 'DEMO'`)**:
+    - Claims strictly enforce `{ super_admin: false, demo_super_admin: true, account_type: 'DEMO', demo_scope: 'demo_env/default', shops: {}, sales_role: null }`.
+    - `isNotDemoAccount()` excludes the demo identity from all production Firestore collections (`shops`, `users`, `platform_admins`, `platform_payments`, `cnic_registry`, `archived_shops`, `salesMembers`, `commissionLedger`, etc.), all production Storage prefixes, all Cloud Functions (`assertSuperAdmin`), and Express `/api/super-admin/*` + `/api/demo/reset`.
+    - Demo account reads and writes exclusively inside `/demo_env/default/...` and cannot create `/platform_admins` or `/admins`, nor elevate any sales role to `super_admin`.
+    - Demo environment reset (`/api/demo/reset` and `resetDemoEnvironmentAdmin`) is restricted exclusively to authorized production Super Admins.

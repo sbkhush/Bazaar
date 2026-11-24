@@ -1,6 +1,4 @@
 import {
-  doc,
-  collection,
   getDoc,
   getDocs,
   setDoc,
@@ -17,6 +15,7 @@ import {
 import { db, auth } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
 import { apiFetch } from '../utils/apiClient';
+import { isDemoNamespace, scopedCollection, scopedDoc } from '../utils/demoCollection';
 import {
   Product,
   Category,
@@ -151,7 +150,7 @@ export async function getSelfPickupSlotAvailability(
   const baseSlots = normalizePickupSlots(configuredSlots).filter((s) => s.isActive !== false);
   const snaps = await Promise.all(
     baseSlots.map((slot) =>
-      getDoc(doc(db, 'shops', shopId, 'pickup_slots', buildPickupSlotKey(cleanDate, slot.id))).catch(() => null)
+      getDoc(scopedDoc(db, 'shops', shopId, 'pickup_slots', buildPickupSlotKey(cleanDate, slot.id))).catch(() => null)
     )
   );
   return baseSlots.map((slot, index) => {
@@ -189,7 +188,7 @@ export function getProductLimitErrorMessage(planId: string | undefined, planName
 }
 
 export async function getShopAndPlanLimits(shopId: string) {
-  const shopSnap = await getDoc(doc(db, 'shops', shopId));
+  const shopSnap = await getDoc(scopedDoc(db, 'shops', shopId));
   if (!shopSnap.exists()) {
     return {
       shop: null as Shop | null,
@@ -199,7 +198,7 @@ export async function getShopAndPlanLimits(shopId: string) {
     };
   }
   const shop = { ...(shopSnap.data() as Shop), id: shopSnap.id };
-  const plansSnap = await getDoc(doc(db, 'platform_plans', shop.subscription?.planId || 'free-starter'));
+  const plansSnap = await getDoc(scopedDoc(db, 'platform_plans', shop.subscription?.planId || 'free-starter'));
   const defaultFallback =
     DEFAULT_SUBSCRIPTION_PLANS.find((p) => p.id === shop.subscription?.planId) ||
     (shop.subscription?.planId === 'growth-plus' ? DEFAULT_SUBSCRIPTION_PLANS[2] : undefined) ||
@@ -231,8 +230,8 @@ export async function logShopActivity(
       details,
       createdAt: new Date().toISOString(),
     };
-    await setDoc(doc(db, 'shops', shopId, 'activity_logs', id), payload);
-    await setDoc(doc(db, 'shops', shopId), { lastActivityAt: payload.createdAt }, { merge: true }).catch(() => {});
+    await setDoc(scopedDoc(db, 'shops', shopId, 'activity_logs', id), payload);
+    await setDoc(scopedDoc(db, 'shops', shopId), { lastActivityAt: payload.createdAt }, { merge: true }).catch(() => {});
   } catch (err) {
     console.warn('Shop activity log warning:', err);
   }
@@ -240,7 +239,7 @@ export async function logShopActivity(
 
 export async function getShopActivityLogs(shopId: string): Promise<ActivityLog[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'activity_logs'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'activity_logs'));
     const list: ActivityLog[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as ActivityLog), id: d.id }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 60);
@@ -251,7 +250,7 @@ export async function getShopActivityLogs(shopId: string): Promise<ActivityLog[]
 
 export async function getShopNotifications(shopId: string): Promise<NotificationItem[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'notifications'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'notifications'));
     const list: NotificationItem[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as NotificationItem), id: d.id }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 40);
@@ -262,7 +261,7 @@ export async function getShopNotifications(shopId: string): Promise<Notification
 
 export async function markNotificationRead(shopId: string, notifId: string): Promise<void> {
   try {
-    await setDoc(doc(db, 'shops', shopId, 'notifications', notifId), { isRead: true }, { merge: true });
+    await setDoc(scopedDoc(db, 'shops', shopId, 'notifications', notifId), { isRead: true }, { merge: true });
   } catch {}
 }
 
@@ -278,7 +277,7 @@ export async function getShopProducts(
   try {
     let list = getCachedValue<Product[]>(`products:${shopId}`);
     if (!list) {
-      const q = query(collection(db, 'shops', shopId, 'products'), where('isPublished', '==', true));
+      const q = query(scopedCollection(db, 'shops', shopId, 'products'), where('isPublished', '==', true));
       const snap = await getDocs(q);
       const fetched: Product[] = [];
       snap.forEach((d) => {
@@ -303,7 +302,7 @@ export async function getShopProducts(
 export async function getShopProductsAdmin(shopId: string = DEFAULT_SHOP_ID): Promise<Product[]> {
   const colPath = `shops/${shopId}/products`;
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'products'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'products'));
     const list: Product[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as Product), id: d.id, shopId }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -314,7 +313,7 @@ export async function getShopProductsAdmin(shopId: string = DEFAULT_SHOP_ID): Pr
 
 export async function getShopProductById(shopId: string, id: string): Promise<Product | null> {
   try {
-    const snap = await getDoc(doc(db, 'shops', shopId, 'products', id));
+    const snap = await getDoc(scopedDoc(db, 'shops', shopId, 'products', id));
     return snap.exists() ? { ...(snap.data() as Product), id: snap.id, shopId } : null;
   } catch {
     return null;
@@ -332,7 +331,7 @@ export async function saveShopProduct(shopId: string, product: Partial<Product>)
     }
     const maxProducts = Number(plan?.maxProducts ?? 1);
     if (maxProducts !== -1) {
-      const existingSnap = await getDocs(collection(db, 'shops', shopId, 'products'));
+      const existingSnap = await getDocs(scopedCollection(db, 'shops', shopId, 'products'));
       const otherActive = existingSnap.docs
         .filter((d) => d.id !== product.id)
         .map((d) => d.data() as Product)
@@ -382,16 +381,16 @@ export async function saveShopProduct(shopId: string, product: Partial<Product>)
   });
 
   try {
-    await setDoc(doc(db, 'shops', shopId, 'products', id), docData);
+    await setDoc(scopedDoc(db, 'shops', shopId, 'products', id), docData);
     invalidateShopCache(shopId, 'products');
     if (isNew) {
-      const shopSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
+      const shopSnap = await getDoc(scopedDoc(db, 'shops', shopId)).catch(() => null);
       if (shopSnap && shopSnap.exists()) {
         const shopData = shopSnap.data() || {};
         const usage = shopData.usage || {};
         const checklist = shopData.onboardingChecklist || {};
         await setDoc(
-          doc(db, 'shops', shopId),
+          scopedDoc(db, 'shops', shopId),
           {
             usage: { ...usage, productsCount: Number(usage.productsCount || 0) + 1 },
             onboardingChecklist: { ...checklist, firstProductAdded: true },
@@ -418,7 +417,7 @@ export async function archiveShopProduct(shopId: string, id: string, archive = t
     }
   }
   try {
-    await updateDoc(doc(db, 'shops', shopId, 'products', id), {
+    await updateDoc(scopedDoc(db, 'shops', shopId, 'products', id), {
       status: archive ? 'archived' : 'active',
       isPublished: !archive,
       updatedAt: new Date().toISOString(),
@@ -438,14 +437,14 @@ export async function archiveShopProduct(shopId: string, id: string, archive = t
 
 export async function deleteShopProduct(shopId: string, id: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'shops', shopId, 'products', id));
+    await deleteDoc(scopedDoc(db, 'shops', shopId, 'products', id));
     invalidateShopCache(shopId, 'products');
-    const snap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
+    const snap = await getDoc(scopedDoc(db, 'shops', shopId)).catch(() => null);
     if (snap && snap.exists()) {
       const currentUsage = snap.data()?.usage || {};
       const currentCount = Number(currentUsage.productsCount || 0);
       await setDoc(
-        doc(db, 'shops', shopId),
+        scopedDoc(db, 'shops', shopId),
         {
           usage: { ...currentUsage, productsCount: Math.max(0, currentCount - 1) },
         },
@@ -466,7 +465,7 @@ export async function getShopCategories(shopId: string = DEFAULT_SHOP_ID): Promi
   try {
     const cached = getCachedValue<Category[]>(`categories:${shopId}`);
     if (cached) return cached;
-    const snap = await getDocs(collection(db, 'shops', shopId, 'categories'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'categories'));
     const list: Category[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as Category), id: d.id, shopId }));
     const sorted = list.sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -489,7 +488,7 @@ export async function saveShopCategory(shopId: string, category: Partial<Categor
     order: category.order || 1,
   });
   try {
-    await setDoc(doc(db, 'shops', shopId, 'categories', id), docData);
+    await setDoc(scopedDoc(db, 'shops', shopId, 'categories', id), docData);
     invalidateShopCache(shopId, 'categories');
     return id;
   } catch (err) {
@@ -499,7 +498,7 @@ export async function saveShopCategory(shopId: string, category: Partial<Categor
 
 export async function deleteShopCategory(shopId: string, id: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'shops', shopId, 'categories', id));
+    await deleteDoc(scopedDoc(db, 'shops', shopId, 'categories', id));
     invalidateShopCache(shopId, 'categories');
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}/categories/${id}`);
@@ -514,7 +513,7 @@ export async function getShopBanners(shopId: string = DEFAULT_SHOP_ID, includeIn
   try {
     let allList = getCachedValue<Banner[]>(`banners:${shopId}`);
     if (!allList) {
-      const snap = await getDocs(collection(db, 'shops', shopId, 'banners'));
+      const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'banners'));
       const list: Banner[] = [];
       snap.forEach((d) => {
         const b = d.data() as Banner;
@@ -550,7 +549,7 @@ export async function saveShopBanner(shopId: string, banner: Partial<Banner>): P
     order: Number(banner.order) || 1,
   });
   try {
-    await setDoc(doc(db, 'shops', shopId, 'banners', id), payload);
+    await setDoc(scopedDoc(db, 'shops', shopId, 'banners', id), payload);
     invalidateShopCache(shopId, 'banners');
     return id;
   } catch (err) {
@@ -560,7 +559,7 @@ export async function saveShopBanner(shopId: string, banner: Partial<Banner>): P
 
 export async function deleteShopBanner(shopId: string, id: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'shops', shopId, 'banners', id));
+    await deleteDoc(scopedDoc(db, 'shops', shopId, 'banners', id));
     invalidateShopCache(shopId, 'banners');
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}/banners/${id}`);
@@ -590,7 +589,7 @@ export async function createShopOrder(
   const signedInUid = auth.currentUser?.uid;
   const effectiveUserId = signedInUid || 'guest';
 
-  if (effectiveUserId === 'guest') {
+  if (effectiveUserId === 'guest' && !isDemoNamespace()) {
     try {
       const response = await apiFetch('/api/orders/create', {
         method: 'POST',
@@ -624,7 +623,7 @@ export async function createShopOrder(
 
   // Pre-check existing order for signed-in idempotent retries
   if (idemKey && effectiveUserId !== 'guest') {
-    const existingOrderSnap = await getDoc(doc(db, 'shops', shopId, 'orders', id)).catch(() => null);
+    const existingOrderSnap = await getDoc(scopedDoc(db, 'shops', shopId, 'orders', id)).catch(() => null);
     if (existingOrderSnap?.exists()) {
       const existingOrder = { ...(existingOrderSnap.data() as Order), id: existingOrderSnap.id, shopId };
       if (cacheKey) clientOrderIdempotencyCache.set(cacheKey, existingOrder);
@@ -635,7 +634,7 @@ export async function createShopOrder(
   // Validate product availability & stock before writing order
   for (const item of orderData.items || []) {
     if (!item.productId) continue;
-    const prodSnap = await getDoc(doc(db, 'shops', shopId, 'products', item.productId)).catch(() => null);
+    const prodSnap = await getDoc(scopedDoc(db, 'shops', shopId, 'products', item.productId)).catch(() => null);
     if (prodSnap && prodSnap.exists()) {
       const prod = prodSnap.data() as Product;
       if (prod.isPublished === false || prod.status === 'archived') {
@@ -819,7 +818,7 @@ export async function createShopOrder(
   try {
     if (pickupSlotKey && slotDate && slotId) {
       await runTransaction(db, async (tx) => {
-        const slotRef = doc(db, 'shops', shopId, 'pickup_slots', pickupSlotKey!);
+        const slotRef = scopedDoc(db, 'shops', shopId, 'pickup_slots', pickupSlotKey!);
         const slotSnap = await tx.get(slotRef);
         const existingBooked = slotSnap.exists() ? Number(slotSnap.data()?.bookedCount || 0) : 0;
         const maxOrders = slotSnap.exists() ? Number(slotSnap.data()?.maxOrders || slotMaxOrders) : slotMaxOrders;
@@ -849,15 +848,15 @@ export async function createShopOrder(
           });
         }
 
-        tx.set(doc(db, 'shops', shopId, 'orders', id), fullOrder);
-        tx.set(doc(db, 'shops', shopId, 'order_tracking', trackDocId), trackingDoc);
-        tx.set(doc(db, 'shops', shopId, 'notifications', notifId), notifDoc);
+        tx.set(scopedDoc(db, 'shops', shopId, 'orders', id), fullOrder);
+        tx.set(scopedDoc(db, 'shops', shopId, 'order_tracking', trackDocId), trackingDoc);
+        tx.set(scopedDoc(db, 'shops', shopId, 'notifications', notifId), notifDoc);
       });
     } else {
       const batch = writeBatch(db);
-      batch.set(doc(db, 'shops', shopId, 'orders', id), fullOrder);
-      batch.set(doc(db, 'shops', shopId, 'order_tracking', trackDocId), trackingDoc);
-      batch.set(doc(db, 'shops', shopId, 'notifications', notifId), notifDoc);
+      batch.set(scopedDoc(db, 'shops', shopId, 'orders', id), fullOrder);
+      batch.set(scopedDoc(db, 'shops', shopId, 'order_tracking', trackDocId), trackingDoc);
+      batch.set(scopedDoc(db, 'shops', shopId, 'notifications', notifId), notifDoc);
       await batch.commit();
     }
 
@@ -871,7 +870,7 @@ export async function createShopOrder(
 
 export async function getShopOrdersByUser(shopId: string, userId: string): Promise<Order[]> {
   try {
-    const q = query(collection(db, 'shops', shopId, 'orders'), where('userId', '==', userId));
+    const q = query(scopedCollection(db, 'shops', shopId, 'orders'), where('userId', '==', userId));
     const snap = await getDocs(q);
     const list: Order[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as Order), id: d.id, shopId }));
@@ -883,7 +882,7 @@ export async function getShopOrdersByUser(shopId: string, userId: string): Promi
 
 export async function getAllShopOrdersAdmin(shopId: string): Promise<Order[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'orders'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'orders'));
     const list: Order[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as Order), id: d.id, shopId }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -940,7 +939,7 @@ export async function updateSelfPickupStatus(
   try {
     let resolvedOrderNumber = orderId;
     const updatedOrder = await runTransaction(db, async (tx) => {
-      const orderRef = doc(db, 'shops', shopId, 'orders', orderId);
+      const orderRef = scopedDoc(db, 'shops', shopId, 'orders', orderId);
       const orderSnap = await tx.get(orderRef);
       if (!orderSnap.exists()) {
         throw new Error('Order not found.');
@@ -958,7 +957,7 @@ export async function updateSelfPickupStatus(
 
       const slotRef =
         nextStatus === 'Cancelled' && existing.pickupSlotKey
-          ? doc(db, 'shops', shopId, 'pickup_slots', existing.pickupSlotKey)
+          ? scopedDoc(db, 'shops', shopId, 'pickup_slots', existing.pickupSlotKey)
           : null;
       const slotSnap = slotRef ? await tx.get(slotRef) : null;
 
@@ -1004,7 +1003,7 @@ export async function updateSelfPickupStatus(
 
       if (existing.trackingTokenHash) {
         const trackDocId = `trk_${existing.trackingTokenHash.slice(0, 32)}`;
-        tx.update(doc(db, 'shops', shopId, 'order_tracking', trackDocId), {
+        tx.update(scopedDoc(db, 'shops', shopId, 'order_tracking', trackDocId), {
           orderStatus: nextStatus,
           updatedAt: now,
         });
@@ -1044,7 +1043,7 @@ export async function notifySelfPickupCustomer(
   try {
     let notifiedOrderNumber = orderId;
     const updatedOrder = await runTransaction(db, async (tx) => {
-      const orderRef = doc(db, 'shops', shopId, 'orders', orderId);
+      const orderRef = scopedDoc(db, 'shops', shopId, 'orders', orderId);
       const orderSnap = await tx.get(orderRef);
       if (!orderSnap.exists()) {
         throw new Error('Order not found.');
@@ -1115,7 +1114,7 @@ export async function verifyAndCollectSelfPickupOrder(params: {
   markCashPaid?: boolean;
 }): Promise<Order> {
   const { shopId, orderId } = params;
-  const preSnap = await getDoc(doc(db, 'shops', shopId, 'orders', orderId)).catch(() => null);
+  const preSnap = await getDoc(scopedDoc(db, 'shops', shopId, 'orders', orderId)).catch(() => null);
   const preOrderNumber = preSnap?.exists() ? String((preSnap.data() as Order).orderNumber || '') : undefined;
 
   const parsed = parsePickupVerificationInput(params.otp, preOrderNumber);
@@ -1132,7 +1131,7 @@ export async function verifyAndCollectSelfPickupOrder(params: {
 
   try {
     const updatedOrder = await runTransaction(db, async (tx) => {
-      const orderRef = doc(db, 'shops', shopId, 'orders', orderId);
+      const orderRef = scopedDoc(db, 'shops', shopId, 'orders', orderId);
       const orderSnap = await tx.get(orderRef);
       if (!orderSnap.exists()) {
         throw new Error('Order not found.');
@@ -1163,7 +1162,7 @@ export async function verifyAndCollectSelfPickupOrder(params: {
       // Read all unique product documents BEFORE issuing any writes (Firestore transaction rule)
       const shouldDeductStock = order.stockDeducted !== true;
       const productUpdates: {
-        ref: ReturnType<typeof doc>;
+        ref: ReturnType<typeof scopedDoc>;
         prod: Product;
         qty: number;
         prevStock: number;
@@ -1178,7 +1177,7 @@ export async function verifyAndCollectSelfPickupOrder(params: {
         }
 
         const entries = Array.from(qtyByProduct.entries());
-        const prodRefs = entries.map(([pid]) => doc(db, 'shops', shopId, 'products', pid));
+        const prodRefs = entries.map(([pid]) => scopedDoc(db, 'shops', shopId, 'products', pid));
         const prodSnaps = await Promise.all(prodRefs.map((ref) => tx.get(ref)));
 
         entries.forEach(([, qty], idx) => {
@@ -1202,7 +1201,7 @@ export async function verifyAndCollectSelfPickupOrder(params: {
         tx.update(pu.ref, { stock: pu.newStock, updatedAt: nowIso });
 
         const logId = `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        tx.set(doc(db, 'shops', shopId, 'inventory_logs', logId), {
+        tx.set(scopedDoc(db, 'shops', shopId, 'inventory_logs', logId), {
           id: logId,
           shopId,
           productId: pu.ref.id,
@@ -1217,7 +1216,7 @@ export async function verifyAndCollectSelfPickupOrder(params: {
 
         const movId = `mov_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         tx.set(
-          doc(db, 'shops', shopId, 'stock_movements', movId),
+          scopedDoc(db, 'shops', shopId, 'stock_movements', movId),
           stripUndefined<StockMovement>({
             id: movId,
             shopId,
@@ -1278,7 +1277,7 @@ export async function verifyAndCollectSelfPickupOrder(params: {
 
       if (order.trackingTokenHash) {
         const trackDocId = `trk_${order.trackingTokenHash.slice(0, 32)}`;
-        tx.update(doc(db, 'shops', shopId, 'order_tracking', trackDocId), {
+        tx.update(scopedDoc(db, 'shops', shopId, 'order_tracking', trackDocId), {
           orderStatus: 'Collected',
           paymentStatus: nextPaymentStatus,
           updatedAt: nowIso,
@@ -1327,7 +1326,7 @@ export async function updateShopOrderStatus(
   const cleanUpdates = stripUndefined({ ...updates, updatedAt: now });
 
   try {
-    const orderRef = doc(db, 'shops', shopId, 'orders', orderId);
+    const orderRef = scopedDoc(db, 'shops', shopId, 'orders', orderId);
     const ordSnap = await getDoc(orderRef).catch(() => null);
     const ordData = ordSnap?.exists() ? (ordSnap.data() as Order) : null;
     const resolvedOrderNumber = orderNumber || ordData?.orderNumber;
@@ -1354,10 +1353,10 @@ export async function updateShopOrderStatus(
     if (Object.keys(trackUpdates).length > 1) {
       if (trackingHash) {
         const trackDocId = `trk_${trackingHash.slice(0, 32)}`;
-        await setDoc(doc(db, 'shops', shopId, 'order_tracking', trackDocId), trackUpdates, { merge: true }).catch(() => {});
+        await setDoc(scopedDoc(db, 'shops', shopId, 'order_tracking', trackDocId), trackUpdates, { merge: true }).catch(() => {});
       }
       if (resolvedOrderNumber) {
-        await setDoc(doc(db, 'shops', shopId, 'order_tracking', resolvedOrderNumber), trackUpdates, { merge: true }).catch(() => {});
+        await setDoc(scopedDoc(db, 'shops', shopId, 'order_tracking', resolvedOrderNumber), trackUpdates, { merge: true }).catch(() => {});
       }
     }
 
@@ -1403,7 +1402,7 @@ export async function trackShopOrder(shopId: string, ref: string, token?: string
     try {
       const expectedHash = await deriveTrackingTokenHash(upperRef, cleanToken);
       const trackDocId = await deriveTrackingDocId(upperRef, cleanToken);
-      const trackSnap = await getDoc(doc(db, 'shops', shopId, 'order_tracking', trackDocId));
+      const trackSnap = await getDoc(scopedDoc(db, 'shops', shopId, 'order_tracking', trackDocId));
       if (trackSnap.exists()) {
         const td = trackSnap.data();
         if (td.orderNumber === upperRef && td.trackingTokenHash === expectedHash) {
@@ -1535,7 +1534,7 @@ export async function getShopPublicSettings(shopId: string = DEFAULT_SHOP_ID): P
   try {
     const cached = getCachedValue<StoreSettings>(`settings:${shopId}`);
     if (cached) return cached;
-    const pubSnap = await getDoc(doc(db, 'shops', shopId, 'settings', 'public'));
+    const pubSnap = await getDoc(scopedDoc(db, 'shops', shopId, 'settings', 'public'));
     if (pubSnap.exists()) {
       const normalized = normalizeStoreSettings(pubSnap.data() as Partial<StoreSettings>);
       setCachedValue(`settings:${shopId}`, normalized);
@@ -1555,8 +1554,8 @@ export async function getShopPublicSettings(shopId: string = DEFAULT_SHOP_ID): P
 export async function getShopSettings(shopId: string = DEFAULT_SHOP_ID): Promise<StoreSettings> {
   try {
     const [pubSnap, privSnap] = await Promise.all([
-      getDoc(doc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
-      getDoc(doc(db, 'shops', shopId, 'settings', 'private')).catch(() => null),
+      getDoc(scopedDoc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
+      getDoc(scopedDoc(db, 'shops', shopId, 'settings', 'private')).catch(() => null),
     ]);
 
     if (pubSnap?.exists() || privSnap?.exists()) {
@@ -1567,7 +1566,7 @@ export async function getShopSettings(shopId: string = DEFAULT_SHOP_ID): Promise
       return normalizeStoreSettings(merged);
     }
 
-    const genSnap = await getDoc(doc(db, 'shops', shopId, 'settings', 'general')).catch(() => null);
+    const genSnap = await getDoc(scopedDoc(db, 'shops', shopId, 'settings', 'general')).catch(() => null);
     if (genSnap && genSnap.exists()) {
       return normalizeStoreSettings(genSnap.data() as Partial<StoreSettings>);
     }
@@ -1582,8 +1581,8 @@ export async function updateShopSettings(shopId: string, settingsPatch: Partial<
   const nowIso = new Date().toISOString();
   const [current, shopSnap, pubShopSnap] = await Promise.all([
     getShopSettings(shopId),
-    getDoc(doc(db, 'shops', shopId)).catch(() => null),
-    getDoc(doc(db, 'shops_public', shopId)).catch(() => null),
+    getDoc(scopedDoc(db, 'shops', shopId)).catch(() => null),
+    getDoc(scopedDoc(db, 'shops_public', shopId)).catch(() => null),
   ]);
   const settings = mergeStoreSettingsPatch(current, settingsPatch);
 
@@ -1680,10 +1679,10 @@ export async function updateShopSettings(shopId: string, settingsPatch: Partial<
 
   try {
     const batch = writeBatch(db);
-    batch.set(doc(db, 'shops', shopId, 'settings', 'public'), publicSettingsPayload, { merge: true });
-    batch.set(doc(db, 'shops', shopId, 'settings', 'private'), privateSettingsPayload, { merge: true });
+    batch.set(scopedDoc(db, 'shops', shopId, 'settings', 'public'), publicSettingsPayload, { merge: true });
+    batch.set(scopedDoc(db, 'shops', shopId, 'settings', 'private'), privateSettingsPayload, { merge: true });
     batch.set(
-      doc(db, 'shops', shopId),
+      scopedDoc(db, 'shops', shopId),
       stripUndefined({
         name: settings.siteName,
         logoUrl: settings.logoUrl || '',
@@ -1708,7 +1707,7 @@ export async function updateShopSettings(shopId: string, settingsPatch: Partial<
       }),
       { merge: true }
     );
-    batch.set(doc(db, 'shops_public', shopId), cleanPublicShopDoc);
+    batch.set(scopedDoc(db, 'shops_public', shopId), cleanPublicShopDoc);
     await batch.commit();
     invalidateShopCache(shopId, 'settings');
     await logShopActivity(shopId, 'Updated Settings', 'settings', 'public', `Updated settings for ${settings.siteName}`);
@@ -1720,7 +1719,7 @@ export async function updateShopSettings(shopId: string, settingsPatch: Partial<
 
 export async function getShopPageContent(shopId: string, key: ShopPageContent['key']): Promise<ShopPageContent | null> {
   try {
-    const snap = await getDoc(doc(db, 'shops', shopId, 'pages', key));
+    const snap = await getDoc(scopedDoc(db, 'shops', shopId, 'pages', key));
     return snap.exists() ? (snap.data() as ShopPageContent) : null;
   } catch {
     return null;
@@ -1736,7 +1735,7 @@ export async function saveShopPageContent(shopId: string, page: ShopPageContent)
     throw new Error('Custom CMS pages are not enabled on your current plan.');
   }
   try {
-    await setDoc(doc(db, 'shops', shopId, 'pages', page.key), stripUndefined(page));
+    await setDoc(scopedDoc(db, 'shops', shopId, 'pages', page.key), stripUndefined(page));
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/pages/${page.key}`);
   }
@@ -1748,7 +1747,7 @@ export async function saveShopPageContent(shopId: string, page: ShopPageContent)
 
 export async function getShopCoupons(shopId: string = DEFAULT_SHOP_ID): Promise<Coupon[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'coupons'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'coupons'));
     const list: Coupon[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as Coupon), id: d.id, shopId }));
     return list;
@@ -1779,7 +1778,7 @@ export async function saveShopCoupon(shopId: string, coupon: Partial<Coupon>): P
     isActive: coupon.isActive !== false,
   });
   try {
-    await setDoc(doc(db, 'shops', shopId, 'coupons', id), docData);
+    await setDoc(scopedDoc(db, 'shops', shopId, 'coupons', id), docData);
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/coupons/${id}`);
@@ -1788,7 +1787,7 @@ export async function saveShopCoupon(shopId: string, coupon: Partial<Coupon>): P
 
 export async function deleteShopCoupon(shopId: string, id: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'shops', shopId, 'coupons', id));
+    await deleteDoc(scopedDoc(db, 'shops', shopId, 'coupons', id));
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}/coupons/${id}`);
   }
@@ -1817,7 +1816,7 @@ export async function saveShopUserCart(shopId: string, userId: string, items: Ca
         stock: item.product.stock,
       })
     );
-    await setDoc(doc(db, 'shops', shopId, 'carts', userId), {
+    await setDoc(scopedDoc(db, 'shops', shopId, 'carts', userId), {
       userId,
       shopId,
       items: cleanItems,
@@ -1829,7 +1828,7 @@ export async function saveShopUserCart(shopId: string, userId: string, items: Ca
 export async function loadShopUserCart(shopId: string, userId: string): Promise<any[] | null> {
   if (!userId || userId === 'guest') return null;
   try {
-    const snap = await getDoc(doc(db, 'shops', shopId, 'carts', userId));
+    const snap = await getDoc(scopedDoc(db, 'shops', shopId, 'carts', userId));
     return snap.exists() ? snap.data().items || [] : null;
   } catch {
     return null;
@@ -1839,7 +1838,7 @@ export async function loadShopUserCart(shopId: string, userId: string): Promise<
 export async function saveShopUserWishlist(shopId: string, userId: string, productIds: string[]): Promise<void> {
   if (!userId || userId === 'guest') return;
   try {
-    await setDoc(doc(db, 'shops', shopId, 'wishlists', userId), {
+    await setDoc(scopedDoc(db, 'shops', shopId, 'wishlists', userId), {
       userId,
       shopId,
       productIds,
@@ -1851,7 +1850,7 @@ export async function saveShopUserWishlist(shopId: string, userId: string, produ
 export async function loadShopUserWishlist(shopId: string, userId: string): Promise<string[]> {
   if (!userId || userId === 'guest') return [];
   try {
-    const snap = await getDoc(doc(db, 'shops', shopId, 'wishlists', userId));
+    const snap = await getDoc(scopedDoc(db, 'shops', shopId, 'wishlists', userId));
     return snap.exists() ? snap.data().productIds || [] : [];
   } catch {
     return [];
@@ -1865,7 +1864,7 @@ export async function loadShopUserWishlist(shopId: string, userId: string): Prom
 export async function getShopRecentReviews(shopId: string, limitCount = 6): Promise<Review[]> {
   try {
     const q = query(
-      collection(db, 'shops', shopId, 'reviews'),
+      scopedCollection(db, 'shops', shopId, 'reviews'),
       orderBy('createdAt', 'desc'),
       limit(limitCount)
     );
@@ -1880,7 +1879,7 @@ export async function getShopRecentReviews(shopId: string, limitCount = 6): Prom
 
 export async function getShopProductReviews(shopId: string, productId: string): Promise<Review[]> {
   try {
-    const q = query(collection(db, 'shops', shopId, 'reviews'), where('productId', '==', productId));
+    const q = query(scopedCollection(db, 'shops', shopId, 'reviews'), where('productId', '==', productId));
     const snap = await getDocs(q);
     const list: Review[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as Review), id: d.id, shopId }));
@@ -1899,7 +1898,7 @@ export async function addShopProductReview(shopId: string, review: Omit<Review, 
     createdAt: new Date().toISOString(),
   });
   try {
-    await setDoc(doc(db, 'shops', shopId, 'reviews', id), payload);
+    await setDoc(scopedDoc(db, 'shops', shopId, 'reviews', id), payload);
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}/reviews/${id}`);
@@ -1908,7 +1907,7 @@ export async function addShopProductReview(shopId: string, review: Omit<Review, 
 
 export async function getShopInventoryLogs(shopId: string): Promise<InventoryLog[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'inventory_logs'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'inventory_logs'));
     const list: InventoryLog[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as InventoryLog), id: d.id, shopId }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -1919,7 +1918,7 @@ export async function getShopInventoryLogs(shopId: string): Promise<InventoryLog
 
 export async function getShopStockMovements(shopId: string): Promise<StockMovement[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'stock_movements'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'stock_movements'));
     const list: StockMovement[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as StockMovement), id: d.id, shopId }));
     return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -1937,7 +1936,7 @@ export async function adjustShopStock(
   movementType: StockMovementType = delta >= 0 ? 'stock_in' : 'stock_out',
   referenceTransaction?: string
 ): Promise<void> {
-  const prodRef = doc(db, 'shops', shopId, 'products', productId);
+  const prodRef = scopedDoc(db, 'shops', shopId, 'products', productId);
   const nowIso = new Date().toISOString();
   const uid = auth.currentUser?.uid || updatedBy;
 
@@ -1952,7 +1951,7 @@ export async function adjustShopStock(
       tx.update(prodRef, { stock: newStock, updatedAt: nowIso });
 
       const logId = `log_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
-      tx.set(doc(db, 'shops', shopId, 'inventory_logs', logId), {
+      tx.set(scopedDoc(db, 'shops', shopId, 'inventory_logs', logId), {
         id: logId,
         shopId,
         productId,
@@ -1967,7 +1966,7 @@ export async function adjustShopStock(
 
       const movId = `mov_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
       tx.set(
-        doc(db, 'shops', shopId, 'stock_movements', movId),
+        scopedDoc(db, 'shops', shopId, 'stock_movements', movId),
         stripUndefined<StockMovement>({
           id: movId,
           shopId,
@@ -2040,7 +2039,7 @@ export async function saveShopContactMessage(
     createdAt: new Date().toISOString(),
   });
   try {
-    await setDoc(doc(db, 'shops', shopId, 'contact_messages', id), docData);
+    await setDoc(scopedDoc(db, 'shops', shopId, 'contact_messages', id), docData);
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}/contact_messages/${id}`);
@@ -2049,7 +2048,7 @@ export async function saveShopContactMessage(
 
 export async function getShopContactMessages(shopId: string): Promise<ContactMessage[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'contact_messages'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'contact_messages'));
     const list: ContactMessage[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as ContactMessage), id: d.id, shopId }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -2059,7 +2058,7 @@ export async function getShopContactMessages(shopId: string): Promise<ContactMes
 }
 
 export async function updateShopContactMessageStatus(shopId: string, msgId: string, status: 'new' | 'resolved'): Promise<void> {
-  await updateDoc(doc(db, 'shops', shopId, 'contact_messages', msgId), { status });
+  await updateDoc(scopedDoc(db, 'shops', shopId, 'contact_messages', msgId), { status });
 }
 
 export async function subscribeToShopNewsletter(
@@ -2082,7 +2081,7 @@ export async function subscribeToShopNewsletter(
   };
 
   try {
-    await setDoc(doc(db, 'shops', shopId, 'newsletter_subscribers', safeId), payload);
+    await setDoc(scopedDoc(db, 'shops', shopId, 'newsletter_subscribers', safeId), payload);
     return safeId;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `shops/${shopId}/newsletter_subscribers/${safeId}`);
@@ -2091,7 +2090,7 @@ export async function subscribeToShopNewsletter(
 
 export async function getShopNewsletterSubscribers(shopId: string): Promise<NewsletterSubscriber[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'newsletter_subscribers'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'newsletter_subscribers'));
     const list: NewsletterSubscriber[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as NewsletterSubscriber), id: d.id, shopId }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -2107,8 +2106,8 @@ export async function getShopNewsletterSubscribers(shopId: string): Promise<News
 export async function getShopStaff(shopId: string): Promise<{ staff: StaffMember[]; invites: ShopInvite[] }> {
   try {
     const [staffSnap, invitesSnap] = await Promise.all([
-      getDocs(collection(db, 'shops', shopId, 'staff')),
-      getDocs(query(collection(db, 'shop_invites'), where('shopId', '==', shopId))),
+      getDocs(scopedCollection(db, 'shops', shopId, 'staff')),
+      getDocs(query(scopedCollection(db, 'shop_invites'), where('shopId', '==', shopId))),
     ]);
     const staff: StaffMember[] = [];
     staffSnap.forEach((d) => staff.push({ ...(d.data() as StaffMember), uid: d.id }));
@@ -2160,7 +2159,7 @@ export async function inviteShopStaff(
   };
 
   try {
-    await setDoc(doc(db, 'shop_invites', inviteId), payload);
+    await setDoc(scopedDoc(db, 'shop_invites', inviteId), payload);
     await logShopActivity(shopId, 'Invited Staff', 'staff', inviteId, `Invited ${payload.email} as ${payload.role}`);
     return inviteId;
   } catch (err) {
@@ -2177,7 +2176,7 @@ export async function updateShopStaffRole(
 ): Promise<void> {
   try {
     await setDoc(
-      doc(db, 'shops', shopId, 'staff', staffUid),
+      scopedDoc(db, 'shops', shopId, 'staff', staffUid),
       {
         role,
         permissions,
@@ -2187,7 +2186,7 @@ export async function updateShopStaffRole(
       { merge: true }
     );
     await setDoc(
-      doc(db, 'users', staffUid, 'shopMemberships', shopId),
+      scopedDoc(db, 'users', staffUid, 'shopMemberships', shopId),
       {
         role,
         permissions,
@@ -2201,8 +2200,8 @@ export async function updateShopStaffRole(
 
 export async function removeShopStaff(shopId: string, staffUid: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'shops', shopId, 'staff', staffUid));
-    await deleteDoc(doc(db, 'users', staffUid, 'shopMemberships', shopId)).catch(() => {});
+    await deleteDoc(scopedDoc(db, 'shops', shopId, 'staff', staffUid));
+    await deleteDoc(scopedDoc(db, 'users', staffUid, 'shopMemberships', shopId)).catch(() => {});
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}/staff/${staffUid}`);
   }
@@ -2210,7 +2209,7 @@ export async function removeShopStaff(shopId: string, staffUid: string): Promise
 
 export async function cancelShopInvite(shopId: string, inviteId: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'shop_invites', inviteId));
+    await deleteDoc(scopedDoc(db, 'shop_invites', inviteId));
     await logShopActivity(shopId, 'Cancelled Invite', 'staff', inviteId, `Revoked pending invite ${inviteId}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `shop_invites/${inviteId}`);

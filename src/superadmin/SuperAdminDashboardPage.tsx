@@ -26,7 +26,7 @@ import { SimpleBarChart, DistributionMeters } from '../components/common/SimpleC
 import { useAuth } from '../context/AuthContext';
 
 export const SuperAdminDashboardPage: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, isDemoAdmin } = useAuth();
   const [stats, setStats] = useState<PlatformAnalyticsSummary | null>(null);
   const [recentShops, setRecentShops] = useState<Shop[]>([]);
   const [pendingPayments, setPendingPayments] = useState<PlatformPayment[]>([]);
@@ -101,15 +101,17 @@ export const SuperAdminDashboardPage: React.FC = () => {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => setMigrateConfirmOpen(true)}
-            disabled={migrating}
-            className="px-4 py-2 border border-slate-300 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold text-slate-800 flex items-center gap-2 transition"
-          >
-            {migrating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5 text-[#065F46]" />}
-            Sync Legacy Flagship Tenant
-          </button>
+          {!isDemoAdmin && (
+            <button
+              type="button"
+              onClick={() => setMigrateConfirmOpen(true)}
+              disabled={migrating}
+              className="px-4 py-2 border border-slate-300 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold text-slate-800 flex items-center gap-2 transition"
+            >
+              {migrating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5 text-[#065F46]" />}
+              Sync Legacy Flagship Tenant
+            </button>
+          )}
           <Link
             to="/super-admin/shops"
             className="px-4 py-2 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition"
@@ -298,7 +300,7 @@ export const SuperAdminDashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {migrateConfirmOpen && (
+      {!isDemoAdmin && migrateConfirmOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-4">
             <h3 className="text-base font-extrabold text-slate-900">Sync Legacy Flagship Store to Tenant?</h3>

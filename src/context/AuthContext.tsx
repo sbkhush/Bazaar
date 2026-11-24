@@ -5,6 +5,7 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   createUserWithEmailAndPassword,
   signOut,
   sendPasswordResetEmail,
@@ -39,6 +40,14 @@ import {
   getAuthorizedHomePath,
   resolveAuthorizedPortalRole,
 } from '../services/roleGuard';
+import {
+  DEMO_ACCOUNT_TYPE,
+  DEMO_ADMIN_DISPLAY_NAME,
+  DEMO_ADMIN_EMAIL,
+  isDemoAccountEmail,
+  isDemoClaimSet,
+} from '../demo/demoConfig';
+import { setFirestoreNamespaceMode } from '../utils/demoCollection';
 
 export interface AuthDiagnostics {
   emailVerified: boolean;
@@ -53,6 +62,7 @@ interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   isSuperAdmin: boolean;
+  isDemoAdmin: boolean;
   isBlocked: boolean;
   authDiagnostics: AuthDiagnostics;
   resendVerificationEmail: () => Promise<void>;
@@ -69,6 +79,7 @@ interface AuthContextType {
   refreshMemberships: () => Promise<ShopMembership[]>;
   loginWithGoogle: () => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
+  loginAsDemoAdmin: () => Promise<void>;
   registerWithEmail: (name: string, email: string, pass: string, phone?: string) => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -85,6 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSuperAdminVerified, setIsSuperAdminVerified] = useState(false);
+  const [isDemoAdminVerified, setIsDemoAdminVerified] = useState(false);
   const [authDiagnostics, setAuthDiagnostics] = useState<AuthDiagnostics>({
     emailVerified: false,
     platformAdminSynced: false,
@@ -126,9 +138,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const verifyDemoAdminSession = async (user: FirebaseUser): Promise<boolean> => {
+    try {
+      let tokenResult = await user.getIdTokenResult();
+      let claims = (tokenResult?.claims || {}) as Record<string, any>;
+      if (!isDemoClaimSet(claims)) {
+        await trySyncCustomClaims(user);
+        tokenResult = await user.getIdTokenResult(true);
+        claims = (tokenResult?.claims || {}) as Record<string, any>;
+      }
+
+      if (!isDemoAccountEmail(user.email) && !isDemoClaimSet(claims)) {
+        return false;
+      }
+
+      // Strictly confirm claims never grant production super_admin and /demo_admins/{uid} is active
+      if (claims.super_admin === true) {
+        return false;
+      }
+      const demoSnap = await getDoc(doc(db, 'demo_admins', user.uid)).catch(() => null);
+      const isActiveDemoDoc =
+        demoSnap &&
+        demoSnap.exists() &&
+        demoSnap.data()?.status === 'active' &&
+        demoSnap.data()?.accountType === DEMO_ACCOUNT_TYPE;
+
+      if (isActiveDemoDoc || (isDemoClaimSet(claims) && claims.demo_super_admin === true)) {
+        setFirestoreNamespaceMode('demo');
+        setIsSuperAdminVerified(false);
+        setIsDemoAdminVerified(true);
+        setAuthDiagnostics({
+          emailVerified: Boolean(user.emailVerified),
+          platformAdminSynced: Boolean(isActiveDemoDoc),
+          claimsSynced: Boolean(claims.demo_super_admin === true),
+        });
+        setUserProfile({
+          uid: user.uid,
+          email: user.email || DEMO_ADMIN_EMAIL,
+          displayName: user.displayName || DEMO_ADMIN_DISPLAY_NAME,
+          role: 'super_admin',
+          isBlocked: false,
+          addresses: [],
+          createdAt: new Date().toISOString(),
+        });
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
   const checkSuperAdminPrivilege = async (user: FirebaseUser | null) => {
     if (!user) {
+      setFirestoreNamespaceMode('prod');
       setIsSuperAdminVerified(false);
+      setIsDemoAdminVerified(false);
       setAuthDiagnostics({
         emailVerified: false,
         platformAdminSynced: false,
@@ -136,6 +201,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       return;
     }
+
+    // Isolate Demo Super Admin away from production platform_admins / admins
+    if (isDemoAccountEmail(user.email)) {
+      setIsSuperAdminVerified(false);
+      const ok = await verifyDemoAdminSession(user);
+      if (!ok) {
+        setFirestoreNamespaceMode('prod');
+        setIsDemoAdminVerified(false);
+        setAuthDiagnostics({
+          emailVerified: Boolean(user.emailVerified),
+          platformAdminSynced: false,
+          claimsSynced: false,
+          warning: 'Demo Super Admin account requires provisioning before signing in.',
+        });
+      }
+      return;
+    }
+
+    setFirestoreNamespaceMode('prod');
+    setIsDemoAdminVerified(false);
 
     if (user.email === SUPER_ADMIN_EMAIL && !user.emailVerified) {
       setIsSuperAdminVerified(false);
@@ -359,6 +444,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
+        if (isDemoAccountEmail(user.email)) {
+          await checkSuperAdminPrivilege(user);
+          setSalesMember(null);
+          setShopMemberships([]);
+          setLoading(false);
+          return;
+        }
+        setFirestoreNamespaceMode('prod');
         await checkSuperAdminPrivilege(user);
         await syncUserProfile(user);
         await claimPendingInvites(user);
@@ -366,8 +459,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const sm = await linkSalesMemberOnLogin(user.uid, user.email).catch(() => null);
         setSalesMember(sm);
       } else {
+        setFirestoreNamespaceMode('prod');
         setUserProfile(null);
         setIsSuperAdminVerified(false);
+        setIsDemoAdminVerified(false);
         setAuthDiagnostics({
           emailVerified: false,
           platformAdminSynced: false,
@@ -391,6 +486,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await signInWithEmailAndPassword(auth, email, pass);
   };
 
+  const loginAsDemoAdmin = async () => {
+    const fn = httpsCallable<undefined, { customToken: string }>(
+      getFunctions(auth.app),
+      'issueDemoAdminToken'
+    );
+    const res = await fn();
+    const token = res.data?.customToken;
+    if (!token) {
+      throw new Error('Could not obtain verified Demo Admin authentication token.');
+    }
+    const cred = await signInWithCustomToken(auth, token);
+    if (cred.user) {
+      setFirestoreNamespaceMode('demo');
+    }
+  };
+
   const registerWithEmail = async (name: string, email: string, pass: string, phone?: string) => {
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
     if (cred.user) {
@@ -411,6 +522,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
+    setFirestoreNamespaceMode('prod');
+    setIsDemoAdminVerified(false);
     await signOut(auth);
   };
 
@@ -455,9 +568,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const isBlocked = Boolean(userProfile?.isBlocked);
-  const isSuperAdmin = !isBlocked && isSuperAdminVerified;
+  // isSuperAdmin stays strictly FALSE for Demo Super Admin so production capabilities never leak
+  const isSuperAdmin = !isBlocked && !isDemoAdminVerified && isSuperAdminVerified;
+  const isDemoAdmin = !isBlocked && isDemoAdminVerified;
   const hasActiveSalesAccount = Boolean(
     !isBlocked &&
+      !isDemoAdmin &&
       salesMember &&
       (salesMember.accountStatus === 'active' || salesMember.accountStatus === 'invited')
   );
@@ -471,11 +587,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const authorizedRole = resolveAuthorizedPortalRole({
     isSuperAdmin,
     isBlocked,
-    salesMember,
-    shopMemberships,
+    salesMember: isDemoAdmin ? null : salesMember,
+    shopMemberships: isDemoAdmin ? [] : shopMemberships,
   });
-  const authorizedHomePath = getAuthorizedHomePath(authorizedRole);
-  const isAdmin = !isBlocked && (isSuperAdmin || shopMemberships.length > 0);
+  const authorizedHomePath = isDemoAdmin ? '/super-admin' : getAuthorizedHomePath(authorizedRole);
+  const isAdmin = !isBlocked && (isSuperAdmin || (!isDemoAdmin && shopMemberships.length > 0));
 
   return (
     <AuthContext.Provider
@@ -485,6 +601,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         isAdmin,
         isSuperAdmin,
+        isDemoAdmin,
         isBlocked,
         authDiagnostics,
         resendVerificationEmail,
@@ -501,6 +618,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         refreshMemberships,
         loginWithGoogle,
         loginWithEmail,
+        loginAsDemoAdmin,
         registerWithEmail,
         logout,
         resetPassword,

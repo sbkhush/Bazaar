@@ -11,20 +11,41 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isNotDemoAccount() {
+      return !isSignedIn() || (
+        request.auth.token.email != 'demo-admin@sbkhush.com' &&
+        (!('account_type' in request.auth.token) || request.auth.token.account_type != 'DEMO') &&
+        (!('demo_super_admin' in request.auth.token) || request.auth.token.demo_super_admin != true)
+      );
+    }
+
     function isSuperAdminEmail() {
       return isSignedIn() &&
+        isNotDemoAccount() &&
         request.auth.token.email == 'hasanaamir815@gmail.com' &&
         request.auth.token.email_verified == true;
     }
 
     function isSuperAdmin() {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
         request.auth.token.super_admin == true ||
         isSuperAdminEmail() ||
         exists(/databases/$(database)/documents/platform_admins/$(request.auth.uid)) ||
         (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'super_admin')
       );
+    }
+
+    function isDemoSuperAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email == 'demo-admin@sbkhush.com' &&
+        request.auth.token.email_verified == true &&
+        ('account_type' in request.auth.token && request.auth.token.account_type == 'DEMO') &&
+        ('demo_super_admin' in request.auth.token && request.auth.token.demo_super_admin == true) &&
+        (!('super_admin' in request.auth.token) || request.auth.token.super_admin != true) &&
+        exists(/databases/$(database)/documents/demo_admins/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/demo_admins/$(request.auth.uid)).data.status == 'active' &&
+        get(/databases/$(database)/documents/demo_admins/$(request.auth.uid)).data.accountType == 'DEMO';
     }
 
     function isValidId(id) {
@@ -58,9 +79,9 @@ service cloud.firestore {
     }
 
     function hasSalesClaimRole(roles) {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
         isSuperAdmin() ||
-        (request.auth.token.sales_role in roles) ||
+        ('sales_role' in request.auth.token && request.auth.token.sales_role in roles) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in roles)
       );
@@ -68,12 +89,13 @@ service cloud.firestore {
 
     function isManagerOfSalesMember(memberId) {
       return isSignedIn() &&
+        isNotDemoAccount() &&
         exists(/databases/$(database)/documents/salesMembers/$(memberId)) &&
         get(/databases/$(database)/documents/salesMembers/$(memberId)).data.assignedManagerUid == request.auth.uid;
     }
 
     function isShopOwner(shopId) {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
         (exists(/databases/$(database)/documents/shops/$(shopId)) &&
          get(/databases/$(database)/documents/shops/$(shopId)).data.ownerId == request.auth.uid) ||
         (exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
@@ -83,7 +105,7 @@ service cloud.firestore {
     }
 
     function isShopAdmin(shopId) {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
         isSuperAdmin() ||
         isShopOwner(shopId) ||
         (exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
@@ -93,7 +115,7 @@ service cloud.firestore {
     }
 
     function isShopMember(shopId) {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
         isSuperAdmin() ||
         isShopOwner(shopId) ||
         (exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
@@ -102,11 +124,13 @@ service cloud.firestore {
     }
 
     function hasShopPermission(shopId, perm) {
-      return isShopAdmin(shopId) || (
-        isSignedIn() &&
-        exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.status == 'active' &&
-        perm in get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.permissions
+      return isNotDemoAccount() && (
+        isShopAdmin(shopId) || (
+          isSignedIn() &&
+          exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.status == 'active' &&
+          perm in get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.permissions
+        )
       );
     }
 
@@ -184,12 +208,18 @@ service cloud.firestore {
     // ====================================================
 
     match /platform_admins/{adminId} {
-      allow get: if isValidId(adminId) && (isSuperAdmin() || (isSignedIn() && request.auth.uid == adminId));
+      allow get: if isValidId(adminId) && isNotDemoAccount() && (isSuperAdmin() || (isSignedIn() && request.auth.uid == adminId));
       allow list: if isSuperAdmin();
-      allow create, update, delete: if isValidId(adminId) && (
+      allow create, update, delete: if isValidId(adminId) && isNotDemoAccount() && (
         isSuperAdmin() ||
         (isSuperAdminEmail() && adminId == request.auth.uid)
       );
+    }
+
+    // Dedicated Demo Super Admin Registry (readable by own active demo UID; writable ONLY by production Super Admin)
+    match /demo_admins/{adminId} {
+      allow get: if isValidId(adminId) && (isSuperAdmin() || (isSignedIn() && request.auth.uid == adminId));
+      allow list, create, update, delete: if isSuperAdmin();
     }
 
     match /platform_settings/{docId} {
@@ -361,15 +391,15 @@ service cloud.firestore {
     // ====================================================
 
     match /users/{userId} {
-      allow get: if isValidId(userId) && ((isSignedIn() && request.auth.uid == userId) || isSuperAdmin());
+      allow get: if isValidId(userId) && isNotDemoAccount() && ((isSignedIn() && request.auth.uid == userId) || isSuperAdmin());
       allow list: if isSuperAdmin();
-      allow create: if isValidId(userId) && (
+      allow create: if isValidId(userId) && isNotDemoAccount() && (
         (isSignedIn() && request.auth.uid == userId &&
           (!('role' in incoming()) || incoming().role in ['customer', 'shop_owner'] || isSuperAdminEmail()) &&
           (!('isBlocked' in incoming()) || incoming().isBlocked == false)) ||
         isSuperAdmin()
       );
-      allow update: if isValidId(userId) && (
+      allow update: if isValidId(userId) && isNotDemoAccount() && (
         (isSignedIn() && request.auth.uid == userId &&
           !incoming().diff(existing()).affectedKeys().hasAny(['role', 'isBlocked'])) ||
         isSuperAdmin()
@@ -1073,6 +1103,46 @@ service cloud.firestore {
     }
     match /contact_messages/{messageId} {
       allow read, write: if isSuperAdmin();
+    }
+
+    // ====================================================
+    // ISOLATED DEMO SUPER ADMIN SANDBOX (`/demo_env/default/...`)
+    // Strictly air-gapped from production collections.
+    // Demo Admin can ONLY operate inside `/demo_env/default` and can NEVER
+    // create platform_admins, admins, or elevate any role to super_admin.
+    // ====================================================
+    match /demo_env/{envId} {
+      allow get: if envId == 'default' && (isSuperAdmin() || isDemoSuperAdmin());
+      allow list, create, update, delete: if envId == 'default' && isSuperAdmin();
+
+      match /platform_admins/{id} {
+        allow read, write: if false;
+      }
+      match /admins/{id} {
+        allow read, write: if false;
+      }
+
+      match /salesMembers/{memberId} {
+        allow read: if envId == 'default' && isValidId(memberId) && (isSuperAdmin() || isDemoSuperAdmin());
+        allow create, update: if envId == 'default' && isValidId(memberId) &&
+          (isSuperAdmin() || isDemoSuperAdmin()) &&
+          (!('role' in incoming()) || isAllowedSalesRole(incoming().role));
+        allow delete: if envId == 'default' && isValidId(memberId) && (isSuperAdmin() || isDemoSuperAdmin());
+      }
+
+      match /shops/{shopId} {
+        allow read, write: if envId == 'default' && isValidId(shopId) && (isSuperAdmin() || isDemoSuperAdmin());
+        match /{subcollection=**} {
+          allow read, write: if envId == 'default' && isValidId(shopId) && (isSuperAdmin() || isDemoSuperAdmin());
+        }
+      }
+
+      match /{demoCollection}/{docId} {
+        allow read, write: if envId == 'default' &&
+          !(demoCollection in ['platform_admins', 'admins']) &&
+          isValidId(docId) &&
+          (isSuperAdmin() || isDemoSuperAdmin());
+      }
     }
   }
 }

@@ -186,8 +186,8 @@ describe('SB Khush Self Pickup / Store Pickup Comprehensive Suite', () => {
     expect(firestoreRules).toContain('match /shops/{shopId}');
     expect(firestoreRules).toContain('isShopMember(shopId)');
     expect(firestoreRules).toContain('isShopAdmin(shopId)');
-    expect(tenantServiceSrc).toContain("doc(db, 'shops', shopId, 'orders'");
-    expect(tenantServiceSrc).toContain("doc(db, 'shops', shopId, 'pickup_slots'");
+    expect(tenantServiceSrc).toContain("scopedDoc(db, 'shops', shopId, 'orders'");
+    expect(tenantServiceSrc).toContain("scopedDoc(db, 'shops', shopId, 'pickup_slots'");
     expect(serverSrc).toContain("doc(db, 'shops', shopId, 'orders'");
     expect(serverSrc).toContain("doc(db, 'shops', shopId, 'pickup_slots'");
     expect(blueprint.entities.Order).toBeDefined();

@@ -8,6 +8,8 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { storage, db, auth } from '../firebase/config';
 import { apiFetch } from '../utils/apiClient';
+import { isDemoNamespace, scopedDoc } from '../utils/demoCollection';
+import { DEMO_SCOPE_PATH } from '../demo/demoConfig';
 
 export type StorageFolder =
   | 'logo'
@@ -272,13 +274,13 @@ export async function uploadShopImage(
 
   // Enforce per-shop storage quota using accurate post-compression byte size
   if (folder !== 'payments' && shopId) {
-    const shopSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
+    const shopSnap = await getDoc(scopedDoc(db, 'shops', shopId)).catch(() => null);
     if (shopSnap && shopSnap.exists()) {
       const shopData = shopSnap.data();
       const usedBytes = Number(shopData?.usage?.storageBytes || 0);
       const planId = shopData?.subscription?.planId;
       if (planId) {
-        const planSnap = await getDoc(doc(db, 'platform_plans', planId)).catch(() => null);
+        const planSnap = await getDoc(scopedDoc(db, 'platform_plans', planId)).catch(() => null);
         if (planSnap && planSnap.exists()) {
           const quota = evaluateStorageQuota(
             usedBytes,
@@ -306,6 +308,9 @@ export async function uploadShopImage(
     if (subPath) pathSegments.push(subPath);
     pathSegments.push(fileName);
     storagePath = pathSegments.join('/');
+  }
+  if (isDemoNamespace()) {
+    storagePath = `${DEMO_SCOPE_PATH}/${storagePath}`;
   }
 
   const customMetadata: Record<string, string> = {
@@ -345,12 +350,12 @@ export async function uploadShopImage(
 
     // Record exact storage usage bytes safely using nested object merge (never dot-notation)
     if (folder !== 'payments' && shopId) {
-      const latestSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
+      const latestSnap = await getDoc(scopedDoc(db, 'shops', shopId)).catch(() => null);
       if (latestSnap && latestSnap.exists()) {
         const currentUsage = latestSnap.data()?.usage || {};
         const nextBytes = calculateNextStorageBytes(Number(currentUsage.storageBytes || 0), processedBlob.size);
         await setDoc(
-          doc(db, 'shops', shopId),
+          scopedDoc(db, 'shops', shopId),
           {
             usage: { ...currentUsage, storageBytes: nextBytes },
             updatedAt: new Date().toISOString(),
@@ -386,7 +391,9 @@ export async function uploadPlatformLogo(
     await compressImageToBlob(file, 1000);
   const ext = processedBlob.type === 'image/webp' ? 'webp' : 'jpg';
   const baseName = sanitizeFileName(file.name.replace(/\.[^.]+$/, ''));
-  const storagePath = `platform/brand/${Date.now()}_${baseName}.${ext}`;
+  const storagePath = isDemoNamespace()
+    ? `${DEMO_SCOPE_PATH}/platform/brand/${Date.now()}_${baseName}.${ext}`
+    : `platform/brand/${Date.now()}_${baseName}.${ext}`;
 
   try {
     let downloadUrl: string;
@@ -654,13 +661,13 @@ export async function deleteStorageImageByUrl(url?: string, shopId?: string): Pr
     await deleteObject(imageRef);
 
     if (shopId && exactBytes > 0) {
-      const shopSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
+      const shopSnap = await getDoc(scopedDoc(db, 'shops', shopId)).catch(() => null);
       if (shopSnap && shopSnap.exists()) {
         const currentUsage = shopSnap.data()?.usage || {};
         const current = Number(currentUsage.storageBytes || 0);
         const next = calculateNextStorageBytes(current, -exactBytes);
         await setDoc(
-          doc(db, 'shops', shopId),
+          scopedDoc(db, 'shops', shopId),
           { usage: { ...currentUsage, storageBytes: next }, updatedAt: new Date().toISOString() },
           { merge: true }
         ).catch(() => {});

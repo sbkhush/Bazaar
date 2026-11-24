@@ -16,6 +16,7 @@ import {
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db, auth } from '../firebase/config';
 import { apiFetch } from '../utils/apiClient';
+import { isDemoNamespace, scopedCollection, scopedDoc } from '../utils/demoCollection';
 import {
   DUPLICATE_CNIC_ERROR_MESSAGE,
   CNIC_AUDIT_BLOCK_MESSAGE,
@@ -237,7 +238,7 @@ export function getShopSubscriptionStatus(shop?: Shop | null, gracePeriodDays = 
 
 export async function getSubscriptionPlans(activeOnly = false): Promise<SubscriptionPlan[]> {
   try {
-    const snap = await getDocs(collection(db, 'platform_plans'));
+    const snap = await getDocs(scopedCollection(db, 'platform_plans'));
     if (snap.empty) {
       return activeOnly
         ? DEFAULT_SUBSCRIPTION_PLANS.filter((p) => p.isActive)
@@ -259,11 +260,11 @@ export async function getSubscriptionPlans(activeOnly = false): Promise<Subscrip
 
 export async function seedDefaultPlansIfEmpty(): Promise<void> {
   try {
-    const snap = await getDocs(collection(db, 'platform_plans'));
+    const snap = await getDocs(scopedCollection(db, 'platform_plans'));
     if (snap.empty) {
       const batch = writeBatch(db);
       for (const plan of DEFAULT_SUBSCRIPTION_PLANS) {
-        batch.set(doc(db, 'platform_plans', plan.id), stripUndefined({
+        batch.set(scopedDoc(db, 'platform_plans', plan.id), stripUndefined({
           ...plan,
           createdAt: new Date().toISOString(),
         }));
@@ -298,7 +299,7 @@ export async function saveSubscriptionPlan(plan: Partial<SubscriptionPlan>): Pro
   });
 
   try {
-    await setDoc(doc(db, 'platform_plans', id), payload, { merge: true });
+    await setDoc(scopedDoc(db, 'platform_plans', id), payload, { merge: true });
     await logPlatformActivity('Updated Plan', 'plan', id, `Saved plan ${payload.name} (Rs. ${payload.monthlyPrice}/mo)`);
     return id;
   } catch (err) {
@@ -313,7 +314,7 @@ export async function deleteSubscriptionPlan(planId: string): Promise<void> {
     throw new Error('Cannot delete a subscription plan currently assigned to active shops. Disable it instead.');
   }
   try {
-    await deleteDoc(doc(db, 'platform_plans', planId));
+    await deleteDoc(scopedDoc(db, 'platform_plans', planId));
     await logPlatformActivity('Deleted Plan', 'plan', planId, `Deleted plan ${planId}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `platform_plans/${planId}`);
@@ -322,7 +323,7 @@ export async function deleteSubscriptionPlan(planId: string): Promise<void> {
 
 export async function getPlatformSettings(): Promise<PlatformSettings> {
   try {
-    const snap = await getDoc(doc(db, 'platform_settings', 'general'));
+    const snap = await getDoc(scopedDoc(db, 'platform_settings', 'general'));
     if (snap.exists()) {
       const data = snap.data() as Partial<PlatformSettings>;
       return {
@@ -355,7 +356,7 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
 
 export async function getPlatformSettingsStrict(): Promise<{ settings: PlatformSettings; fromFirestore: boolean; error?: string }> {
   try {
-    const snap = await getDoc(doc(db, 'platform_settings', 'general'));
+    const snap = await getDoc(scopedDoc(db, 'platform_settings', 'general'));
     if (snap.exists()) {
       const data = snap.data() as Partial<PlatformSettings>;
       return {
@@ -405,7 +406,7 @@ export async function updatePlatformSettings(settings: Partial<PlatformSettings>
     const existing = await getPlatformSettings();
     const updatedAt = new Date().toISOString();
     await setDoc(
-      doc(db, 'platform_settings', 'general'),
+      scopedDoc(db, 'platform_settings', 'general'),
       stripUndefined({ ...normalizedPayload, updatedAt }),
       { merge: true }
     );
@@ -448,8 +449,8 @@ export async function checkSlugAvailability(rawSlug: string): Promise<{ availabl
   }
   try {
     const [slugSnap, publicSnap] = await Promise.all([
-      getDoc(doc(db, 'shop_slugs', cleanSlug)),
-      getDoc(doc(db, 'shops_public', cleanSlug)),
+      getDoc(scopedDoc(db, 'shop_slugs', cleanSlug)),
+      getDoc(scopedDoc(db, 'shops_public', cleanSlug)),
     ]);
     if (slugSnap.exists() || publicSnap.exists()) {
       return { available: false, cleanSlug, reason: 'This shop URL slug is already taken.' };
@@ -469,15 +470,15 @@ export async function getShopPublicBySlug(slug: string): Promise<ShopPublic | nu
   const cleanSlug = sanitizeShopSlug(slug);
   if (!cleanSlug) return null;
   try {
-    const slugSnap = await getDoc(doc(db, 'shop_slugs', cleanSlug));
+    const slugSnap = await getDoc(scopedDoc(db, 'shop_slugs', cleanSlug));
     if (slugSnap.exists()) {
       const shopId = slugSnap.data().shopId;
-      const pubSnap = await getDoc(doc(db, 'shops_public', shopId));
+      const pubSnap = await getDoc(scopedDoc(db, 'shops_public', shopId));
       if (pubSnap.exists()) {
         return { ...(pubSnap.data() as ShopPublic), id: pubSnap.id };
       }
     }
-    const directPubSnap = await getDoc(doc(db, 'shops_public', cleanSlug));
+    const directPubSnap = await getDoc(scopedDoc(db, 'shops_public', cleanSlug));
     if (directPubSnap.exists()) {
       return { ...(directPubSnap.data() as ShopPublic), id: directPubSnap.id };
     }
@@ -490,7 +491,7 @@ export async function getShopPublicBySlug(slug: string): Promise<ShopPublic | nu
 
 export async function getShopPublicById(shopId: string): Promise<ShopPublic | null> {
   try {
-    const pubSnap = await getDoc(doc(db, 'shops_public', shopId));
+    const pubSnap = await getDoc(scopedDoc(db, 'shops_public', shopId));
     return pubSnap.exists() ? { ...(pubSnap.data() as ShopPublic), id: pubSnap.id } : null;
   } catch {
     return null;
@@ -499,7 +500,7 @@ export async function getShopPublicById(shopId: string): Promise<ShopPublic | nu
 
 export async function getActiveDirectoryShopsPublic(): Promise<ShopPublic[]> {
   try {
-    const q = query(collection(db, 'shops_public'), where('status', '==', 'active'));
+    const q = query(scopedCollection(db, 'shops_public'), where('status', '==', 'active'));
     const snap = await getDocs(q);
     const list: ShopPublic[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as ShopPublic), id: d.id }));
@@ -513,15 +514,15 @@ export async function getShopBySlug(slug: string): Promise<Shop | null> {
   const cleanSlug = sanitizeShopSlug(slug);
   if (!cleanSlug) return null;
   try {
-    const slugSnap = await getDoc(doc(db, 'shop_slugs', cleanSlug));
+    const slugSnap = await getDoc(scopedDoc(db, 'shop_slugs', cleanSlug));
     if (slugSnap.exists()) {
       const shopId = slugSnap.data().shopId;
-      const shopSnap = await getDoc(doc(db, 'shops', shopId));
+      const shopSnap = await getDoc(scopedDoc(db, 'shops', shopId));
       if (shopSnap.exists()) {
         return { ...(shopSnap.data() as Shop), id: shopSnap.id };
       }
     }
-    const directSnap = await getDoc(doc(db, 'shops', cleanSlug));
+    const directSnap = await getDoc(scopedDoc(db, 'shops', cleanSlug));
     if (directSnap.exists()) {
       return { ...(directSnap.data() as Shop), id: directSnap.id };
     }
@@ -534,7 +535,7 @@ export async function getShopBySlug(slug: string): Promise<Shop | null> {
 
 export async function getShopById(shopId: string): Promise<Shop | null> {
   try {
-    const snap = await getDoc(doc(db, 'shops', shopId));
+    const snap = await getDoc(scopedDoc(db, 'shops', shopId));
     return snap.exists() ? { ...(snap.data() as Shop), id: snap.id } : null;
   } catch {
     return null;
@@ -547,7 +548,7 @@ export async function getActiveDirectoryShops(): Promise<ShopPublic[]> {
 
 export async function getAllShopsAdmin(): Promise<Shop[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops'));
+    const snap = await getDocs(scopedCollection(db, 'shops'));
     const list: Shop[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as Shop), id: d.id }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -558,7 +559,7 @@ export async function getAllShopsAdmin(): Promise<Shop[]> {
 
 export async function getShopsByOwner(ownerUid: string): Promise<Shop[]> {
   if (!ownerUid) return [];
-  const q = query(collection(db, 'shops'), where('ownerId', '==', ownerUid));
+  const q = query(scopedCollection(db, 'shops'), where('ownerId', '==', ownerUid));
   const snap = await getDocs(q);
   const shops: Shop[] = [];
   snap.forEach((d) => shops.push({ ...(d.data() as Shop), id: d.id }));
@@ -763,9 +764,9 @@ export async function updateShopStatus(shopId: string, status: ShopStatus): Prom
   const now = new Date().toISOString();
   try {
     const [shopSnap, pubSnap, settingsPubSnap] = await Promise.all([
-      getDoc(doc(db, 'shops', shopId)),
-      getDoc(doc(db, 'shops_public', shopId)).catch(() => null),
-      getDoc(doc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
+      getDoc(scopedDoc(db, 'shops', shopId)),
+      getDoc(scopedDoc(db, 'shops_public', shopId)).catch(() => null),
+      getDoc(scopedDoc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
     ]);
     if (!shopSnap.exists()) {
       throw new Error(`Shop "${shopId}" was not found.`);
@@ -782,8 +783,8 @@ export async function updateShopStatus(shopId: string, status: ShopStatus): Prom
     );
 
     const batch = writeBatch(db);
-    batch.update(doc(db, 'shops', shopId), { status, updatedAt: now });
-    batch.set(doc(db, 'shops_public', shopId), cleanPublicDoc);
+    batch.update(scopedDoc(db, 'shops', shopId), { status, updatedAt: now });
+    batch.set(scopedDoc(db, 'shops_public', shopId), cleanPublicDoc);
     await batch.commit();
     if (status === 'active') {
       await verifyReferralAttributionOnShopActivation(shopId).catch(() => {});
@@ -825,9 +826,9 @@ export async function assignShopSubscription(
 
   try {
     const [shopSnap, pubSnap, settingsPubSnap] = await Promise.all([
-      getDoc(doc(db, 'shops', shopId)),
-      getDoc(doc(db, 'shops_public', shopId)).catch(() => null),
-      getDoc(doc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
+      getDoc(scopedDoc(db, 'shops', shopId)),
+      getDoc(scopedDoc(db, 'shops_public', shopId)).catch(() => null),
+      getDoc(scopedDoc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
     ]);
     if (!shopSnap.exists()) {
       throw new Error(`Shop "${shopId}" was not found.`);
@@ -844,12 +845,12 @@ export async function assignShopSubscription(
     );
 
     const batch = writeBatch(db);
-    batch.update(doc(db, 'shops', shopId), {
+    batch.update(scopedDoc(db, 'shops', shopId), {
       subscription: stripUndefined(subscription),
       status: 'active',
       updatedAt: startDate,
     });
-    batch.set(doc(db, 'shops_public', shopId), cleanPublicDoc);
+    batch.set(scopedDoc(db, 'shops_public', shopId), cleanPublicDoc);
     await batch.commit();
     await logPlatformActivity(
       'Updated Shop Plan',
@@ -865,7 +866,7 @@ export async function assignShopSubscription(
 export async function extendShopSubscription(shopId: string, extraDays: number): Promise<void> {
   try {
     await runTransaction(db, async (tx) => {
-      const shopRef = doc(db, 'shops', shopId);
+      const shopRef = scopedDoc(db, 'shops', shopId);
       const snap = await tx.get(shopRef);
       if (!snap.exists()) throw new Error('Shop not found');
       const shop = snap.data() as Shop;
@@ -905,6 +906,31 @@ export async function manageShopCnic(params: {
     if (!check.valid) {
       throw new Error(check.error || 'Valid 13-digit CNIC is required.');
     }
+  }
+
+  // In Demo Mode, only mutate inside the isolated /demo_env/default namespace (never production CF/API)
+  if (isDemoNamespace()) {
+    const now = new Date().toISOString();
+    const isRelease = params.action === 'release';
+    const rawCnic = cleanPayload.cnic || '';
+    const masked = isRelease
+      ? 'RELEASED'
+      : `${rawCnic.slice(0, 5)}-XXXXXXX-${rawCnic.slice(-1)}`;
+    const cnicStatus = isRelease ? 'released' : 'verified';
+    await updateDoc(scopedDoc(db, 'shops', params.shopId), {
+      cnicStatus,
+      cnicVerified: !isRelease,
+      cnicMasked: masked,
+      cnicHash: isRelease ? '' : `demo_hash_${rawCnic.slice(-4)}`,
+      updatedAt: now,
+    });
+    await logPlatformActivity(
+      isRelease ? 'Demo CNIC Released' : 'Demo CNIC Assigned',
+      'shop',
+      params.shopId,
+      `${cleanPayload.reason} (${masked})`
+    );
+    return { ok: true, cnicStatus, cnicMasked: masked };
   }
 
   try {
@@ -950,6 +976,54 @@ export async function deleteShopComplete(shopId: string): Promise<void> {
   if (!auth.currentUser) {
     throw new Error('Super Admin authentication required to delete a shop.');
   }
+
+  if (isDemoNamespace()) {
+    const shopSnap = await getDoc(scopedDoc(db, 'shops', shopId)).catch(() => null);
+    const slug = shopSnap?.exists() ? String((shopSnap.data() as Shop).slug || '') : '';
+    const subcollections = [
+      'products',
+      'orders',
+      'customers',
+      'categories',
+      'banners',
+      'settings',
+      'pages',
+      'coupons',
+      'reviews',
+      'inventory_logs',
+      'stock_movements',
+      'activity_logs',
+      'notifications',
+      'staff',
+      'pickup_slots',
+      'order_tracking',
+      'contact_messages',
+      'newsletter_subscribers',
+      'pos_sales',
+      'suppliers',
+      'purchases',
+      'khata_ledger',
+      'expenses',
+    ];
+    for (const sub of subcollections) {
+      const snap = await getDocs(scopedCollection(db, 'shops', shopId, sub)).catch(() => null);
+      if (snap && !snap.empty) {
+        const batch = writeBatch(db);
+        snap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+    }
+    const rootBatch = writeBatch(db);
+    rootBatch.delete(scopedDoc(db, 'shops', shopId));
+    rootBatch.delete(scopedDoc(db, 'shops_public', shopId));
+    if (slug) {
+      rootBatch.delete(scopedDoc(db, 'shop_slugs', slug));
+    }
+    await rootBatch.commit();
+    await logPlatformActivity('Deleted Demo Shop', 'shop', shopId, `Removed demo tenant ${shopId} from demo_env/default`);
+    return;
+  }
+
   try {
     const functions = getFunctions(auth.app);
     const deleteFn = httpsCallable<{ shopId: string }, { ok: boolean }>(
@@ -982,7 +1056,7 @@ export async function submitSubscriptionPayment(
     createdAt: now,
   });
   try {
-    await setDoc(doc(db, 'platform_payments', id), payload);
+    await setDoc(scopedDoc(db, 'platform_payments', id), payload);
     await logPlatformActivity(
       'Submitted Subscription Payment',
       'payment',
@@ -997,7 +1071,7 @@ export async function submitSubscriptionPayment(
 
 export async function getAllPlatformPayments(): Promise<PlatformPayment[]> {
   try {
-    const snap = await getDocs(collection(db, 'platform_payments'));
+    const snap = await getDocs(scopedCollection(db, 'platform_payments'));
     const list: PlatformPayment[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as PlatformPayment), id: d.id }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -1008,7 +1082,7 @@ export async function getAllPlatformPayments(): Promise<PlatformPayment[]> {
 
 export async function getPaymentsByShop(shopId: string): Promise<PlatformPayment[]> {
   try {
-    const q = query(collection(db, 'platform_payments'), where('shopId', '==', shopId));
+    const q = query(scopedCollection(db, 'platform_payments'), where('shopId', '==', shopId));
     const snap = await getDocs(q);
     const list: PlatformPayment[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as PlatformPayment), id: d.id }));
@@ -1029,7 +1103,7 @@ export async function approvePlatformPayment(paymentId: string): Promise<void> {
   try {
     let logMsg = '';
     await runTransaction(db, async (tx) => {
-      const paymentRef = doc(db, 'platform_payments', paymentId);
+      const paymentRef = scopedDoc(db, 'platform_payments', paymentId);
       const paySnap = await tx.get(paymentRef);
       if (!paySnap.exists()) {
         throw new Error('Payment request not found');
@@ -1039,8 +1113,8 @@ export async function approvePlatformPayment(paymentId: string): Promise<void> {
         throw new Error(`Payment ${paymentId} has already been processed (${payment.status}).`);
       }
 
-      const shopRef = doc(db, 'shops', payment.shopId);
-      const shopPubRef = doc(db, 'shops_public', payment.shopId);
+      const shopRef = scopedDoc(db, 'shops', payment.shopId);
+      const shopPubRef = scopedDoc(db, 'shops_public', payment.shopId);
       const [shopSnap, pubSnap] = await Promise.all([tx.get(shopRef), tx.get(shopPubRef)]);
       if (!shopSnap.exists()) {
         throw new Error(`Target shop "${payment.shopId}" no longer exists.`);
@@ -1107,7 +1181,7 @@ export async function rejectPlatformPayment(paymentId: string, reason: string): 
   const reviewer = auth.currentUser?.email || 'Super Admin';
   try {
     await runTransaction(db, async (tx) => {
-      const paymentRef = doc(db, 'platform_payments', paymentId);
+      const paymentRef = scopedDoc(db, 'platform_payments', paymentId);
       const paySnap = await tx.get(paymentRef);
       if (!paySnap.exists()) throw new Error('Payment request not found');
       if (paySnap.data()?.status !== 'pending') {
@@ -1149,7 +1223,7 @@ export async function logPlatformActivity(
       details,
       createdAt: new Date().toISOString(),
     };
-    await setDoc(doc(db, 'platform_activity_logs', id), payload);
+    await setDoc(scopedDoc(db, 'platform_activity_logs', id), payload);
   } catch (err) {
     console.warn('Could not log platform activity:', err);
   }
@@ -1157,7 +1231,7 @@ export async function logPlatformActivity(
 
 export async function getPlatformActivityLogs(maxItems = 50): Promise<ActivityLog[]> {
   try {
-    const q = query(collection(db, 'platform_activity_logs'), orderBy('createdAt', 'desc'), limit(maxItems));
+    const q = query(scopedCollection(db, 'platform_activity_logs'), orderBy('createdAt', 'desc'), limit(maxItems));
     const snap = await getDocs(q);
     const list: ActivityLog[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as ActivityLog), id: d.id }));
@@ -1287,7 +1361,7 @@ export async function getPlatformAnalytics(): Promise<PlatformAnalyticsSummary> 
 export async function updateShopAdminNotes(shopId: string, adminNotes: string): Promise<void> {
   try {
     await setDoc(
-      doc(db, 'shops', shopId),
+      scopedDoc(db, 'shops', shopId),
       {
         adminNotes,
         updatedAt: new Date().toISOString(),
@@ -1317,7 +1391,7 @@ export async function createSupportTicket(
     updatedAt: now,
   });
   try {
-    await setDoc(doc(db, 'support_tickets', id), payload);
+    await setDoc(scopedDoc(db, 'support_tickets', id), payload);
     await logPlatformActivity('Created Support Ticket', 'ticket', id, `${input.userEmail}: ${input.subject}`);
     return id;
   } catch (err) {
@@ -1327,7 +1401,7 @@ export async function createSupportTicket(
 
 export async function getAllSupportTickets(): Promise<SupportTicket[]> {
   try {
-    const snap = await getDocs(collection(db, 'support_tickets'));
+    const snap = await getDocs(scopedCollection(db, 'support_tickets'));
     const list: SupportTicket[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as SupportTicket), id: d.id }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -1339,7 +1413,7 @@ export async function getAllSupportTickets(): Promise<SupportTicket[]> {
 export async function getShopSupportTickets(shopId: string): Promise<SupportTicket[]> {
   try {
     const uid = auth.currentUser?.uid;
-    const colRef = collection(db, 'support_tickets');
+    const colRef = scopedCollection(db, 'support_tickets');
     const q = uid
       ? query(colRef, where('shopId', '==', shopId), where('userId', '==', uid))
       : query(colRef, where('shopId', '==', shopId));
@@ -1357,7 +1431,7 @@ export async function updateSupportTicket(
   updates: { status: SupportTicket['status']; adminReply?: string }
 ): Promise<void> {
   try {
-    await updateDoc(doc(db, 'support_tickets', ticketId), {
+    await updateDoc(scopedDoc(db, 'support_tickets', ticketId), {
       ...stripUndefined(updates),
       updatedAt: new Date().toISOString(),
     });
@@ -1365,4 +1439,75 @@ export async function updateSupportTicket(
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `support_tickets/${ticketId}`);
   }
+}
+
+// ====================================================
+// DEMO ENVIRONMENT ADMIN-ONLY PROVISION & RESET
+// ====================================================
+
+export async function triggerDemoEnvironmentReset(): Promise<{
+  ok: boolean;
+  seededCounts?: Record<string, number>;
+}> {
+  if (isDemoNamespace()) {
+    throw new Error('Forbidden: Demo accounts cannot reset the demo environment. Sign in as Production Super Admin.');
+  }
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Production Super Admin authentication required.');
+  }
+
+  try {
+    const fn = httpsCallable<undefined, { ok: boolean; seededCounts?: Record<string, number> }>(
+      getFunctions(auth.app),
+      'resetDemoEnvironmentAdmin'
+    );
+    const res = await fn();
+    if (res.data?.ok) return res.data;
+  } catch (cfErr: any) {
+    const code = String(cfErr?.code || '');
+    if (code.includes('permission-denied') || code.includes('unauthenticated')) {
+      throw new Error(cfErr?.message || 'Only authorized Production Super Admins can reset demo data.');
+    }
+  }
+
+  const token = await currentUser.getIdToken();
+  const res = await apiFetch('/api/demo/reset', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const ct = res.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    throw new Error('Demo reset endpoint unavailable. Deploy Cloud Functions or configure VITE_API_BASE_URL.');
+  }
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json?.error || 'Failed to reset demo environment.');
+  }
+  return json as { ok: boolean; seededCounts?: Record<string, number> };
+}
+
+export async function triggerProvisionDemoAdmin(password?: string): Promise<{
+  ok: boolean;
+  uid?: string;
+  email?: string;
+  seededCounts?: Record<string, number>;
+}> {
+  if (isDemoNamespace()) {
+    throw new Error('Forbidden: Demo accounts cannot provision accounts.');
+  }
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Production Super Admin authentication required.');
+  }
+
+  const fn = httpsCallable<{ password?: string }, { ok: boolean; uid?: string; email?: string; seededCounts?: Record<string, number> }>(
+    getFunctions(auth.app),
+    'provisionDemoSuperAdmin'
+  );
+  const res = await fn(password ? { password } : {});
+  return res.data;
 }
