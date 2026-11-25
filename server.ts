@@ -383,7 +383,7 @@ Format cleanly in markdown with:
 4. **Buying Recommendation & Value Verdict**`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-4-hydrogen',
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
@@ -3192,6 +3192,8 @@ Format cleanly in markdown with:
         'salesAuditLogs',
         'cnic_registry',
         'archived_shops',
+        'users',
+        'shop_invites',
       ];
 
       const deleteOps: Parameters<typeof restCommitWrites>[0] = [];
@@ -3205,13 +3207,26 @@ Format cleanly in markdown with:
         'categories',
         'banners',
         'settings',
+        'pages',
         'coupons',
+        'carts',
+        'wishlists',
+        'pickup_slots',
+        'newsletter_subscribers',
+        'payment_receipts',
+        'suppliers',
+        'purchases',
+        'pos_sales',
+        'stock_movements',
+        'khata_ledger',
+        'expenses',
         'orders',
         'order_tracking',
         'reviews',
         'inventory_logs',
         'contact_messages',
         'customers',
+        'staff',
         'notifications',
         'activity_logs',
       ];

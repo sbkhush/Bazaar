@@ -12,23 +12,25 @@ service firebase.storage {
 
     function isNotDemoAccount() {
       return !isSignedIn() || (
-        request.auth.token.demo_super_admin != true &&
-        request.auth.token.account_type != 'DEMO' &&
-        request.auth.token.email != 'demo-admin@sbkhush.com'
+        !('demo_super_admin' in request.auth.token && request.auth.token.demo_super_admin == true) &&
+        !('account_type' in request.auth.token && request.auth.token.account_type == 'DEMO') &&
+        !('email' in request.auth.token && request.auth.token.email == 'demo-admin@sbkhush.com')
       );
     }
 
     function isDemoSuperAdmin() {
       return isSignedIn() &&
-        request.auth.token.demo_super_admin == true &&
-        request.auth.token.account_type == 'DEMO' &&
-        request.auth.token.email == 'demo-admin@sbkhush.com';
+        ('demo_super_admin' in request.auth.token && request.auth.token.demo_super_admin == true) &&
+        ('account_type' in request.auth.token && request.auth.token.account_type == 'DEMO') &&
+        ('email' in request.auth.token && request.auth.token.email == 'demo-admin@sbkhush.com');
     }
 
     function isSuperAdmin() {
       return isSignedIn() && isNotDemoAccount() && (
-        request.auth.token.super_admin == true ||
-        (request.auth.token.email == 'hasanaamir815@gmail.com' &&
+        ('super_admin' in request.auth.token && request.auth.token.super_admin == true) ||
+        ('email' in request.auth.token &&
+         request.auth.token.email == 'hasanaamir815@gmail.com' &&
+         'email_verified' in request.auth.token &&
          request.auth.token.email_verified == true)
       );
     }
@@ -37,7 +39,8 @@ service firebase.storage {
     function isShopMember(shopId) {
       return isSignedIn() && isNotDemoAccount() && (
         isSuperAdmin() ||
-        (request.auth.token.shops != null &&
+        ('shops' in request.auth.token &&
+         request.auth.token.shops != null &&
          shopId in request.auth.token.shops &&
          request.auth.token.shops[shopId] in ['shop_owner', 'shop_admin', 'shop_staff'])
       );
@@ -46,7 +49,8 @@ service firebase.storage {
     function isShopAdmin(shopId) {
       return isSignedIn() && isNotDemoAccount() && (
         isSuperAdmin() ||
-        (request.auth.token.shops != null &&
+        ('shops' in request.auth.token &&
+         request.auth.token.shops != null &&
          shopId in request.auth.token.shops &&
          request.auth.token.shops[shopId] in ['shop_owner', 'shop_admin'])
       );
@@ -99,7 +103,7 @@ service firebase.storage {
     // Customer Checkout Payment Proofs (Write-once for verified order session; Private Read)
     match /shops/{shopId}/payments/{orderSessionId}/{fileName} {
       allow read: if isShopMember(shopId) || (
-        isSignedIn() && resource.metadata.uploaderUid == request.auth.uid
+        isSignedIn() && resource.metadata != null && 'uploaderUid' in resource.metadata && resource.metadata.uploaderUid == request.auth.uid
       );
       allow create: if isValidImageUpload() &&
         request.resource.metadata != null &&
@@ -141,7 +145,8 @@ service firebase.storage {
 
     // Sales team claim helper (never grants shop or Super Admin storage access)
     function isActiveSalesClaim() {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
+        'sales_role' in request.auth.token &&
         request.auth.token.sales_role in ['salesman', 'senior_salesman', 'sales_manager', 'referral_agent']
       );
     }

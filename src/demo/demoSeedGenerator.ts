@@ -253,7 +253,7 @@ export function buildDemoSeedDataset(): DemoSeedDataset {
       commissionPlanName: 'Growth Tier (20%)',
       accountStatus: 'active',
       referralCode: `DMGR0${idx + 1}`,
-      referralLink: `https://sbkhush.com/#/register?ref=DMGR0${idx + 1}`,
+      referralLink: `https://sbkhush.com/r/DMGR0${idx + 1}`,
       qrScanCount: 18 + idx * 7,
       payoutDetails: {
         preferredMethod: 'bank_transfer',
@@ -292,7 +292,7 @@ export function buildDemoSeedDataset(): DemoSeedDataset {
         commissionPlanName: s.role === 'senior_salesman' ? 'Enterprise Partner (25%)' : 'Standard Partner (15%)',
         accountStatus: idx === 7 ? 'inactive' : 'active',
         referralCode: `DREP0${idx + 1}`,
-        referralLink: `https://sbkhush.com/#/register?ref=DREP0${idx + 1}`,
+        referralLink: `https://sbkhush.com/r/DREP0${idx + 1}`,
         qrScanCount: 24 + idx * 9,
         payoutDetails: {
           preferredMethod: idx % 2 === 0 ? 'easypaisa' : 'jazzcash',
@@ -335,7 +335,7 @@ export function buildDemoSeedDataset(): DemoSeedDataset {
     commissionPlanName: 'Standard Partner (15%)',
     accountStatus: idx === 4 ? 'pending_approval' : 'active',
     referralCode: a.code,
-    referralLink: `https://sbkhush.com/#/register?ref=${a.code}`,
+    referralLink: `https://sbkhush.com/r/${a.code}`,
     qrScanCount: 14 + idx * 6,
     payoutDetails: {
       preferredMethod: 'easypaisa',

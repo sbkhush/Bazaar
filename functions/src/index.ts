@@ -1170,15 +1170,22 @@ async function seedDemoEnvironmentInternal(): Promise<{
     await batch.commit();
   }
 
+  const countCollection = (col: string) =>
+    ops.filter((op) => op.pathSegments.length === 4 && op.pathSegments[2] === col).length;
+  const countSubcollection = (sub: string) =>
+    ops.filter((op) => op.pathSegments.length === 6 && op.pathSegments[2] === 'shops' && op.pathSegments[4] === sub).length;
+  const salesOps = ops.filter((op) => op.pathSegments.length === 4 && op.pathSegments[2] === 'salesMembers');
+  const referralAgentsCount = salesOps.filter((op) => op.data?.role === 'referral_agent').length;
+
   return {
     writtenDocs: ops.length,
     seededCounts: {
-      shops: 20,
-      products: 100,
-      customers: 50,
-      orders: 30,
-      salesMembers: 10,
-      referralAgents: 5,
+      shops: countCollection('shops'),
+      products: countSubcollection('products'),
+      customers: countSubcollection('customers'),
+      orders: countSubcollection('orders'),
+      salesMembers: salesOps.length - referralAgentsCount,
+      referralAgents: referralAgentsCount,
     },
   };
 }
