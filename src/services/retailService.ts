@@ -27,6 +27,7 @@ import {
 } from '../types';
 import { stripUndefined } from './platformService';
 import { logShopActivity, getShopAndPlanLimits, getAllShopOrdersAdmin } from './tenantService';
+import { scopedCollection, scopedDoc } from '../utils/demoCollection';
 
 // ====================================================
 // PURE FINANCIAL & INVENTORY VALUATION HELPERS
@@ -141,7 +142,7 @@ export function calculateInventoryValuation(products: Product[]) {
 
 export async function getShopPosSales(shopId: string): Promise<PosSale[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'pos_sales'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'pos_sales'));
     const list: PosSale[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as PosSale), id: d.id, shopId }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -188,7 +189,7 @@ export async function createPosSale(
 
   try {
     const savedSale = await runTransaction(db, async (tx) => {
-      const saleRef = doc(db, 'shops', shopId, 'pos_sales', saleId);
+      const saleRef = scopedDoc(db, 'shops', shopId, 'pos_sales', saleId);
       const existingSale = await tx.get(saleRef);
       if (existingSale.exists()) {
         // Idempotent retry return existing invoice
@@ -198,7 +199,7 @@ export async function createPosSale(
       // Read all product snapshots before any writes
       const productDocs = new Map<string, Product>();
       for (const line of input.items) {
-        const pRef = doc(db, 'shops', shopId, 'products', line.productId);
+        const pRef = scopedDoc(db, 'shops', shopId, 'products', line.productId);
         const pSnap = await tx.get(pRef);
         if (!pSnap.exists()) {
           throw new Error(`Product "${line.title}" no longer exists in catalog.`);
@@ -213,7 +214,7 @@ export async function createPosSale(
       let customerSnapData: ShopCustomerSummary | null = null;
       const creditToAdd = Number(input.creditAmount || (input.paymentMethod === 'khata_credit' ? input.total : 0));
       if (input.customerId && creditToAdd > 0) {
-        const custSnap = await tx.get(doc(db, 'shops', shopId, 'customers', input.customerId));
+        const custSnap = await tx.get(scopedDoc(db, 'shops', shopId, 'customers', input.customerId));
         if (custSnap.exists()) {
           customerSnapData = custSnap.data() as ShopCustomerSummary;
         }
@@ -224,14 +225,14 @@ export async function createPosSale(
         const prod = productDocs.get(line.productId)!;
         const prevStock = Number(prod.stock || 0);
         const nextStock = Math.max(0, prevStock - line.quantity);
-        tx.update(doc(db, 'shops', shopId, 'products', line.productId), {
+        tx.update(scopedDoc(db, 'shops', shopId, 'products', line.productId), {
           stock: nextStock,
           updatedAt: nowIso,
         });
 
         const movId = `mov_${Date.now()}_${line.productId.slice(-4)}_${Math.random().toString(36).slice(2, 5)}`;
         tx.set(
-          doc(db, 'shops', shopId, 'stock_movements', movId),
+          scopedDoc(db, 'shops', shopId, 'stock_movements', movId),
           stripUndefined<StockMovement>({
             id: movId,
             shopId,
@@ -252,7 +253,7 @@ export async function createPosSale(
 
       // Khata credit ledger update if paid on credit
       if (creditToAdd > 0 && input.customerId) {
-        const custRef = doc(db, 'shops', shopId, 'customers', input.customerId);
+        const custRef = scopedDoc(db, 'shops', shopId, 'customers', input.customerId);
         const prevBal = Number(customerSnapData?.outstandingBalance || 0);
         const newBal = prevBal + creditToAdd;
         tx.set(
@@ -274,7 +275,7 @@ export async function createPosSale(
 
         const kId = `kht_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
         tx.set(
-          doc(db, 'shops', shopId, 'khata_ledger', kId),
+          scopedDoc(db, 'shops', shopId, 'khata_ledger', kId),
           stripUndefined<KhataEntry>({
             id: kId,
             shopId,
@@ -342,7 +343,7 @@ export async function returnPosSale(shopId: string, saleId: string, reason = 'Cu
 
   try {
     await runTransaction(db, async (tx) => {
-      const saleRef = doc(db, 'shops', shopId, 'pos_sales', saleId);
+      const saleRef = scopedDoc(db, 'shops', shopId, 'pos_sales', saleId);
       const saleSnap = await tx.get(saleRef);
       if (!saleSnap.exists()) throw new Error('POS invoice not found.');
       const sale = saleSnap.data() as PosSale;
@@ -351,7 +352,7 @@ export async function returnPosSale(shopId: string, saleId: string, reason = 'Cu
       }
 
       for (const item of sale.items) {
-        const pRef = doc(db, 'shops', shopId, 'products', item.productId);
+        const pRef = scopedDoc(db, 'shops', shopId, 'products', item.productId);
         const pSnap = await tx.get(pRef);
         if (pSnap.exists()) {
           const prev = Number(pSnap.data().stock || 0);
@@ -360,7 +361,7 @@ export async function returnPosSale(shopId: string, saleId: string, reason = 'Cu
 
           const movId = `mov_${Date.now()}_${item.productId.slice(-4)}_${Math.random().toString(36).slice(2, 5)}`;
           tx.set(
-            doc(db, 'shops', shopId, 'stock_movements', movId),
+            scopedDoc(db, 'shops', shopId, 'stock_movements', movId),
             stripUndefined<StockMovement>({
               id: movId,
               shopId,
@@ -394,7 +395,7 @@ export async function returnPosSale(shopId: string, saleId: string, reason = 'Cu
 
 export async function getShopSuppliers(shopId: string): Promise<Supplier[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'suppliers'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'suppliers'));
     const list: Supplier[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as Supplier), id: d.id, shopId }));
     return list.sort((a, b) => a.name.localeCompare(b.name));
@@ -428,7 +429,7 @@ export async function saveShopSupplier(shopId: string, supplier: Partial<Supplie
   });
 
   try {
-    await setDoc(doc(db, 'shops', shopId, 'suppliers', id), payload, { merge: true });
+    await setDoc(scopedDoc(db, 'shops', shopId, 'suppliers', id), payload, { merge: true });
     await logShopActivity(shopId, isNew ? 'Added Supplier' : 'Updated Supplier', 'supplier', id, payload.name);
     return id;
   } catch (err) {
@@ -446,7 +447,7 @@ export async function recordSupplierPayment(
   const nowIso = new Date().toISOString();
   try {
     await runTransaction(db, async (tx) => {
-      const supRef = doc(db, 'shops', shopId, 'suppliers', supplierId);
+      const supRef = scopedDoc(db, 'shops', shopId, 'suppliers', supplierId);
       const snap = await tx.get(supRef);
       if (!snap.exists()) throw new Error('Supplier not found.');
       const cur = Number(snap.data().currentPayableBalance || 0);
@@ -467,7 +468,7 @@ export async function recordSupplierPayment(
 
 export async function getShopPurchases(shopId: string): Promise<PurchaseInvoice[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'purchases'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'purchases'));
     const list: PurchaseInvoice[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as PurchaseInvoice), id: d.id, shopId }));
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -498,7 +499,7 @@ export async function createPurchaseInvoice(
 
   // Guard duplicate invoice number
   const existingInvSnap = await getDocs(
-    query(collection(db, 'shops', shopId, 'purchases'), where('invoiceNumber', '==', input.invoiceNumber.trim()))
+    query(scopedCollection(db, 'shops', shopId, 'purchases'), where('invoiceNumber', '==', input.invoiceNumber.trim()))
   );
   if (!existingInvSnap.empty) {
     throw new Error(`Purchase invoice "${input.invoiceNumber}" already exists.`);
@@ -519,13 +520,13 @@ export async function createPurchaseInvoice(
 
   try {
     const invoice = await runTransaction(db, async (tx) => {
-      const supRef = doc(db, 'shops', shopId, 'suppliers', input.supplierId);
+      const supRef = scopedDoc(db, 'shops', shopId, 'suppliers', input.supplierId);
       const supSnap = await tx.get(supRef);
       if (!supSnap.exists()) throw new Error('Selected supplier not found.');
 
       const prodSnapshots = new Map<string, Product>();
       for (const line of input.items) {
-        const pSnap = await tx.get(doc(db, 'shops', shopId, 'products', line.productId));
+        const pSnap = await tx.get(scopedDoc(db, 'shops', shopId, 'products', line.productId));
         if (!pSnap.exists()) throw new Error(`Product "${line.productTitle}" not found.`);
         prodSnapshots.set(line.productId, { ...(pSnap.data() as Product), id: pSnap.id });
       }
@@ -535,7 +536,7 @@ export async function createPurchaseInvoice(
         const prod = prodSnapshots.get(line.productId)!;
         const prev = Number(prod.stock || 0);
         const next = prev + Number(line.quantity || 0);
-        tx.update(doc(db, 'shops', shopId, 'products', line.productId), {
+        tx.update(scopedDoc(db, 'shops', shopId, 'products', line.productId), {
           stock: next,
           purchasePrice: Number(line.purchasePrice),
           updatedAt: nowIso,
@@ -543,7 +544,7 @@ export async function createPurchaseInvoice(
 
         const movId = `mov_${Date.now()}_${line.productId.slice(-4)}_${Math.random().toString(36).slice(2, 5)}`;
         tx.set(
-          doc(db, 'shops', shopId, 'stock_movements', movId),
+          scopedDoc(db, 'shops', shopId, 'stock_movements', movId),
           stripUndefined<StockMovement>({
             id: movId,
             shopId,
@@ -589,7 +590,7 @@ export async function createPurchaseInvoice(
         updatedAt: nowIso,
       });
 
-      tx.set(doc(db, 'shops', shopId, 'purchases', purchaseId), docData);
+      tx.set(scopedDoc(db, 'shops', shopId, 'purchases', purchaseId), docData);
       return docData;
     });
 
@@ -612,7 +613,7 @@ export async function createPurchaseInvoice(
 
 export async function getShopCustomersWithKhata(shopId: string): Promise<ShopCustomerSummary[]> {
   const [explicitSnap, orders] = await Promise.all([
-    getDocs(collection(db, 'shops', shopId, 'customers')).catch(() => null),
+    getDocs(scopedCollection(db, 'shops', shopId, 'customers')).catch(() => null),
     getAllShopOrdersAdmin(shopId).catch(() => [] as Order[]),
   ]);
 
@@ -662,7 +663,7 @@ export async function saveShopCustomerProfile(
   const id = customer.id || cleanPhone || `cust_${Date.now()}`;
   const nowIso = new Date().toISOString();
 
-  const existing = await getDoc(doc(db, 'shops', shopId, 'customers', id)).catch(() => null);
+  const existing = await getDoc(scopedDoc(db, 'shops', shopId, 'customers', id)).catch(() => null);
   const prevData = existing?.exists() ? (existing.data() as ShopCustomerSummary) : null;
 
   const payload = stripUndefined<ShopCustomerSummary>({
@@ -684,7 +685,7 @@ export async function saveShopCustomerProfile(
   });
 
   try {
-    await setDoc(doc(db, 'shops', shopId, 'customers', id), payload, { merge: true });
+    await setDoc(scopedDoc(db, 'shops', shopId, 'customers', id), payload, { merge: true });
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `shops/${shopId}/customers/${id}`);
@@ -693,7 +694,7 @@ export async function saveShopCustomerProfile(
 
 export async function getShopKhataEntries(shopId: string, customerId?: string): Promise<KhataEntry[]> {
   try {
-    const colRef = collection(db, 'shops', shopId, 'khata_ledger');
+    const colRef = scopedCollection(db, 'shops', shopId, 'khata_ledger');
     const q = customerId ? query(colRef, where('customerId', '==', customerId)) : colRef;
     const snap = await getDocs(q);
     const list: KhataEntry[] = [];
@@ -729,7 +730,7 @@ export async function recordKhataTransaction(
 
   try {
     const entry = await runTransaction(db, async (tx) => {
-      const custRef = doc(db, 'shops', shopId, 'customers', input.customerId);
+      const custRef = scopedDoc(db, 'shops', shopId, 'customers', input.customerId);
       const custSnap = await tx.get(custRef);
       const prevData = custSnap.exists() ? (custSnap.data() as ShopCustomerSummary) : null;
       const prevBal = Number(prevData?.outstandingBalance || 0);
@@ -770,7 +771,7 @@ export async function recordKhataTransaction(
         createdAt: nowIso,
       });
 
-      tx.set(doc(db, 'shops', shopId, 'khata_ledger', entryId), entryDoc);
+      tx.set(scopedDoc(db, 'shops', shopId, 'khata_ledger', entryId), entryDoc);
       return entryDoc;
     });
 
@@ -793,7 +794,7 @@ export async function recordKhataTransaction(
 
 export async function getShopExpenses(shopId: string): Promise<ShopExpense[]> {
   try {
-    const snap = await getDocs(collection(db, 'shops', shopId, 'expenses'));
+    const snap = await getDocs(scopedCollection(db, 'shops', shopId, 'expenses'));
     const list: ShopExpense[] = [];
     snap.forEach((d) => list.push({ ...(d.data() as ShopExpense), id: d.id, shopId }));
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -817,7 +818,7 @@ export async function saveShopExpense(
     createdAt: nowIso,
   });
   try {
-    await setDoc(doc(db, 'shops', shopId, 'expenses', id), payload);
+    await setDoc(scopedDoc(db, 'shops', shopId, 'expenses', id), payload);
     await logShopActivity(shopId, 'Recorded Expense', 'expense', id, `${payload.title} — Rs. ${payload.amount}`);
     return id;
   } catch (err) {
@@ -827,7 +828,7 @@ export async function saveShopExpense(
 
 export async function deleteShopExpense(shopId: string, id: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'shops', shopId, 'expenses', id));
+    await deleteDoc(scopedDoc(db, 'shops', shopId, 'expenses', id));
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `shops/${shopId}/expenses/${id}`);
   }

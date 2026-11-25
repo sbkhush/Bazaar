@@ -11,14 +11,30 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isNotDemoAccount() {
+      return !isSignedIn() || (
+        request.auth.token.demo_super_admin != true &&
+        request.auth.token.account_type != 'DEMO' &&
+        request.auth.token.email != 'demo-admin@sbkhush.com'
+      );
+    }
+
+    function isDemoSuperAdmin() {
+      return isSignedIn() &&
+        request.auth.token.demo_super_admin == true &&
+        request.auth.token.account_type == 'DEMO' &&
+        request.auth.token.email == 'demo-admin@sbkhush.com';
+    }
+
     function isSuperAdminEmail() {
       return isSignedIn() &&
+        isNotDemoAccount() &&
         request.auth.token.email == 'hasanaamir815@gmail.com' &&
         request.auth.token.email_verified == true;
     }
 
     function isSuperAdmin() {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
         request.auth.token.super_admin == true ||
         isSuperAdminEmail() ||
         exists(/databases/$(database)/documents/platform_admins/$(request.auth.uid)) ||
@@ -58,7 +74,7 @@ service cloud.firestore {
     }
 
     function hasSalesClaimRole(roles) {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
         isSuperAdmin() ||
         (request.auth.token.sales_role in roles) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
@@ -67,13 +83,13 @@ service cloud.firestore {
     }
 
     function isManagerOfSalesMember(memberId) {
-      return isSignedIn() &&
+      return isSignedIn() && isNotDemoAccount() &&
         exists(/databases/$(database)/documents/salesMembers/$(memberId)) &&
         get(/databases/$(database)/documents/salesMembers/$(memberId)).data.assignedManagerUid == request.auth.uid;
     }
 
     function isShopOwner(shopId) {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
         (exists(/databases/$(database)/documents/shops/$(shopId)) &&
          get(/databases/$(database)/documents/shops/$(shopId)).data.ownerId == request.auth.uid) ||
         (exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
@@ -83,7 +99,7 @@ service cloud.firestore {
     }
 
     function isShopAdmin(shopId) {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
         isSuperAdmin() ||
         isShopOwner(shopId) ||
         (exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
@@ -93,7 +109,7 @@ service cloud.firestore {
     }
 
     function isShopMember(shopId) {
-      return isSignedIn() && (
+      return isSignedIn() && isNotDemoAccount() && (
         isSuperAdmin() ||
         isShopOwner(shopId) ||
         (exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
@@ -103,7 +119,7 @@ service cloud.firestore {
 
     function hasShopPermission(shopId, perm) {
       return isShopAdmin(shopId) || (
-        isSignedIn() &&
+        isSignedIn() && isNotDemoAccount() &&
         exists(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)) &&
         get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.status == 'active' &&
         perm in get(/databases/$(database)/documents/shops/$(shopId)/staff/$(request.auth.uid)).data.permissions
@@ -246,10 +262,11 @@ service cloud.firestore {
 
     // Private Subscription Payment Receipts (Never public; Super Admin & uploading owner only)
     match /platform_payment_receipts/{receiptId} {
-      allow get, list: if isValidId(receiptId) && (
+      allow get: if isValidId(receiptId) && (
         isSuperAdmin() ||
         (isSignedIn() && resource.data.ownerId == request.auth.uid)
       );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.ownerId == request.auth.uid);
       allow create: if isValidId(receiptId) && isSignedIn() &&
         incoming().keys().hasAll(['id', 'shopId', 'ownerId', 'contentType', 'base64Data', 'createdAt']) &&
         incoming().ownerId == request.auth.uid &&
@@ -271,7 +288,9 @@ service cloud.firestore {
           incoming().slug == slug &&
           incoming().shopId == slug &&
           isValidId(incoming().shopId) &&
-          !exists(/databases/$(database)/documents/shops/$(incoming().shopId))
+          !exists(/databases/$(database)/documents/shops/$(incoming().shopId)) &&
+          existsAfter(/databases/$(database)/documents/shops/$(incoming().shopId)) &&
+          getAfter(/databases/$(database)/documents/shops/$(incoming().shopId)).data.ownerId == request.auth.uid
         )
       );
       allow update, delete: if isValidSlug(slug) && isSuperAdmin();
@@ -280,11 +299,16 @@ service cloud.firestore {
     match /shop_invites/{inviteId} {
       allow get: if isValidId(inviteId) && (
         isSuperAdmin() ||
-        (isSignedIn() && (resource.data.email == request.auth.token.email || isShopAdmin(resource.data.shopId)))
+        (isSignedIn() && (
+          (request.auth.token.email is string && resource.data.email is string &&
+            resource.data.email.lower() == request.auth.token.email.lower()) ||
+          isShopAdmin(resource.data.shopId)
+        ))
       );
       allow list: if isSuperAdmin() || (
         isSignedIn() && (
-          resource.data.email == request.auth.token.email ||
+          (request.auth.token.email is string && resource.data.email is string &&
+            resource.data.email.lower() == request.auth.token.email.lower()) ||
           isShopAdmin(resource.data.shopId)
         )
       );
@@ -300,7 +324,8 @@ service cloud.firestore {
         isSuperAdmin() ||
         isShopOwner(existing().shopId) ||
         (existing().status == 'pending' &&
-          existing().email == request.auth.token.email &&
+          request.auth.token.email is string && existing().email is string &&
+          existing().email.lower() == request.auth.token.email.lower() &&
           incoming().status == 'accepted' &&
           incoming().acceptedBy == request.auth.uid &&
           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'acceptedAt', 'acceptedBy']))
@@ -340,13 +365,19 @@ service cloud.firestore {
     // ====================================================
 
     match /cnic_registry/{hmacKey} {
-      allow get, list: if isValidId(hmacKey) && isSuperAdmin();
+      allow get: if isValidId(hmacKey) && isSuperAdmin();
+      allow list: if isSuperAdmin();
       allow create: if isValidId(hmacKey) && isSignedIn() && (
         isSuperAdmin() || (
+          hmacKey.matches('^[a-f0-9]{64}$') &&
           incoming().ownerId == request.auth.uid &&
           incoming().hmacKey == hmacKey &&
+          incoming().status == 'active' &&
           !exists(/databases/$(database)/documents/cnic_registry/$(hmacKey)) &&
-          incoming().keys().hasAll(['hmacKey', 'ownerId', 'shopId', 'cnicMasked', 'status', 'createdAt'])
+          incoming().keys().hasAll(['hmacKey', 'ownerId', 'shopId', 'cnicMasked', 'status', 'createdAt']) &&
+          existsAfter(/databases/$(database)/documents/shops/$(incoming().shopId)) &&
+          getAfter(/databases/$(database)/documents/shops/$(incoming().shopId)).data.ownerId == request.auth.uid &&
+          getAfter(/databases/$(database)/documents/shops/$(incoming().shopId)).data.cnicHash == hmacKey
         )
       );
       allow update, delete: if isValidId(hmacKey) && isSuperAdmin();
@@ -412,7 +443,17 @@ service cloud.firestore {
           incoming().slug == shopId &&
           incoming().status == 'active' &&
           incoming().subscription is map &&
-          (incoming().subscription.planId == 'free-starter' || incoming().subscription.status == 'trial')
+          (incoming().subscription.planId == 'free-starter' || incoming().subscription.status == 'trial') &&
+          incoming().cnicHash is string &&
+          incoming().cnicHash.matches('^[a-f0-9]{64}$') &&
+          incoming().cnicVerified == true &&
+          incoming().cnicStatus == 'verified' &&
+          existsAfter(/databases/$(database)/documents/cnic_registry/$(incoming().cnicHash)) &&
+          getAfter(/databases/$(database)/documents/cnic_registry/$(incoming().cnicHash)).data.shopId == shopId &&
+          getAfter(/databases/$(database)/documents/cnic_registry/$(incoming().cnicHash)).data.ownerId == request.auth.uid &&
+          getAfter(/databases/$(database)/documents/cnic_registry/$(incoming().cnicHash)).data.status == 'active' &&
+          existsAfter(/databases/$(database)/documents/shop_slugs/$(shopId)) &&
+          getAfter(/databases/$(database)/documents/shop_slugs/$(shopId)).data.shopId == shopId
         )
       );
 
@@ -447,7 +488,9 @@ service cloud.firestore {
             incoming().inviteId is string &&
             exists(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)) &&
             get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.status == 'pending' &&
-            get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.email == request.auth.token.email &&
+            request.auth.token.email is string &&
+            get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.email is string &&
+            get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.email.lower() == request.auth.token.email.lower() &&
             get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.shopId == shopId &&
             incoming().role == get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.role &&
             incoming().role in ['shop_admin', 'shop_staff'] &&
@@ -544,11 +587,14 @@ service cloud.firestore {
 
       // Shop Orders — BLOCK public & guest reads to protect customer PII!
       match /orders/{orderId} {
-        allow get, list: if isValidId(orderId) && (
+        allow get: if isValidId(orderId) && (
           hasShopPermission(shopId, 'orders') ||
           isShopMember(shopId) ||
           (isSignedIn() && resource.data.userId == request.auth.uid)
         );
+        allow list: if hasShopPermission(shopId, 'orders') ||
+          isShopMember(shopId) ||
+          (isSignedIn() && resource.data.userId == request.auth.uid);
 
         allow create: if isValidId(orderId) && isValidOrderCreate(incoming()) && (
           (incoming().userId == 'guest' && incoming().paymentStatus == 'pending' && incoming().orderStatus == 'Pending') ||
@@ -627,7 +673,9 @@ service cloud.firestore {
 
       // Shop Inventory Logs
       match /inventory_logs/{logId} {
-        allow read, write: if isValidId(logId) && hasShopPermission(shopId, 'inventory');
+        allow get: if isValidId(logId) && hasShopPermission(shopId, 'inventory');
+        allow list: if hasShopPermission(shopId, 'inventory');
+        allow write: if isValidId(logId) && hasShopPermission(shopId, 'inventory');
       }
 
       // Shop Contact Messages
@@ -650,10 +698,11 @@ service cloud.firestore {
 
       // Shop Private Checkout Payment Receipts (Create-only during checkout; NEVER public read)
       match /payment_receipts/{receiptId} {
-        allow get, list: if isValidId(receiptId) && (
+        allow get: if isValidId(receiptId) && (
           isShopMember(shopId) ||
           (isSignedIn() && resource.data.uploaderUid == request.auth.uid)
         );
+        allow list: if isShopMember(shopId) || (isSignedIn() && resource.data.uploaderUid == request.auth.uid);
         allow create: if isValidId(receiptId) &&
           incoming().keys().hasAll(['id', 'shopId', 'orderSessionId', 'contentType', 'base64Data', 'createdAt']) &&
           incoming().shopId == shopId &&
@@ -666,12 +715,16 @@ service cloud.firestore {
 
       // Shop Customers Directory
       match /customers/{customerId} {
-        allow read: if isValidId(customerId) && (
+        allow get: if isValidId(customerId) && (
           hasShopPermission(shopId, 'customers') ||
           hasShopPermission(shopId, 'pos') ||
           hasShopPermission(shopId, 'khata') ||
           isShopMember(shopId)
         );
+        allow list: if hasShopPermission(shopId, 'customers') ||
+          hasShopPermission(shopId, 'pos') ||
+          hasShopPermission(shopId, 'khata') ||
+          isShopMember(shopId);
         allow write: if isValidId(customerId) && (
           hasShopPermission(shopId, 'customers') ||
           hasShopPermission(shopId, 'pos') ||
@@ -745,11 +798,14 @@ service cloud.firestore {
             incoming().message is string && incoming().message.size() <= 240
           )
         );
-        allow read, update, delete: if isValidId(notifId) && isShopMember(shopId);
+        allow get: if isValidId(notifId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow update, delete: if isValidId(notifId) && isShopMember(shopId);
       }
 
       match /activity_logs/{logId} {
-        allow read: if isValidId(logId) && isShopMember(shopId);
+        allow get: if isValidId(logId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
         allow create: if isValidId(logId) && isShopMember(shopId) && incoming().actorId == request.auth.uid;
         allow update, delete: if isValidId(logId) && isShopAdmin(shopId);
       }
@@ -952,9 +1008,10 @@ service cloud.firestore {
 
     // Authorized business expenses: salesmen submit own as pending only; NEVER self-approve
     match /salesExpenses/{expenseId} {
-      allow get, list: if isValidId(expenseId) && (
+      allow get: if isValidId(expenseId) && (
         isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid)
       );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.salesmanUid == request.auth.uid);
       allow create: if isValidId(expenseId) && (
         isSuperAdmin() || (
           isSignedIn() &&
@@ -969,9 +1026,10 @@ service cloud.firestore {
 
     // Team bonus recommendations: Sales Manager submits ONLY for own team member as pending; Super Admin approves
     match /salesBonusRecommendations/{recId} {
-      allow get, list: if isValidId(recId) && (
+      allow get: if isValidId(recId) && (
         isSuperAdmin() || (isSignedIn() && resource.data.managerUid == request.auth.uid)
       );
+      allow list: if isSuperAdmin() || (isSignedIn() && resource.data.managerUid == request.auth.uid);
       allow create: if isValidId(recId) && (
         isSuperAdmin() || (
           isSignedIn() &&
@@ -1019,7 +1077,12 @@ service cloud.firestore {
       allow list: if isSuperAdmin();
       allow create: if isValidId(eventId) &&
         incoming().keys().hasAll(['id', 'salesmanId', 'referralCode', 'source', 'createdAt']) &&
-        incoming().keys().hasOnly(['id', 'salesmanId', 'referralCode', 'source', 'userAgent', 'convertedShopId', 'createdAt']);
+        incoming().keys().hasOnly(['id', 'salesmanId', 'referralCode', 'source', 'userAgent', 'convertedShopId', 'createdAt']) &&
+        incoming().id == eventId &&
+        incoming().salesmanId is string && incoming().salesmanId.size() >= 1 && incoming().salesmanId.size() <= 128 &&
+        incoming().referralCode is string && incoming().referralCode.size() >= 2 && incoming().referralCode.size() <= 64 &&
+        incoming().source in ['qr_scan', 'referral_link'] &&
+        incoming().createdAt is string && incoming().createdAt.size() <= 50;
       allow update, delete: if isValidId(eventId) && isSuperAdmin();
     }
 
@@ -1073,6 +1136,40 @@ service cloud.firestore {
     }
     match /contact_messages/{messageId} {
       allow read, write: if isSuperAdmin();
+    }
+
+    // ====================================================
+    // ISOLATED DEMO SUPER ADMIN SANDBOX (/demo_env/default & /demo_admins)
+    // Strictly air-gapped from all production collections & admins
+    // ====================================================
+    match /demo_admins/{adminId} {
+      allow get: if isValidId(adminId) && (isSuperAdmin() || (isDemoSuperAdmin() && request.auth.uid == adminId));
+      allow list: if isSuperAdmin();
+      allow create, update, delete: if isValidId(adminId) && isSuperAdmin();
+    }
+
+    match /demo_env/{envId} {
+      allow get: if envId == 'default' && (isSuperAdmin() || isDemoSuperAdmin());
+      allow list, create, update, delete: if envId == 'default' && isSuperAdmin();
+
+      match /shops/{shopId} {
+        allow read, write: if envId == 'default' && isValidId(shopId) && (isSuperAdmin() || isDemoSuperAdmin());
+
+        match /{subCol}/{subDocId} {
+          allow get, create, update, delete: if envId == 'default' && isValidId(shopId) && isValidId(subDocId) && (isSuperAdmin() || isDemoSuperAdmin());
+          allow list: if envId == 'default' && isValidId(shopId) && (isSuperAdmin() || isDemoSuperAdmin());
+        }
+      }
+
+      match /{demoCollection}/{docId} {
+        allow get, create, update, delete: if envId == 'default' &&
+          !(demoCollection in ['platform_admins', 'admins']) &&
+          isValidId(docId) &&
+          (isSuperAdmin() || isDemoSuperAdmin());
+        allow list: if envId == 'default' &&
+          !(demoCollection in ['platform_admins', 'admins']) &&
+          (isSuperAdmin() || isDemoSuperAdmin());
+      }
     }
   }
 }

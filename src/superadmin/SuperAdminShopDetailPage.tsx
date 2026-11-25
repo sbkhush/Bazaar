@@ -89,6 +89,8 @@ export const SuperAdminShopDetailPage: React.FC = () => {
   const [cnicReason, setCnicReason] = useState('');
   const [cnicBusy, setCnicBusy] = useState(false);
   const [cnicMsg, setCnicMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
 
   const loadAll = async () => {
     setLoading(true);
@@ -273,9 +275,12 @@ export const SuperAdminShopDetailPage: React.FC = () => {
                 onClick={async () => {
                   setSavingNotes(true);
                   setNotesSaved(false);
+                  setActionError(null);
                   try {
                     await updateShopAdminNotes(shop.id, adminNotes);
                     setNotesSaved(true);
+                  } catch (err: any) {
+                    setActionError(err?.message || 'Failed to save internal notes.');
                   } finally {
                     setSavingNotes(false);
                   }
@@ -284,6 +289,11 @@ export const SuperAdminShopDetailPage: React.FC = () => {
               >
                 {savingNotes ? 'Saving Notes...' : 'Save Internal Notes'}
               </button>
+              {actionError && (
+                <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
+                  {actionError}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -329,19 +339,48 @@ export const SuperAdminShopDetailPage: React.FC = () => {
                 </label>
                 <button
                   type="button"
-                  onClick={() => assignShopSubscription(shop.id, { planId: selectedPlanId, billingCycle: 'monthly', isFreeOverride: freeComp }).then(loadAll)}
-                  className="px-4 py-2 bg-[#065F46] text-white rounded-lg font-bold"
+                  disabled={actionBusy}
+                  onClick={async () => {
+                    setActionBusy(true);
+                    setActionError(null);
+                    try {
+                      await assignShopSubscription(shop.id, { planId: selectedPlanId, billingCycle: 'monthly', isFreeOverride: freeComp });
+                      await loadAll();
+                    } catch (err: any) {
+                      setActionError(err?.message || 'Failed to assign subscription plan.');
+                    } finally {
+                      setActionBusy(false);
+                    }
+                  }}
+                  className="px-4 py-2 bg-[#065F46] text-white rounded-lg font-bold disabled:opacity-50"
                 >
                   Apply Plan (30d)
                 </button>
                 <button
                   type="button"
-                  onClick={() => extendShopSubscription(shop.id, 30).then(loadAll)}
-                  className="px-4 py-2 border border-slate-300 rounded-lg font-semibold hover:bg-slate-50"
+                  disabled={actionBusy}
+                  onClick={async () => {
+                    setActionBusy(true);
+                    setActionError(null);
+                    try {
+                      await extendShopSubscription(shop.id, 30);
+                      await loadAll();
+                    } catch (err: any) {
+                      setActionError(err?.message || 'Failed to extend subscription.');
+                    } finally {
+                      setActionBusy(false);
+                    }
+                  }}
+                  className="px-4 py-2 border border-slate-300 rounded-lg font-semibold hover:bg-slate-50 disabled:opacity-50"
                 >
                   Extend +30 Days
                 </button>
               </div>
+              {actionError && (
+                <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
+                  {actionError}
+                </div>
+              )}
             </div>
 
             <div>
@@ -509,25 +548,66 @@ export const SuperAdminShopDetailPage: React.FC = () => {
 
         {tab === 'Actions' && (
           <div className="space-y-6">
+            {actionError && (
+              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
+                {actionError}
+              </div>
+            )}
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
-                onClick={() => updateShopStatus(shop.id, 'active').then(loadAll)}
-                className="px-4 py-2.5 bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1.5"
+                disabled={actionBusy}
+                onClick={async () => {
+                  setActionBusy(true);
+                  setActionError(null);
+                  try {
+                    await updateShopStatus(shop.id, 'active');
+                    await loadAll();
+                  } catch (err: any) {
+                    setActionError(err?.message || 'Failed to activate shop.');
+                  } finally {
+                    setActionBusy(false);
+                  }
+                }}
+                className="px-4 py-2.5 bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-50"
               >
                 <CheckCircle2 className="w-4 h-4" /> Activate / Reactivate Shop
               </button>
               <button
                 type="button"
-                onClick={() => updateShopStatus(shop.id, 'suspended').then(loadAll)}
-                className="px-4 py-2.5 bg-amber-600 text-white rounded-xl font-bold flex items-center gap-1.5"
+                disabled={actionBusy}
+                onClick={async () => {
+                  setActionBusy(true);
+                  setActionError(null);
+                  try {
+                    await updateShopStatus(shop.id, 'suspended');
+                    await loadAll();
+                  } catch (err: any) {
+                    setActionError(err?.message || 'Failed to suspend shop.');
+                  } finally {
+                    setActionBusy(false);
+                  }
+                }}
+                className="px-4 py-2.5 bg-amber-600 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-50"
               >
                 <PauseCircle className="w-4 h-4" /> Suspend Shop
               </button>
               <button
                 type="button"
-                onClick={() => updateShopStatus(shop.id, 'inactive').then(loadAll)}
-                className="px-4 py-2.5 border border-slate-300 text-slate-800 rounded-xl font-bold"
+                disabled={actionBusy}
+                onClick={async () => {
+                  setActionBusy(true);
+                  setActionError(null);
+                  try {
+                    await updateShopStatus(shop.id, 'inactive');
+                    await loadAll();
+                  } catch (err: any) {
+                    setActionError(err?.message || 'Failed to update shop status.');
+                  } finally {
+                    setActionBusy(false);
+                  }
+                }}
+                className="px-4 py-2.5 border border-slate-300 text-slate-800 rounded-xl font-bold disabled:opacity-50"
               >
                 Set Inactive
               </button>
@@ -693,9 +773,13 @@ export const SuperAdminShopDetailPage: React.FC = () => {
                 disabled={deleting || confirmDeleteSlug !== shop.slug}
                 onClick={async () => {
                   setDeleting(true);
+                  setActionError(null);
                   try {
                     await deleteShopComplete(shop.id);
                     navigate('/super-admin/shops');
+                  } catch (err: any) {
+                    setActionError(err?.message || 'Failed to delete shop completely.');
+                    setDeleteModalOpen(false);
                   } finally {
                     setDeleting(false);
                   }
