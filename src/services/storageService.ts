@@ -8,14 +8,6 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { storage, db, auth } from '../firebase/config';
 import { apiFetch } from '../utils/apiClient';
-import { isDemoNamespace, scopedDoc } from '../utils/demoCollection';
-import { DEMO_ENV_ID, DEMO_ENV_ROOT } from '../demo/demoConfig';
-
-function scopeStoragePath(rawPath: string): string {
-  if (!isDemoNamespace()) return rawPath;
-  const clean = rawPath.replace(/^\/+/, '');
-  return `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}/${clean}`;
-}
 
 export type StorageFolder =
   | 'logo'
@@ -62,82 +54,6 @@ const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp
 const ALLOWED_IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
 
-export type VerifiedImageMime = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
-
-export function normalizeImageMime(mime?: string | null): VerifiedImageMime | '' {
-  const clean = String(mime || '').toLowerCase().trim();
-  if (clean === 'image/jpg' || clean === 'image/jpeg') return 'image/jpeg';
-  if (clean === 'image/png') return 'image/png';
-  if (clean === 'image/webp') return 'image/webp';
-  if (clean === 'image/gif') return 'image/gif';
-  return '';
-}
-
-export async function detectImageMimeFromMagicBytes(file: Blob): Promise<VerifiedImageMime | null> {
-  try {
-    const headerBlob = typeof file.slice === 'function' ? file.slice(0, 12) : file;
-    const buffer =
-      typeof headerBlob.arrayBuffer === 'function'
-        ? await headerBlob.arrayBuffer()
-        : null;
-    if (!buffer || buffer.byteLength < 4) return null;
-
-    const bytes = new Uint8Array(buffer);
-    // JPEG: FF D8 FF
-    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-      return 'image/jpeg';
-    }
-    // PNG: 89 50 4E 47 0D 0A 1A 0A
-    if (
-      bytes.length >= 8 &&
-      bytes[0] === 0x89 &&
-      bytes[1] === 0x50 &&
-      bytes[2] === 0x4e &&
-      bytes[3] === 0x47 &&
-      bytes[4] === 0x0d &&
-      bytes[5] === 0x0a &&
-      bytes[6] === 0x1a &&
-      bytes[7] === 0x0a
-    ) {
-      return 'image/png';
-    }
-    // GIF: 47 49 46 38 (GIF8)
-    if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
-      return 'image/gif';
-    }
-    // WebP: RIFF....WEBP
-    if (
-      bytes.length >= 12 &&
-      bytes[0] === 0x52 &&
-      bytes[1] === 0x49 &&
-      bytes[2] === 0x46 &&
-      bytes[3] === 0x46 &&
-      bytes[8] === 0x57 &&
-      bytes[9] === 0x45 &&
-      bytes[10] === 0x42 &&
-      bytes[11] === 0x50
-    ) {
-      return 'image/webp';
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-export function resolveUploadContentType(
-  processedBlob: Blob,
-  sourceFile: File,
-  detectedMime?: VerifiedImageMime | null
-): VerifiedImageMime {
-  return (
-    normalizeImageMime(processedBlob.type) ||
-    detectedMime ||
-    normalizeImageMime(sourceFile.type) ||
-    'image/jpeg'
-  );
-}
-
 export function validateImageFile(file: File): void {
   const mime = String(file.type || '').toLowerCase().trim();
   const ext = String(file.name || '').toLowerCase().split('.').pop() || '';
@@ -154,17 +70,6 @@ export function validateImageFile(file: File): void {
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new Error('Image size exceeds 5 MB limit. Please pick a smaller image.');
   }
-}
-
-export async function validateImageFileWithMagicBytes(file: File): Promise<VerifiedImageMime> {
-  validateImageFile(file);
-  const magicMime = await detectImageMimeFromMagicBytes(file);
-  if (!magicMime) {
-    throw new Error(
-      'File contents do not match a valid JPG, PNG, WebP, or GIF image signature.'
-    );
-  }
-  return magicMime;
 }
 
 export function calculateNextStorageBytes(currentBytes: number, deltaBytes: number): number {
@@ -354,13 +259,12 @@ export async function uploadShopImage(
   file: File,
   options: UploadProgressOptions
 ): Promise<UploadedImageResult> {
-  const detectedMime = await validateImageFileWithMagicBytes(file);
+  validateImageFile(file);
 
   const { shopId, folder, subPath, onProgress, maxDimension = 1400 } = options;
 
   const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
     await compressImageToBlob(file, maxDimension);
-  const uploadContentType = resolveUploadContentType(processedBlob, file, detectedMime);
 
   if (processedBlob.size > MAX_UPLOAD_BYTES) {
     throw new Error('Processed image still exceeds 5 MB limit.');
@@ -368,13 +272,13 @@ export async function uploadShopImage(
 
   // Enforce per-shop storage quota using accurate post-compression byte size
   if (folder !== 'payments' && shopId) {
-    const shopSnap = await getDoc(scopedDoc(db, 'shops', shopId)).catch(() => null);
+    const shopSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
     if (shopSnap && shopSnap.exists()) {
       const shopData = shopSnap.data();
       const usedBytes = Number(shopData?.usage?.storageBytes || 0);
       const planId = shopData?.subscription?.planId;
       if (planId) {
-        const planSnap = await getDoc(scopedDoc(db, 'platform_plans', planId)).catch(() => null);
+        const planSnap = await getDoc(doc(db, 'platform_plans', planId)).catch(() => null);
         if (planSnap && planSnap.exists()) {
           const quota = evaluateStorageQuota(
             usedBytes,
@@ -393,17 +297,16 @@ export async function uploadShopImage(
   const baseName = sanitizeFileName(file.name.replace(/\.[^.]+$/, ''));
   const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${baseName}.${ext}`;
 
-  let rawStoragePath: string;
+  let storagePath: string;
   if (folder === 'payments') {
     const sessionSegment = subPath || `sess_${Date.now()}`;
-    rawStoragePath = `shops/${shopId}/payments/${sessionSegment}/${fileName}`;
+    storagePath = `shops/${shopId}/payments/${sessionSegment}/${fileName}`;
   } else {
     const pathSegments = ['shops', shopId, folder];
     if (subPath) pathSegments.push(subPath);
     pathSegments.push(fileName);
-    rawStoragePath = pathSegments.join('/');
+    storagePath = pathSegments.join('/');
   }
-  const storagePath = scopeStoragePath(rawStoragePath);
 
   const customMetadata: Record<string, string> = {
     shopId,
@@ -420,7 +323,7 @@ export async function uploadShopImage(
       downloadUrl = await runResumableStorageUpload(
         storagePath,
         processedBlob,
-        uploadContentType,
+        processedBlob.type || file.type,
         customMetadata,
         onProgress
       );
@@ -431,7 +334,7 @@ export async function uploadShopImage(
         downloadUrl = await runResumableStorageUpload(
           storagePath,
           processedBlob,
-          uploadContentType,
+          processedBlob.type || file.type,
           customMetadata,
           onProgress
         );
@@ -442,12 +345,12 @@ export async function uploadShopImage(
 
     // Record exact storage usage bytes safely using nested object merge (never dot-notation)
     if (folder !== 'payments' && shopId) {
-      const latestSnap = await getDoc(scopedDoc(db, 'shops', shopId)).catch(() => null);
+      const latestSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
       if (latestSnap && latestSnap.exists()) {
         const currentUsage = latestSnap.data()?.usage || {};
         const nextBytes = calculateNextStorageBytes(Number(currentUsage.storageBytes || 0), processedBlob.size);
         await setDoc(
-          scopedDoc(db, 'shops', shopId),
+          doc(db, 'shops', shopId),
           {
             usage: { ...currentUsage, storageBytes: nextBytes },
             updatedAt: new Date().toISOString(),
@@ -478,13 +381,12 @@ export async function uploadPlatformLogo(
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<UploadedImageResult> {
-  const detectedMime = await validateImageFileWithMagicBytes(file);
+  validateImageFile(file);
   const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
     await compressImageToBlob(file, 1000);
-  const uploadContentType = resolveUploadContentType(processedBlob, file, detectedMime);
-  const ext = uploadContentType === 'image/webp' ? 'webp' : uploadContentType === 'image/png' ? 'png' : 'jpg';
+  const ext = processedBlob.type === 'image/webp' ? 'webp' : 'jpg';
   const baseName = sanitizeFileName(file.name.replace(/\.[^.]+$/, ''));
-  const storagePath = scopeStoragePath(`platform/brand/${Date.now()}_${baseName}.${ext}`);
+  const storagePath = `platform/brand/${Date.now()}_${baseName}.${ext}`;
 
   try {
     let downloadUrl: string;
@@ -492,7 +394,7 @@ export async function uploadPlatformLogo(
       downloadUrl = await runResumableStorageUpload(
         storagePath,
         processedBlob,
-        uploadContentType,
+        processedBlob.type || file.type,
         {
           purpose: 'platform_branding',
           uploaderUid: auth.currentUser?.uid || 'super_admin',
@@ -505,7 +407,7 @@ export async function uploadPlatformLogo(
         downloadUrl = await runResumableStorageUpload(
           storagePath,
           processedBlob,
-          uploadContentType,
+          processedBlob.type || file.type,
           {
             purpose: 'platform_branding',
             uploaderUid: auth.currentUser?.uid || 'super_admin',
@@ -540,7 +442,7 @@ export async function uploadCheckoutPaymentProof(
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<UploadedImageResult> {
-  const detectedMime = await validateImageFileWithMagicBytes(file);
+  validateImageFile(file);
   onProgress?.(15);
 
   const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
@@ -552,7 +454,7 @@ export async function uploadCheckoutPaymentProof(
 
   onProgress?.(45);
   const base64Data = await blobToBase64(processedBlob);
-  const contentType = resolveUploadContentType(processedBlob, file, detectedMime);
+  const contentType = processedBlob.type || file.type || 'image/webp';
   const fileName = sanitizeFileName(file.name);
 
   // 1. Prefer server-side private upload endpoint when Express API is available
@@ -594,7 +496,7 @@ export async function uploadCheckoutPaymentProof(
 
   const receiptId = `rcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const nowIso = new Date().toISOString();
-  await setDoc(scopedDoc(db, 'shops', shopId, 'payment_receipts', receiptId), {
+  await setDoc(doc(db, 'shops', shopId, 'payment_receipts', receiptId), {
     id: receiptId,
     shopId,
     orderSessionId,
@@ -626,22 +528,21 @@ export async function uploadPlatformSubscriptionProof(
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<UploadedImageResult> {
-  const detectedMime = await validateImageFileWithMagicBytes(file);
+  validateImageFile(file);
   onProgress?.(15);
 
   const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
     await compressImageToBlob(file, 960, 0.75);
-  const uploadContentType = resolveUploadContentType(processedBlob, file, detectedMime);
 
-  const ext = uploadContentType === 'image/webp' ? 'webp' : uploadContentType === 'image/png' ? 'png' : 'jpg';
+  const ext = processedBlob.type === 'image/webp' ? 'webp' : 'jpg';
   const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_receipt.${ext}`;
-  const storagePath = scopeStoragePath(`platform/payments/${shopId}/${fileName}`);
+  const storagePath = `platform/payments/${shopId}/${fileName}`;
 
   try {
     const downloadUrl = await runResumableStorageUpload(
       storagePath,
       processedBlob,
-      uploadContentType,
+      processedBlob.type || file.type,
       {
         shopId,
         purpose: 'subscription_payment_receipt',
@@ -665,11 +566,12 @@ export async function uploadPlatformSubscriptionProof(
       }
       const receiptId = `subrcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const base64Data = await blobToBase64(processedBlob);
-      await setDoc(scopedDoc(db, 'platform_payment_receipts', receiptId), {
+      const contentType = processedBlob.type || file.type || 'image/webp';
+      await setDoc(doc(db, 'platform_payment_receipts', receiptId), {
         id: receiptId,
         shopId,
         ownerId: auth.currentUser?.uid || 'unknown',
-        contentType: uploadContentType,
+        contentType,
         fileName: sanitizeFileName(file.name),
         base64Data,
         bytes: compressedBytes,
@@ -694,12 +596,11 @@ export async function uploadUserProfileAvatar(
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<UploadedImageResult> {
-  const detectedMime = await validateImageFileWithMagicBytes(file);
+  validateImageFile(file);
   const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
     await compressImageToBlob(file, 600);
-  const uploadContentType = resolveUploadContentType(processedBlob, file, detectedMime);
-  const ext = uploadContentType === 'image/webp' ? 'webp' : uploadContentType === 'image/png' ? 'png' : 'jpg';
-  const storagePath = scopeStoragePath(`users/${userId}/profile/${Date.now()}_avatar.${ext}`);
+  const ext = processedBlob.type === 'image/webp' ? 'webp' : 'jpg';
+  const storagePath = `users/${userId}/profile/${Date.now()}_avatar.${ext}`;
 
   try {
     let downloadUrl: string;
@@ -707,8 +608,8 @@ export async function uploadUserProfileAvatar(
       downloadUrl = await runResumableStorageUpload(
         storagePath,
         processedBlob,
-        uploadContentType,
-        { userId, purpose: 'profile_avatar', uploaderUid: auth.currentUser?.uid || userId },
+        processedBlob.type || file.type,
+        { userId, purpose: 'profile_avatar' },
         onProgress
       );
     } catch (firstErr: any) {
@@ -717,52 +618,14 @@ export async function uploadUserProfileAvatar(
         downloadUrl = await runResumableStorageUpload(
           storagePath,
           processedBlob,
-          uploadContentType,
-          { userId, purpose: 'profile_avatar', uploaderUid: auth.currentUser?.uid || userId },
+          processedBlob.type || file.type,
+          { userId, purpose: 'profile_avatar' },
           onProgress
         );
       } else {
         throw firstErr;
       }
     }
-    onProgress?.(100);
-    return {
-      url: downloadUrl,
-      storagePath,
-      bytes: compressedBytes,
-      originalBytes,
-      savedPercent,
-    };
-  } catch (err: any) {
-    throw new Error(mapFirebaseStorageError(err));
-  }
-}
-
-export async function uploadSalesExpenseReceipt(
-  userId: string,
-  expenseId: string,
-  file: File,
-  onProgress?: (percent: number) => void
-): Promise<UploadedImageResult> {
-  const detectedMime = await validateImageFileWithMagicBytes(file);
-  const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
-    await compressImageToBlob(file, 1000, 0.78);
-  const uploadContentType = resolveUploadContentType(processedBlob, file, detectedMime);
-  const ext = uploadContentType === 'image/webp' ? 'webp' : uploadContentType === 'image/png' ? 'png' : 'jpg';
-  const safeExpenseId = sanitizeFileName(expenseId || `exp_${Date.now()}`);
-  const storagePath = scopeStoragePath(`sales/expenses/${userId}/${safeExpenseId}/${Date.now()}_receipt.${ext}`);
-
-  try {
-    const downloadUrl = await runResumableStorageUpload(
-      storagePath,
-      processedBlob,
-      uploadContentType,
-      {
-        purpose: 'sales_expense_receipt',
-        uploaderUid: auth.currentUser?.uid || userId,
-      },
-      onProgress
-    );
     onProgress?.(100);
     return {
       url: downloadUrl,
@@ -791,13 +654,13 @@ export async function deleteStorageImageByUrl(url?: string, shopId?: string): Pr
     await deleteObject(imageRef);
 
     if (shopId && exactBytes > 0) {
-      const shopSnap = await getDoc(scopedDoc(db, 'shops', shopId)).catch(() => null);
+      const shopSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
       if (shopSnap && shopSnap.exists()) {
         const currentUsage = shopSnap.data()?.usage || {};
         const current = Number(currentUsage.storageBytes || 0);
         const next = calculateNextStorageBytes(current, -exactBytes);
         await setDoc(
-          scopedDoc(db, 'shops', shopId),
+          doc(db, 'shops', shopId),
           { usage: { ...currentUsage, storageBytes: next }, updatedAt: new Date().toISOString() },
           { merge: true }
         ).catch(() => {});

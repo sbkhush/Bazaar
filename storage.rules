@@ -10,47 +10,28 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    function isNotDemoAccount() {
-      return !isSignedIn() || (
-        !('demo_super_admin' in request.auth.token && request.auth.token.demo_super_admin == true) &&
-        !('account_type' in request.auth.token && request.auth.token.account_type == 'DEMO') &&
-        !('email' in request.auth.token && request.auth.token.email == 'demo-admin@sbkhush.com')
-      );
-    }
-
-    function isDemoSuperAdmin() {
-      return isSignedIn() &&
-        ('demo_super_admin' in request.auth.token && request.auth.token.demo_super_admin == true) &&
-        ('account_type' in request.auth.token && request.auth.token.account_type == 'DEMO') &&
-        ('email' in request.auth.token && request.auth.token.email == 'demo-admin@sbkhush.com');
-    }
-
     function isSuperAdmin() {
-      return isSignedIn() && isNotDemoAccount() && (
-        ('super_admin' in request.auth.token && request.auth.token.super_admin == true) ||
-        ('email' in request.auth.token &&
-         request.auth.token.email == 'hasanaamir815@gmail.com' &&
-         'email_verified' in request.auth.token &&
+      return isSignedIn() && (
+        request.auth.token.super_admin == true ||
+        (request.auth.token.email == 'hasanaamir815@gmail.com' &&
          request.auth.token.email_verified == true)
       );
     }
 
     // Tenant authorization via Firebase Auth Custom Claims (provisioned by Cloud Functions)
     function isShopMember(shopId) {
-      return isSignedIn() && isNotDemoAccount() && (
+      return isSignedIn() && (
         isSuperAdmin() ||
-        ('shops' in request.auth.token &&
-         request.auth.token.shops != null &&
+        (request.auth.token.shops != null &&
          shopId in request.auth.token.shops &&
          request.auth.token.shops[shopId] in ['shop_owner', 'shop_admin', 'shop_staff'])
       );
     }
 
     function isShopAdmin(shopId) {
-      return isSignedIn() && isNotDemoAccount() && (
+      return isSignedIn() && (
         isSuperAdmin() ||
-        ('shops' in request.auth.token &&
-         request.auth.token.shops != null &&
+        (request.auth.token.shops != null &&
          shopId in request.auth.token.shops &&
          request.auth.token.shops[shopId] in ['shop_owner', 'shop_admin'])
       );
@@ -103,7 +84,7 @@ service firebase.storage {
     // Customer Checkout Payment Proofs (Write-once for verified order session; Private Read)
     match /shops/{shopId}/payments/{orderSessionId}/{fileName} {
       allow read: if isShopMember(shopId) || (
-        isSignedIn() && resource.metadata != null && 'uploaderUid' in resource.metadata && resource.metadata.uploaderUid == request.auth.uid
+        isSignedIn() && resource.metadata.uploaderUid == request.auth.uid
       );
       allow create: if isValidImageUpload() &&
         request.resource.metadata != null &&
@@ -117,11 +98,7 @@ service firebase.storage {
     // Tenant Subscription Payment Proofs
     match /shops/{shopId}/subscription/{allPaths=**} {
       allow read: if isShopAdmin(shopId);
-      allow create, update: if isShopAdmin(shopId) &&
-        isValidImageUpload() &&
-        request.resource.metadata != null &&
-        request.resource.metadata.shopId == shopId &&
-        request.resource.metadata.uploaderUid == request.auth.uid;
+      allow create, update: if isShopAdmin(shopId) && isValidImageUpload();
       allow delete: if isShopAdmin(shopId);
     }
 
@@ -135,18 +112,13 @@ service firebase.storage {
     // Platform-Level Subscription Proofs (Restricted exclusively to Super Admin & submitting Shop Admin)
     match /platform/payments/{shopId}/{fileName} {
       allow read: if isShopAdmin(shopId);
-      allow create, update: if isShopAdmin(shopId) &&
-        isValidImageUpload() &&
-        request.resource.metadata != null &&
-        request.resource.metadata.shopId == shopId &&
-        request.resource.metadata.uploaderUid == request.auth.uid;
+      allow create, update: if isShopAdmin(shopId) && isValidImageUpload();
       allow delete: if isSuperAdmin();
     }
 
     // Sales team claim helper (never grants shop or Super Admin storage access)
     function isActiveSalesClaim() {
-      return isSignedIn() && isNotDemoAccount() && (
-        'sales_role' in request.auth.token &&
+      return isSignedIn() && (
         request.auth.token.sales_role in ['salesman', 'senior_salesman', 'sales_manager', 'referral_agent']
       );
     }
@@ -160,26 +132,15 @@ service firebase.storage {
     // Sales Expense Receipts (Own upload & read only; Super Admin delete/review)
     match /sales/expenses/{userId}/{expenseId}/{fileName} {
       allow read: if isSuperAdmin() || (isSignedIn() && request.auth.uid == userId);
-      allow create, update: if isSignedIn() &&
-        request.auth.uid == userId &&
-        isValidImageUpload() &&
-        request.resource.metadata != null &&
-        request.resource.metadata.uploaderUid == request.auth.uid;
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isValidImageUpload();
       allow delete: if isSuperAdmin();
     }
 
     // User Profile Avatars
     match /users/{userId}/profile/{fileName} {
-      allow read: if isSignedIn() && isNotDemoAccount() && (request.auth.uid == userId || isSuperAdmin());
-      allow create, update: if isSignedIn() && isNotDemoAccount() && request.auth.uid == userId && isValidImageUpload();
-      allow delete: if isSignedIn() && isNotDemoAccount() && (request.auth.uid == userId || isSuperAdmin());
-    }
-
-    // Isolated Demo Super Admin Storage Sandbox
-    match /demo_env/default/{allPaths=**} {
-      allow read: if isSuperAdmin() || isDemoSuperAdmin();
-      allow create, update: if (isSuperAdmin() || isDemoSuperAdmin()) && isValidImageUpload();
-      allow delete: if isSuperAdmin() || isDemoSuperAdmin();
+      allow read: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isValidImageUpload();
+      allow delete: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
     }
   }
 }

@@ -17,7 +17,6 @@ import { deleteApp, getApp, getApps, initializeApp } from 'firebase/app';
 import { createUserWithEmailAndPassword, getAuth, sendPasswordResetEmail } from 'firebase/auth';
 import app, { auth, db } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
-import { isDemoNamespace, scopedCollection, scopedDoc } from '../utils/demoCollection';
 import {
   BillingCycle,
   BusinessType,
@@ -199,7 +198,6 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 import { buildApiUrl } from '../utils/apiClient';
 
 async function trySalesApi<T>(path: string, method: 'GET' | 'POST' = 'POST', body?: unknown): Promise<T | null> {
-  if (isDemoNamespace()) return null;
   try {
     const headers = await getAuthHeaders();
     const res = await fetch(buildApiUrl(path), {
@@ -257,7 +255,7 @@ export async function logSalesAudit(params: {
       newValue: params.newValue,
       createdAt: new Date().toISOString(),
     });
-    await setDoc(scopedDoc(db, 'salesAuditLogs', id), payload);
+    await setDoc(doc(db, 'salesAuditLogs', id), payload);
   } catch (err) {
     console.warn('Sales audit log note:', err);
   }
@@ -265,7 +263,7 @@ export async function logSalesAudit(params: {
 
 export async function getSalesAuditLogs(maxItems = 150): Promise<SalesAuditLog[]> {
   try {
-    const q = query(scopedCollection(db, 'salesAuditLogs'), orderBy('createdAt', 'desc'), limit(maxItems));
+    const q = query(collection(db, 'salesAuditLogs'), orderBy('createdAt', 'desc'), limit(maxItems));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as SalesAuditLog), id: d.id }));
   } catch (err) {
@@ -294,7 +292,7 @@ export async function createSalesNotification(params: {
       isRead: false,
       createdAt: new Date().toISOString(),
     });
-    await setDoc(scopedDoc(db, 'salesNotifications', id), payload);
+    await setDoc(doc(db, 'salesNotifications', id), payload);
   } catch (err) {
     console.warn('Sales notification create note:', err);
   }
@@ -303,8 +301,8 @@ export async function createSalesNotification(params: {
 export async function getSalesNotifications(recipientSalesmanId: string, recipientUid?: string): Promise<SalesNotification[]> {
   try {
     const q = recipientUid
-      ? query(scopedCollection(db, 'salesNotifications'), where('recipientUid', '==', recipientUid), limit(60))
-      : query(scopedCollection(db, 'salesNotifications'), where('recipientSalesmanId', '==', recipientSalesmanId), limit(60));
+      ? query(collection(db, 'salesNotifications'), where('recipientUid', '==', recipientUid), limit(60))
+      : query(collection(db, 'salesNotifications'), where('recipientSalesmanId', '==', recipientSalesmanId), limit(60));
     const snap = await getDocs(q);
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesNotification), id: d.id }))
@@ -315,14 +313,14 @@ export async function getSalesNotifications(recipientSalesmanId: string, recipie
 }
 
 export async function markSalesNotificationRead(notifId: string): Promise<void> {
-  await updateDoc(scopedDoc(db, 'salesNotifications', notifId), { isRead: true }).catch(() => {});
+  await updateDoc(doc(db, 'salesNotifications', notifId), { isRead: true }).catch(() => {});
 }
 
 export async function markAllSalesNotificationsRead(notifs: SalesNotification[]): Promise<void> {
   const unread = notifs.filter((n) => !n.isRead);
   if (unread.length === 0) return;
   const batch = writeBatch(db);
-  unread.forEach((n) => batch.update(scopedDoc(db, 'salesNotifications', n.id), { isRead: true }));
+  unread.forEach((n) => batch.update(doc(db, 'salesNotifications', n.id), { isRead: true }));
   await batch.commit().catch(() => {});
 }
 
@@ -332,7 +330,7 @@ export async function markAllSalesNotificationsRead(notifs: SalesNotification[])
 
 export async function getSalesSettings(): Promise<SalesSettings> {
   try {
-    const snap = await getDoc(scopedDoc(db, 'salesSettings', 'general'));
+    const snap = await getDoc(doc(db, 'salesSettings', 'general'));
     if (snap.exists()) {
       const data = snap.data() as Partial<SalesSettings>;
       return {
@@ -359,7 +357,7 @@ export async function updateSalesSettings(patch: Partial<SalesSettings>): Promis
       id: 'general',
       updatedAt: new Date().toISOString(),
     });
-    await setDoc(scopedDoc(db, 'salesSettings', 'general'), updated, { merge: true });
+    await setDoc(doc(db, 'salesSettings', 'general'), updated, { merge: true });
     await logSalesAudit({
       action: 'Updated Sales Settings',
       entityType: 'sales_settings',
@@ -378,7 +376,7 @@ export async function updateSalesSettings(patch: Partial<SalesSettings>): Promis
 
 export async function getAllSalesMembers(): Promise<SalesMember[]> {
   try {
-    const snap = await getDocs(scopedCollection(db, 'salesMembers'));
+    const snap = await getDocs(collection(db, 'salesMembers'));
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesMember), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -389,7 +387,7 @@ export async function getAllSalesMembers(): Promise<SalesMember[]> {
 
 export async function getSalesMemberById(memberId: string): Promise<SalesMember | null> {
   try {
-    const snap = await getDoc(scopedDoc(db, 'salesMembers', memberId));
+    const snap = await getDoc(doc(db, 'salesMembers', memberId));
     return snap.exists() ? ({ ...(snap.data() as SalesMember), id: snap.id }) : null;
   } catch {
     return null;
@@ -398,7 +396,7 @@ export async function getSalesMemberById(memberId: string): Promise<SalesMember 
 
 export async function getSalesMemberByUidOrEmail(uid: string, email?: string | null): Promise<SalesMember | null> {
   try {
-    const byUidQ = query(scopedCollection(db, 'salesMembers'), where('uid', '==', uid), limit(1));
+    const byUidQ = query(collection(db, 'salesMembers'), where('uid', '==', uid), limit(1));
     const uidSnap = await getDocs(byUidQ);
     if (!uidSnap.empty) {
       const d = uidSnap.docs[0];
@@ -406,7 +404,7 @@ export async function getSalesMemberByUidOrEmail(uid: string, email?: string | n
     }
     const cleanEmail = String(email || '').trim().toLowerCase();
     if (cleanEmail) {
-      const byEmailQ = query(scopedCollection(db, 'salesMembers'), where('email', '==', cleanEmail), limit(1));
+      const byEmailQ = query(collection(db, 'salesMembers'), where('email', '==', cleanEmail), limit(1));
       const emailSnap = await getDocs(byEmailQ);
       if (!emailSnap.empty) {
         const d = emailSnap.docs[0];
@@ -420,7 +418,6 @@ export async function getSalesMemberByUidOrEmail(uid: string, email?: string | n
 }
 
 export async function linkSalesMemberOnLogin(uid: string, email?: string | null): Promise<SalesMember | null> {
-  if (isDemoNamespace()) return null;
   const member = await getSalesMemberByUidOrEmail(uid, email);
   if (!member) return null;
 
@@ -446,10 +443,10 @@ export async function linkSalesMemberOnLogin(uid: string, email?: string | null)
         updates.accountStatus = 'active';
       }
     }
-    await updateDoc(scopedDoc(db, 'salesMembers', member.id), stripUndef(updates));
+    await updateDoc(doc(db, 'salesMembers', member.id), stripUndef(updates));
     if (member.referralCode) {
       await setDoc(
-        scopedDoc(db, 'salesReferralIndex', member.referralCode),
+        doc(db, 'salesReferralIndex', member.referralCode),
         {
           referralCode: member.referralCode,
           salesmanId: member.id,
@@ -551,7 +548,7 @@ export async function createSalesMember(input: {
   let resetEmailSent = false;
   let resetEmailWarning: string | undefined;
 
-  if (input.sendPasswordResetInvite && !isDemoNamespace()) {
+  if (input.sendPasswordResetInvite) {
     try {
       const secondaryName = 'sbk-sales-provision';
       secondaryAppRef = getApps().some((a) => a.name === secondaryName)
@@ -609,8 +606,8 @@ export async function createSalesMember(input: {
 
   try {
     const batch = writeBatch(db);
-    batch.set(scopedDoc(db, 'salesMembers', id), member);
-    batch.set(scopedDoc(db, 'salesReferralIndex', member.referralCode), {
+    batch.set(doc(db, 'salesMembers', id), member);
+    batch.set(doc(db, 'salesReferralIndex', member.referralCode), {
       referralCode: member.referralCode,
       salesmanId: member.id,
       salesmanUid: member.uid || null,
@@ -628,7 +625,7 @@ export async function createSalesMember(input: {
       details: `Created ${member.fullName} (${member.employeeId}, ${member.role}) · Referral Code: ${member.referralCode}`,
     });
 
-    if (input.sendPasswordResetInvite && !isDemoNamespace()) {
+    if (input.sendPasswordResetInvite) {
       try {
         await sendPasswordResetEmail(auth, cleanEmail);
         resetEmailSent = true;
@@ -672,7 +669,7 @@ export async function submitReferralPartnerApplication(input: {
   }
 
   const memberId = `sm_ref_${cleanUid}`;
-  const existingSnap = await getDoc(scopedDoc(db, 'salesMembers', memberId)).catch(() => null);
+  const existingSnap = await getDoc(doc(db, 'salesMembers', memberId)).catch(() => null);
   if (existingSnap?.exists()) {
     return { ...(existingSnap.data() as SalesMember), id: existingSnap.id };
   }
@@ -684,7 +681,7 @@ export async function submitReferralPartnerApplication(input: {
 
   const cleanPrefix = cleanName.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'PART';
   let referralCode = `REF-${cleanPrefix}-${cleanUid.slice(-4).toUpperCase()}`;
-  const collisionSnap = await getDoc(scopedDoc(db, 'salesReferralIndex', referralCode)).catch(() => null);
+  const collisionSnap = await getDoc(doc(db, 'salesReferralIndex', referralCode)).catch(() => null);
   if (collisionSnap?.exists()) {
     referralCode = `REF-${cleanPrefix}-${Math.floor(1000 + Math.random() * 9000)}`;
   }
@@ -719,7 +716,7 @@ export async function submitReferralPartnerApplication(input: {
   });
 
   try {
-    await setDoc(scopedDoc(db, 'salesMembers', memberId), member);
+    await setDoc(doc(db, 'salesMembers', memberId), member);
     return member;
   } catch (err) {
     return handleFirestoreError(err, OperationType.CREATE, `salesMembers/${memberId}`);
@@ -752,14 +749,14 @@ export async function updateSalesMember(memberId: string, patch: Partial<SalesMe
       updatedAt: now,
     });
     delete (cleanPatch as any).id;
-    await updateDoc(scopedDoc(db, 'salesMembers', memberId), cleanPatch);
+    await updateDoc(doc(db, 'salesMembers', memberId), cleanPatch);
 
     // Keep public referral index synchronized when status/name/uid changes
     if (patch.accountStatus !== undefined || patch.fullName !== undefined || patch.uid !== undefined || patch.referralCode !== undefined) {
       const latest = await getSalesMemberById(memberId);
       if (latest?.referralCode) {
         await setDoc(
-          scopedDoc(db, 'salesReferralIndex', latest.referralCode),
+          doc(db, 'salesReferralIndex', latest.referralCode),
           {
             referralCode: latest.referralCode,
             salesmanId: latest.id,
@@ -786,9 +783,6 @@ export async function updateSalesMember(memberId: string, patch: Partial<SalesMe
 }
 
 export async function sendSalesmanPortalReset(email: string, memberId: string): Promise<void> {
-  if (isDemoNamespace()) {
-    throw new Error('Password reset emails are disabled inside the Demo Sandbox.');
-  }
   const cleanEmail = email.trim().toLowerCase();
   const apiRes = await trySalesApi<{ ok: boolean }>('/api/super-admin/sales/invite', 'POST', {
     memberId,
@@ -828,15 +822,15 @@ export async function regenerateSalesmanReferralCode(memberId: string): Promise<
   const now = new Date().toISOString();
 
   const batch = writeBatch(db);
-  batch.update(scopedDoc(db, 'salesMembers', memberId), {
+  batch.update(doc(db, 'salesMembers', memberId), {
     referralCode: newCode,
     referralLink: newLink,
     updatedAt: now,
   });
   if (member.referralCode) {
-    batch.delete(scopedDoc(db, 'salesReferralIndex', member.referralCode));
+    batch.delete(doc(db, 'salesReferralIndex', member.referralCode));
   }
-  batch.set(scopedDoc(db, 'salesReferralIndex', newCode), {
+  batch.set(doc(db, 'salesReferralIndex', newCode), {
     referralCode: newCode,
     salesmanId: member.id,
     salesmanUid: member.uid || null,
@@ -865,7 +859,7 @@ export async function regenerateSalesmanReferralCode(memberId: string): Promise<
 
 export async function getAllSalesTeams(): Promise<SalesTeam[]> {
   try {
-    const snap = await getDocs(scopedCollection(db, 'salesTeams'));
+    const snap = await getDocs(collection(db, 'salesTeams'));
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesTeam), id: d.id }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -894,7 +888,7 @@ export async function saveSalesTeam(team: Partial<SalesTeam>): Promise<string> {
   });
 
   try {
-    await setDoc(scopedDoc(db, 'salesTeams', id), payload, { merge: true });
+    await setDoc(doc(db, 'salesTeams', id), payload, { merge: true });
     await logSalesAudit({
       action: team.id ? 'Updated Sales Team' : 'Created Sales Team',
       entityType: 'sales_team',
@@ -909,7 +903,7 @@ export async function saveSalesTeam(team: Partial<SalesTeam>): Promise<string> {
 
 export async function deleteSalesTeam(teamId: string): Promise<void> {
   try {
-    await deleteDoc(scopedDoc(db, 'salesTeams', teamId));
+    await deleteDoc(doc(db, 'salesTeams', teamId));
     await logSalesAudit({
       action: 'Deleted Sales Team',
       entityType: 'sales_team',
@@ -927,7 +921,7 @@ export async function deleteSalesTeam(teamId: string): Promise<void> {
 
 export async function getAllSalesLeads(): Promise<SalesLead[]> {
   try {
-    const snap = await getDocs(scopedCollection(db, 'salesLeads'));
+    const snap = await getDocs(collection(db, 'salesLeads'));
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesLead), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -938,7 +932,7 @@ export async function getAllSalesLeads(): Promise<SalesLead[]> {
 
 export async function getSalesMembersForManager(managerUid: string): Promise<SalesMember[]> {
   try {
-    const q = query(scopedCollection(db, 'salesMembers'), where('assignedManagerUid', '==', managerUid));
+    const q = query(collection(db, 'salesMembers'), where('assignedManagerUid', '==', managerUid));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as SalesMember), id: d.id }));
   } catch (err) {
@@ -949,8 +943,8 @@ export async function getSalesMembersForManager(managerUid: string): Promise<Sal
 export async function getSalesLeadsForSalesman(salesmanId: string, uid?: string): Promise<SalesLead[]> {
   try {
     const q = uid
-      ? query(scopedCollection(db, 'salesLeads'), where('assignedSalesmanUid', '==', uid))
-      : query(scopedCollection(db, 'salesLeads'), where('assignedSalesmanId', '==', salesmanId));
+      ? query(collection(db, 'salesLeads'), where('assignedSalesmanUid', '==', uid))
+      : query(collection(db, 'salesLeads'), where('assignedSalesmanId', '==', salesmanId));
     const snap = await getDocs(q);
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesLead), id: d.id }))
@@ -963,7 +957,7 @@ export async function getSalesLeadsForSalesman(salesmanId: string, uid?: string)
 export async function getSalesLeadsForManager(managerMemberIdOrUid: string, isUid = false): Promise<SalesLead[]> {
   try {
     const field = isUid ? 'assignedManagerUid' : 'assignedManagerId';
-    const q = query(scopedCollection(db, 'salesLeads'), where(field, '==', managerMemberIdOrUid));
+    const q = query(collection(db, 'salesLeads'), where(field, '==', managerMemberIdOrUid));
     const snap = await getDocs(q);
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesLead), id: d.id }))
@@ -1077,7 +1071,7 @@ export async function createSalesLead(
   });
 
   try {
-    await setDoc(scopedDoc(db, 'salesLeads', id), lead);
+    await setDoc(doc(db, 'salesLeads', id), lead);
     if (lead.assignedSalesmanId) {
       await createSalesNotification({
         recipientSalesmanId: lead.assignedSalesmanId,
@@ -1114,7 +1108,7 @@ export async function updateSalesLead(leadId: string, patch: Partial<SalesLead>)
     }
     delete (cleanPatch as any).id;
 
-    await updateDoc(scopedDoc(db, 'salesLeads', leadId), cleanPatch);
+    await updateDoc(doc(db, 'salesLeads', leadId), cleanPatch);
 
     if (patch.assignedSalesmanId) {
       await createSalesNotification({
@@ -1146,7 +1140,7 @@ export async function bulkAssignLeads(
   try {
     const batch = writeBatch(db);
     for (const lid of leadIds) {
-      batch.update(scopedDoc(db, 'salesLeads', lid), {
+      batch.update(doc(db, 'salesLeads', lid), {
         assignedSalesmanId: salesman.id,
         assignedSalesmanUid: salesman.uid || null,
         assignedSalesmanName: salesman.fullName,
@@ -1253,7 +1247,7 @@ export async function importLeadsFromCsvText(
 
 export async function getAllSalesActivities(): Promise<SalesActivity[]> {
   try {
-    const q = query(scopedCollection(db, 'salesActivities'), orderBy('activityDateTime', 'desc'), limit(250));
+    const q = query(collection(db, 'salesActivities'), orderBy('activityDateTime', 'desc'), limit(250));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as SalesActivity), id: d.id }));
   } catch (err) {
@@ -1264,8 +1258,8 @@ export async function getAllSalesActivities(): Promise<SalesActivity[]> {
 export async function getSalesActivitiesBySalesman(salesmanId: string, uid?: string): Promise<SalesActivity[]> {
   try {
     const q = uid
-      ? query(scopedCollection(db, 'salesActivities'), where('salesmanUid', '==', uid))
-      : query(scopedCollection(db, 'salesActivities'), where('salesmanId', '==', salesmanId));
+      ? query(collection(db, 'salesActivities'), where('salesmanUid', '==', uid))
+      : query(collection(db, 'salesActivities'), where('salesmanId', '==', salesmanId));
     const snap = await getDocs(q);
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesActivity), id: d.id }))
@@ -1285,8 +1279,8 @@ export async function recordSalesActivity(input: Omit<SalesActivity, 'id' | 'cre
   });
 
   try {
-    await setDoc(scopedDoc(db, 'salesActivities', id), payload);
-    await updateDoc(scopedDoc(db, 'salesMembers', input.salesmanId), {
+    await setDoc(doc(db, 'salesActivities', id), payload);
+    await updateDoc(doc(db, 'salesMembers', input.salesmanId), {
       lastActivityAt: now,
       updatedAt: now,
     }).catch(() => {});
@@ -1299,7 +1293,7 @@ export async function recordSalesActivity(input: Omit<SalesActivity, 'id' | 'cre
       if (input.nextFollowUpDate) leadPatch.nextFollowUpDate = input.nextFollowUpDate;
       if (input.resultStatus === 'converted') leadPatch.status = 'Converted';
       else if (input.resultStatus === 'follow_up_needed') leadPatch.status = 'Follow-up Required';
-      await updateDoc(scopedDoc(db, 'salesLeads', input.leadId), stripUndef(leadPatch)).catch(() => {});
+      await updateDoc(doc(db, 'salesLeads', input.leadId), stripUndef(leadPatch)).catch(() => {});
     }
 
     await logSalesAudit({
@@ -1322,7 +1316,7 @@ export async function recordSalesActivity(input: Omit<SalesActivity, 'id' | 'cre
 
 export async function getAllSalesTargets(): Promise<SalesTarget[]> {
   try {
-    const snap = await getDocs(scopedCollection(db, 'salesTargets'));
+    const snap = await getDocs(collection(db, 'salesTargets'));
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesTarget), id: d.id }))
       .sort((a, b) => b.periodKey.localeCompare(a.periodKey));
@@ -1334,8 +1328,8 @@ export async function getAllSalesTargets(): Promise<SalesTarget[]> {
 export async function getSalesTargetsForMember(salesmanId: string, uid?: string): Promise<SalesTarget[]> {
   try {
     const q = uid
-      ? query(scopedCollection(db, 'salesTargets'), where('salesmanUid', '==', uid))
-      : query(scopedCollection(db, 'salesTargets'), where('salesmanId', '==', salesmanId));
+      ? query(collection(db, 'salesTargets'), where('salesmanUid', '==', uid))
+      : query(collection(db, 'salesTargets'), where('salesmanId', '==', salesmanId));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as SalesTarget), id: d.id }));
   } catch (err) {
@@ -1363,7 +1357,7 @@ export async function saveSalesTarget(input: Omit<SalesTarget, 'id' | 'createdAt
   });
 
   try {
-    await setDoc(scopedDoc(db, 'salesTargets', id), payload, { merge: true });
+    await setDoc(doc(db, 'salesTargets', id), payload, { merge: true });
     await logSalesAudit({
       action: 'Updated Sales Targets',
       entityType: 'sales_target',
@@ -1382,7 +1376,7 @@ export async function saveSalesTarget(input: Omit<SalesTarget, 'id' | 'createdAt
 
 export async function getAllReferralAttributions(): Promise<ReferralAttribution[]> {
   try {
-    const snap = await getDocs(scopedCollection(db, 'referralAttributions'));
+    const snap = await getDocs(collection(db, 'referralAttributions'));
     return snap.docs
       .map((d) => ({ ...(d.data() as ReferralAttribution), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -1394,8 +1388,8 @@ export async function getAllReferralAttributions(): Promise<ReferralAttribution[
 export async function getReferralsForSalesman(salesmanId: string, uid?: string): Promise<ReferralAttribution[]> {
   try {
     const q = uid
-      ? query(scopedCollection(db, 'referralAttributions'), where('salesmanUid', '==', uid))
-      : query(scopedCollection(db, 'referralAttributions'), where('salesmanId', '==', salesmanId));
+      ? query(collection(db, 'referralAttributions'), where('salesmanUid', '==', uid))
+      : query(collection(db, 'referralAttributions'), where('salesmanId', '==', salesmanId));
     const snap = await getDocs(q);
     return snap.docs
       .map((d) => ({ ...(d.data() as ReferralAttribution), id: d.id }))
@@ -1420,14 +1414,13 @@ export async function getReferralCodeOwner(referralCode: string): Promise<Public
   const cleanCode = referralCode.trim().toUpperCase();
   if (!cleanCode) return null;
   try {
-    const idxSnap = await getDoc(scopedDoc(db, 'salesReferralIndex', cleanCode));
+    const idxSnap = await getDoc(doc(db, 'salesReferralIndex', cleanCode));
     if (idxSnap.exists()) {
       const d = idxSnap.data() as PublicReferralOwner;
       return { ...d, referralCode: cleanCode };
     }
-    if (!auth.currentUser) return null;
-    // Authorized fallback for authenticated users referencing legacy members not yet mirrored
-    const q = query(scopedCollection(db, 'salesMembers'), where('referralCode', '==', cleanCode), limit(1));
+    // Authorized fallback for legacy members not yet mirrored
+    const q = query(collection(db, 'salesMembers'), where('referralCode', '==', cleanCode), limit(1));
     const snap = await getDocs(q);
     if (snap.empty) return null;
     const m = { ...(snap.docs[0].data() as SalesMember), id: snap.docs[0].id };
@@ -1531,7 +1524,7 @@ export async function trackQrScan(referralCode: string, source: 'qr_scan' | 'ref
     const owner = await getReferralCodeOwner(cleanCode);
     if (owner && owner.accountStatus === 'active') {
       const evtId = `qr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      await setDoc(scopedDoc(db, 'salesQrEvents', evtId), {
+      await setDoc(doc(db, 'salesQrEvents', evtId), {
         id: evtId,
         salesmanId: owner.salesmanId,
         referralCode: cleanCode,
@@ -1550,7 +1543,7 @@ export async function trackQrScan(referralCode: string, source: 'qr_scan' | 'ref
 
 export async function getAllSalesQrEvents(): Promise<SalesQrEvent[]> {
   try {
-    const q = query(scopedCollection(db, 'salesQrEvents'), orderBy('createdAt', 'desc'), limit(200));
+    const q = query(collection(db, 'salesQrEvents'), orderBy('createdAt', 'desc'), limit(200));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ ...(d.data() as SalesQrEvent), id: d.id }));
   } catch (err) {
@@ -1598,7 +1591,7 @@ export async function recordReferralAttribution(input: {
   }
 
   // Duplicate attribution guard (1 shop = max 1 attribution doc keyed by shopId)
-  const attrRef = scopedDoc(db, 'referralAttributions', input.shopId);
+  const attrRef = doc(db, 'referralAttributions', input.shopId);
   const existingAttr = await getDoc(attrRef).catch(() => null);
   if (existingAttr?.exists()) {
     return null;
@@ -1641,7 +1634,7 @@ export async function recordReferralAttribution(input: {
   await setDoc(attrRef, payload);
 
   if (input.leadId && !isSelfReferral) {
-    await updateDoc(scopedDoc(db, 'salesLeads', input.leadId), {
+    await updateDoc(doc(db, 'salesLeads', input.leadId), {
       status: 'Converted',
       convertedShopId: input.shopId,
       convertedShopSlug: input.shopSlug,
@@ -1711,12 +1704,12 @@ export async function syncCommissionForApprovedPayment(paymentId: string): Promi
   ).catch(() => null);
   if (apiRes) return apiRes.entry;
 
-  const paySnap = await getDoc(scopedDoc(db, 'platform_payments', paymentId));
+  const paySnap = await getDoc(doc(db, 'platform_payments', paymentId));
   if (!paySnap.exists()) return null;
   const payment = { ...(paySnap.data() as PlatformPayment), id: paySnap.id };
   if (payment.status !== 'approved' || Number(payment.amount) <= 0) return null;
 
-  const attrSnap = await getDoc(scopedDoc(db, 'referralAttributions', payment.shopId));
+  const attrSnap = await getDoc(doc(db, 'referralAttributions', payment.shopId));
   if (!attrSnap.exists()) return null;
   const attr = attrSnap.data() as ReferralAttribution;
   if (attr.attributionStatus === 'rejected_self_referral' || attr.attributionStatus === 'duplicate_blocked') {
@@ -1724,7 +1717,7 @@ export async function syncCommissionForApprovedPayment(paymentId: string): Promi
   }
 
   const ledgerId = `comm_${paymentId}`;
-  const existingLedgerSnap = await getDoc(scopedDoc(db, 'commissionLedger', ledgerId));
+  const existingLedgerSnap = await getDoc(doc(db, 'commissionLedger', ledgerId));
   if (existingLedgerSnap.exists()) {
     return { ...(existingLedgerSnap.data() as CommissionLedgerEntry), id: ledgerId };
   }
@@ -1768,10 +1761,10 @@ export async function syncCommissionForApprovedPayment(paymentId: string): Promi
   });
 
   await runTransaction(db, async (tx) => {
-    const checkSnap = await tx.get(scopedDoc(db, 'commissionLedger', ledgerId));
+    const checkSnap = await tx.get(doc(db, 'commissionLedger', ledgerId));
     if (checkSnap.exists()) return;
-    tx.set(scopedDoc(db, 'commissionLedger', ledgerId), entry);
-    tx.update(scopedDoc(db, 'referralAttributions', attr.id), {
+    tx.set(doc(db, 'commissionLedger', ledgerId), entry);
+    tx.update(doc(db, 'referralAttributions', attr.id), {
       attributionStatus: 'subscribed',
       firstPaymentId: attr.firstPaymentId || paymentId,
       totalRevenueGenerated: Number(attr.totalRevenueGenerated || 0) + Number(payment.amount),
@@ -1800,7 +1793,7 @@ export async function syncCommissionForApprovedPayment(paymentId: string): Promi
 
 export async function verifyReferralAttributionOnShopActivation(shopId: string): Promise<void> {
   try {
-    const attrRef = scopedDoc(db, 'referralAttributions', shopId);
+    const attrRef = doc(db, 'referralAttributions', shopId);
     const snap = await getDoc(attrRef);
     if (!snap.exists()) return;
     const attr = snap.data() as ReferralAttribution;
@@ -1816,7 +1809,7 @@ export async function verifyReferralAttributionOnShopActivation(shopId: string):
 export async function reverseCommissionForPayment(paymentId: string, reason: string): Promise<void> {
   try {
     const ledgerId = `comm_${paymentId}`;
-    const snap = await getDoc(scopedDoc(db, 'commissionLedger', ledgerId));
+    const snap = await getDoc(doc(db, 'commissionLedger', ledgerId));
     if (!snap.exists()) return;
     const entry = snap.data() as CommissionLedgerEntry;
     if (entry.status === 'pending' || entry.status === 'approved' || entry.status === 'paid') {
@@ -1835,7 +1828,7 @@ function formatPKRStr(val: number): string {
 
 export async function getAllCommissionLedger(): Promise<CommissionLedgerEntry[]> {
   try {
-    const snap = await getDocs(scopedCollection(db, 'commissionLedger'));
+    const snap = await getDocs(collection(db, 'commissionLedger'));
     return snap.docs
       .map((d) => ({ ...(d.data() as CommissionLedgerEntry), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -1847,8 +1840,8 @@ export async function getAllCommissionLedger(): Promise<CommissionLedgerEntry[]>
 export async function getCommissionsForSalesman(salesmanId: string, uid?: string): Promise<CommissionLedgerEntry[]> {
   try {
     const q = uid
-      ? query(scopedCollection(db, 'commissionLedger'), where('salesmanUid', '==', uid))
-      : query(scopedCollection(db, 'commissionLedger'), where('salesmanId', '==', salesmanId));
+      ? query(collection(db, 'commissionLedger'), where('salesmanUid', '==', uid))
+      : query(collection(db, 'commissionLedger'), where('salesmanId', '==', salesmanId));
     const snap = await getDocs(q);
     return snap.docs
       .map((d) => ({ ...(d.data() as CommissionLedgerEntry), id: d.id }))
@@ -1871,8 +1864,8 @@ export async function updateCommissionDecision(params: {
   const reviewer = auth.currentUser?.email || 'Super Admin';
   const now = new Date().toISOString();
 
-  const updatedCur = await runTransaction(db, async (tx) => {
-    const ref = scopedDoc(db, 'commissionLedger', params.commissionId);
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'commissionLedger', params.commissionId);
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('Commission ledger entry not found.');
     const cur = snap.data() as CommissionLedgerEntry;
@@ -1905,28 +1898,27 @@ export async function updateCommissionDecision(params: {
     }
 
     tx.update(ref, patch);
-    return cur;
-  });
 
-  await createSalesNotification({
-    recipientSalesmanId: updatedCur.salesmanId,
-    recipientUid: updatedCur.salesmanUid,
-    type: params.decision === 'approved' ? 'commission_approved' : 'commission_rejected',
-    title: `Commission ${params.decision.toUpperCase()}: ${formatPKRStr(updatedCur.commissionAmount)}`,
-    message:
-      params.decision === 'approved'
-        ? `Commission for ${updatedCur.shopName} approved and queued for payout.`
-        : `Commission for ${updatedCur.shopName} ${params.decision}: ${params.reason || ''}`,
-    link: '/salesman/commissions',
-  });
+    await createSalesNotification({
+      recipientSalesmanId: cur.salesmanId,
+      recipientUid: cur.salesmanUid,
+      type: params.decision === 'approved' ? 'commission_approved' : 'commission_rejected',
+      title: `Commission ${params.decision.toUpperCase()}: ${formatPKRStr(cur.commissionAmount)}`,
+      message:
+        params.decision === 'approved'
+          ? `Commission for ${cur.shopName} approved and queued for payout.`
+          : `Commission for ${cur.shopName} ${params.decision}: ${params.reason || ''}`,
+      link: '/salesman/commissions',
+    });
 
-  await logSalesAudit({
-    action: `Commission ${params.decision}`,
-    entityType: 'commission',
-    entityId: params.commissionId,
-    previousValue: updatedCur.status,
-    newValue: params.decision,
-    details: `${updatedCur.salesmanName} · ${updatedCur.shopName} (${formatPKRStr(updatedCur.commissionAmount)}) · ${params.reason || 'Verified'}`,
+    await logSalesAudit({
+      action: `Commission ${params.decision}`,
+      entityType: 'commission',
+      entityId: params.commissionId,
+      previousValue: cur.status,
+      newValue: params.decision,
+      details: `${cur.salesmanName} · ${cur.shopName} (${formatPKRStr(cur.commissionAmount)}) · ${params.reason || 'Verified'}`,
+    });
   });
 }
 
@@ -1970,7 +1962,7 @@ export async function recordManualPayout(input: {
   await runTransaction(db, async (tx) => {
     const ledgerSnaps = [];
     for (const cid of input.ledgerEntryIds) {
-      const snap = await tx.get(scopedDoc(db, 'commissionLedger', cid));
+      const snap = await tx.get(doc(db, 'commissionLedger', cid));
       if (!snap.exists()) throw new Error(`Commission entry ${cid} does not exist.`);
       const data = snap.data() as CommissionLedgerEntry;
       if (data.salesmanId !== input.salesman.id) {
@@ -2004,9 +1996,9 @@ export async function recordManualPayout(input: {
       createdAt: now,
     });
 
-    tx.set(scopedDoc(db, 'commissionPayouts', payoutId), payoutPayload);
+    tx.set(doc(db, 'commissionPayouts', payoutId), payoutPayload);
     for (const cid of ledgerSnaps) {
-      tx.update(scopedDoc(db, 'commissionLedger', cid), {
+      tx.update(doc(db, 'commissionLedger', cid), {
         status: 'paid',
         payoutId,
         paidAt: now,
@@ -2057,7 +2049,7 @@ export async function recordManualPayout(input: {
 
 export async function getAllCommissionPayouts(): Promise<CommissionPayout[]> {
   try {
-    const snap = await getDocs(scopedCollection(db, 'commissionPayouts'));
+    const snap = await getDocs(collection(db, 'commissionPayouts'));
     return snap.docs
       .map((d) => ({ ...(d.data() as CommissionPayout), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -2069,8 +2061,8 @@ export async function getAllCommissionPayouts(): Promise<CommissionPayout[]> {
 export async function getPayoutsForSalesman(salesmanId: string, uid?: string): Promise<CommissionPayout[]> {
   try {
     const q = uid
-      ? query(scopedCollection(db, 'commissionPayouts'), where('salesmanUid', '==', uid))
-      : query(scopedCollection(db, 'commissionPayouts'), where('salesmanId', '==', salesmanId));
+      ? query(collection(db, 'commissionPayouts'), where('salesmanUid', '==', uid))
+      : query(collection(db, 'commissionPayouts'), where('salesmanId', '==', salesmanId));
     const snap = await getDocs(q);
     return snap.docs
       .map((d) => ({ ...(d.data() as CommissionPayout), id: d.id }))
@@ -2361,7 +2353,7 @@ export async function assignLeadWithinManagerTeam(params: {
   const now = new Date().toISOString();
   const batch = writeBatch(db);
   for (const lid of params.leadIds) {
-    batch.update(scopedDoc(db, 'salesLeads', lid), {
+    batch.update(doc(db, 'salesLeads', lid), {
       assignedSalesmanId: params.targetSalesman.id,
       assignedSalesmanUid: params.targetSalesman.uid || null,
       assignedSalesmanName: params.targetSalesman.fullName,
@@ -2438,7 +2430,7 @@ export async function submitBonusRecommendation(input: {
     createdAt: now,
     updatedAt: now,
   });
-  await setDoc(scopedDoc(db, 'salesBonusRecommendations', id), payload);
+  await setDoc(doc(db, 'salesBonusRecommendations', id), payload);
   await logSalesAudit({
     action: 'Recommended Team Bonus',
     entityType: 'bonus_recommendation',
@@ -2451,7 +2443,7 @@ export async function submitBonusRecommendation(input: {
 
 export async function getBonusRecommendationsForManager(managerUid: string): Promise<SalesBonusRecommendation[]> {
   try {
-    const q = query(scopedCollection(db, 'salesBonusRecommendations'), where('managerUid', '==', managerUid));
+    const q = query(collection(db, 'salesBonusRecommendations'), where('managerUid', '==', managerUid));
     const snap = await getDocs(q);
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesBonusRecommendation), id: d.id }))
@@ -2463,7 +2455,7 @@ export async function getBonusRecommendationsForManager(managerUid: string): Pro
 
 export async function getAllBonusRecommendations(): Promise<SalesBonusRecommendation[]> {
   try {
-    const snap = await getDocs(scopedCollection(db, 'salesBonusRecommendations'));
+    const snap = await getDocs(collection(db, 'salesBonusRecommendations'));
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesBonusRecommendation), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -2489,7 +2481,7 @@ export async function decideBonusRecommendation(params: {
   const reviewer = auth.currentUser?.email || 'Super Admin';
   const now = new Date().toISOString();
   await runTransaction(db, async (tx) => {
-    const ref = scopedDoc(db, 'salesBonusRecommendations', params.recId);
+    const ref = doc(db, 'salesBonusRecommendations', params.recId);
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('Recommendation not found.');
     const cur = snap.data() as SalesBonusRecommendation;
@@ -2505,7 +2497,7 @@ export async function decideBonusRecommendation(params: {
     } else {
       const ledgerId = `comm_bon_${params.recId}`;
       patch.commissionLedgerId = ledgerId;
-      tx.set(scopedDoc(db, 'commissionLedger', ledgerId), stripUndef({
+      tx.set(doc(db, 'commissionLedger', ledgerId), stripUndef({
         id: ledgerId,
         salesmanId: cur.salesmanId,
         salesmanUid: cur.salesmanUid,
@@ -2572,13 +2564,13 @@ export async function submitSalesExpense(input: {
     createdAt: now,
     updatedAt: now,
   });
-  await setDoc(scopedDoc(db, 'salesExpenses', id), payload);
+  await setDoc(doc(db, 'salesExpenses', id), payload);
   return payload;
 }
 
 export async function getSalesExpensesForMember(salesmanUid: string): Promise<SalesExpense[]> {
   try {
-    const q = query(scopedCollection(db, 'salesExpenses'), where('salesmanUid', '==', salesmanUid));
+    const q = query(collection(db, 'salesExpenses'), where('salesmanUid', '==', salesmanUid));
     const snap = await getDocs(q);
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesExpense), id: d.id }))
@@ -2590,7 +2582,7 @@ export async function getSalesExpensesForMember(salesmanUid: string): Promise<Sa
 
 export async function getAllSalesExpenses(): Promise<SalesExpense[]> {
   try {
-    const snap = await getDocs(scopedCollection(db, 'salesExpenses'));
+    const snap = await getDocs(collection(db, 'salesExpenses'));
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesExpense), id: d.id }))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -2614,7 +2606,7 @@ export async function decideSalesExpense(params: {
   const reviewer = auth.currentUser?.email || 'Super Admin';
   const now = new Date().toISOString();
   await runTransaction(db, async (tx) => {
-    const ref = scopedDoc(db, 'salesExpenses', params.expenseId);
+    const ref = doc(db, 'salesExpenses', params.expenseId);
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('Expense not found.');
     if (snap.data()?.status !== 'pending') throw new Error(`Expense already ${snap.data()?.status}.`);
@@ -2637,7 +2629,7 @@ export async function decideSalesExpense(params: {
 
 export async function getApprovedSalesMaterials(): Promise<SalesMaterial[]> {
   try {
-    const snap = await getDocs(scopedCollection(db, 'salesMaterials'));
+    const snap = await getDocs(collection(db, 'salesMaterials'));
     return snap.docs
       .map((d) => ({ ...(d.data() as SalesMaterial), id: d.id }))
       .filter((m) => m.isActive !== false)
@@ -2659,7 +2651,7 @@ export async function saveSalesMaterial(
     createdAt: now,
     updatedAt: now,
   });
-  await setDoc(scopedDoc(db, 'salesMaterials', id), payload, { merge: true });
+  await setDoc(doc(db, 'salesMaterials', id), payload, { merge: true });
   await logSalesAudit({
     action: input.id ? 'Updated Sales Material' : 'Published Sales Material',
     entityType: 'sales_material',
@@ -2670,7 +2662,7 @@ export async function saveSalesMaterial(
 }
 
 export async function deleteSalesMaterial(materialId: string): Promise<void> {
-  await deleteDoc(scopedDoc(db, 'salesMaterials', materialId));
+  await deleteDoc(doc(db, 'salesMaterials', materialId));
   await logSalesAudit({
     action: 'Deleted Sales Material',
     entityType: 'sales_material',

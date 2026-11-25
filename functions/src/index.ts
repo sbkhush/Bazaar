@@ -1,26 +1,11 @@
-import * as crypto from 'node:crypto';
+import crypto from 'node:crypto';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
-import { setGlobalOptions } from 'firebase-functions/v2';
-import { defineSecret } from 'firebase-functions/params';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import {
-  DEMO_ADMIN_EMAIL,
-  DEMO_ADMIN_DISPLAY_NAME,
-  DEMO_ACCOUNT_TYPE,
-  DEMO_ENV_ROOT,
-  DEMO_ENV_ID,
-  DEMO_DATA_TAG,
-  buildDemoAdminWriteOperations,
-} from './demoSeed';
-
-setGlobalOptions({ region: 'us-central1' });
-
-const cnicHmacSecret = defineSecret('CNIC_HMAC_SECRET');
 
 const app = initializeApp();
 const FIRESTORE_DB_ID =
@@ -50,9 +35,9 @@ function maskCnicServer(normalized: string): string {
 }
 
 function getFunctionsCnicHmacSecret(): string {
-  const configured = String(cnicHmacSecret.value() || process.env.CNIC_HMAC_SECRET || '').trim();
+  const configured = String(process.env.CNIC_HMAC_SECRET || '').trim();
   if (configured) return configured;
-  if (process.env.FUNCTIONS_EMULATOR === 'true') {
+  if (process.env.FUNCTIONS_EMULATOR === 'true' || process.env.NODE_ENV !== 'production') {
     return 'dev-local-cnic-hmac-fallback';
   }
   throw new HttpsError('failed-precondition', 'Server CNIC verification secret (CNIC_HMAC_SECRET) is not configured.');
@@ -126,24 +111,9 @@ function toCleanShopPublic(
   });
 }
 
-function isDemoIdentity(email?: string | null, tokenClaims?: Record<string, any> | null): boolean {
-  const normalized = String(email || '').trim().toLowerCase();
-  return (
-    normalized === DEMO_ADMIN_EMAIL ||
-    tokenClaims?.demo_super_admin === true ||
-    tokenClaims?.account_type === DEMO_ACCOUNT_TYPE
-  );
-}
-
 async function assertSuperAdmin(uid?: string, email?: string, emailVerified?: boolean, tokenClaims?: Record<string, any>) {
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
-  }
-  if (isDemoIdentity(email, tokenClaims)) {
-    throw new HttpsError(
-      'permission-denied',
-      'Demo Super Admin accounts are strictly isolated and cannot access production Super Admin endpoints.'
-    );
   }
   if (tokenClaims?.super_admin === true) return;
   if (email === SUPER_ADMIN_EMAIL && emailVerified) return;
@@ -161,19 +131,6 @@ async function rebuildCustomClaimsForUser(
   uid: string
 ): Promise<{ super_admin: boolean; shops: Record<string, string>; sales_role: string | null }> {
   const userRecord = await auth.getUser(uid);
-  if (isDemoIdentity(userRecord.email, userRecord.customClaims)) {
-    const demoClaims = {
-      super_admin: false,
-      demo_super_admin: true,
-      account_type: DEMO_ACCOUNT_TYPE,
-      demo_scope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-      shops: {},
-      sales_role: null,
-    };
-    await auth.setCustomUserClaims(uid, demoClaims);
-    return { super_admin: false, shops: {}, sales_role: null };
-  }
-
   const [adminSnap, legacyAdminSnap] = await Promise.all([
     db.collection('platform_admins').doc(uid).get(),
     db.collection('admins').doc(uid).get(),
@@ -206,65 +163,21 @@ async function rebuildCustomClaimsForUser(
     }
   }
 
-  const existingClaims = userRecord.customClaims || {};
-  const preservedClaims: Record<string, any> = {};
-  for (const [k, v] of Object.entries(existingClaims)) {
-    if (!['super_admin', 'shops', 'sales_role', 'shopsTruncated'].includes(k)) {
-      preservedClaims[k] = v;
-    }
-  }
-
-  // Enforce Firebase Auth custom claims 1000-byte ceiling safely
-  const boundedShops: Record<string, string> = {};
-  let shopsTruncated = false;
-  for (const [sId, role] of Object.entries(shops)) {
-    const candidatePayload = {
-      ...preservedClaims,
-      super_admin: isSuper,
-      sales_role: salesRole,
-      shops: { ...boundedShops, [sId]: role },
-      shopsTruncated: false,
-    };
-    if (Buffer.byteLength(JSON.stringify(candidatePayload), 'utf8') <= 900) {
-      boundedShops[sId] = role;
-    } else {
-      shopsTruncated = true;
-    }
-  }
-
-  const nextClaims = {
-    ...preservedClaims,
+  await auth.setCustomUserClaims(uid, {
+    ...(userRecord.customClaims || {}),
     super_admin: isSuper,
-    shops: boundedShops,
+    shops,
     sales_role: salesRole,
-    ...(shopsTruncated ? { shopsTruncated: true } : {}),
-  };
+  });
 
-  await auth.setCustomUserClaims(uid, nextClaims);
-
-  return { super_admin: isSuper, shops: boundedShops, sales_role: salesRole };
+  return { super_admin: isSuper, shops, sales_role: salesRole };
 }
 
 /**
- * Automatically keep Firebase Auth Custom Claims (`super_admin`, `shops`, `sales_role`) synchronized
- * whenever platform_admins, shop staff, or salesMembers change so storage.rules & firestore.rules
- * verify tenant & platform authorization without stale tokens.
+ * Automatically keep Firebase Auth Custom Claims (`super_admin`, `shops`) synchronized
+ * whenever shop staff records or platform_admins change so storage.rules & firestore.rules
+ * verify tenant authorization without bare request.auth != null checks.
  */
-export const onPlatformAdminWritten = onDocumentWritten(
-  {
-    document: 'platform_admins/{adminId}',
-    database: FIRESTORE_DB_ID,
-  },
-  async (event) => {
-    const adminId = event.params.adminId;
-    try {
-      await rebuildCustomClaimsForUser(adminId);
-    } catch (err) {
-      console.error('Failed syncing super_admin claim:', adminId, err);
-    }
-  }
-);
-
 export const onShopStaffWritten = onDocumentWritten(
   {
     document: 'shops/{shopId}/staff/{staffUid}',
@@ -390,7 +303,7 @@ export const approvePlatformPayment = onCall(async (request) => {
       toCleanShopPublic(payment.shopId, shopData, existingPublic, 'active', nowIso)
     );
 
-    const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+    const logId = `plog_${Date.now()}`;
     tx.set(db.collection('platform_activity_logs').doc(logId), {
       id: logId,
       actorId: request.auth?.uid,
@@ -425,8 +338,7 @@ export const rejectPlatformPayment = onCall(async (request) => {
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(paymentRef);
     if (!snap.exists) throw new HttpsError('not-found', 'Payment not found.');
-    const paymentData = snap.data()!;
-    if (paymentData.status !== 'pending') {
+    if (snap.data()?.status !== 'pending') {
       throw new HttpsError('failed-precondition', 'Payment was already processed.');
     }
     tx.update(paymentRef, {
@@ -434,17 +346,6 @@ export const rejectPlatformPayment = onCall(async (request) => {
       rejectionReason: reason,
       reviewedBy: request.auth?.token?.email || 'Super Admin',
       reviewedAt: nowIso,
-    });
-    const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-    tx.set(db.collection('platform_activity_logs').doc(logId), {
-      id: logId,
-      actorId: request.auth?.uid || 'super_admin',
-      actorEmail: request.auth?.token?.email || 'Super Admin',
-      action: 'Rejected Payment',
-      targetType: 'payment',
-      targetId: paymentId,
-      details: `Rejected Rs. ${paymentData.amount || 0} for ${paymentData.shopName || paymentData.shopId}: ${reason}`,
-      createdAt: nowIso,
     });
   });
 
@@ -534,13 +435,10 @@ export const assignShopSubscriptionAdmin = onCall(async (request) => {
   return { ok: true, expiryDate: expiryIso };
 });
 
-export const registerShopWithCnic = onCall({ secrets: [cnicHmacSecret] }, async (request) => {
+export const registerShopWithCnic = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Please sign in before registering a shop.');
-  }
-  if (isDemoIdentity(request.auth?.token?.email, request.auth?.token)) {
-    throw new HttpsError('permission-denied', 'Demo accounts cannot register production stores.');
   }
 
   const data = (request.data || {}) as Record<string, any>;
@@ -779,7 +677,7 @@ export const registerShopWithCnic = onCall({ secrets: [cnicHmacSecret] }, async 
   return { shop: newShop };
 });
 
-export const manageShopCnicAdmin = onCall({ secrets: [cnicHmacSecret] }, async (request) => {
+export const manageShopCnicAdmin = onCall(async (request) => {
   await assertSuperAdmin(
     request.auth?.uid,
     request.auth?.token?.email,
@@ -933,14 +831,10 @@ export const deleteShopCompleteAdmin = onCall(async (request) => {
     shopRef.get(),
     shopRef.collection('staff').get(),
   ]);
-  if (!shopSnap.exists) {
-    throw new HttpsError('not-found', `Shop ${shopId} not found.`);
-  }
-  const shopData = shopSnap.data()!;
-  const warnings: string[] = [];
+  const shopData = shopSnap.data();
 
   const affectedUids = new Set<string>();
-  if (shopData.ownerId) affectedUids.add(String(shopData.ownerId));
+  if (shopData?.ownerId) affectedUids.add(String(shopData.ownerId));
   staffSnap.forEach((docSnap) => {
     if (docSnap.id) affectedUids.add(docSnap.id);
     const staffUid = docSnap.data()?.uid;
@@ -950,16 +844,16 @@ export const deleteShopCompleteAdmin = onCall(async (request) => {
   // Archive minimal non-PII retention metadata and preserve CNIC lock by default
   await db.collection('archived_shops').doc(shopId).set({
     shopId,
-    slug: shopData.slug || shopId,
-    name: shopData.name || shopId,
-    city: shopData.city || '',
-    cnicHash: shopData.cnicHash || null,
-    cnicMasked: shopData.cnicMasked || null,
+    slug: shopData?.slug || shopId,
+    name: shopData?.name || shopId,
+    city: shopData?.city || '',
+    cnicHash: shopData?.cnicHash || null,
+    cnicMasked: shopData?.cnicMasked || null,
     deletedBy: request.auth?.token?.email || 'Super Admin',
     deletedAt: nowIso,
   });
 
-  if (shopData.cnicHash) {
+  if (shopData?.cnicHash) {
     await db
       .collection('cnic_registry')
       .doc(String(shopData.cnicHash))
@@ -970,45 +864,29 @@ export const deleteShopCompleteAdmin = onCall(async (request) => {
           updatedAt: nowIso,
         },
         { merge: true }
-      );
+      )
+      .catch(() => {});
   }
 
   await db.recursiveDelete(shopRef);
-  await db.collection('shops_public').doc(shopId).delete().catch((err) => {
-    if (err?.code !== 5) warnings.push(`shops_public delete: ${err?.message || err}`);
-  });
-  if (shopData.slug) {
-    await db.collection('shop_slugs').doc(shopData.slug).delete().catch((err) => {
-      if (err?.code !== 5) warnings.push(`shop_slugs delete: ${err?.message || err}`);
-    });
+  await db.collection('shops_public').doc(shopId).delete().catch(() => {});
+  if (shopData?.slug) {
+    await db.collection('shop_slugs').doc(shopData.slug).delete().catch(() => {});
   }
 
   // Delete shop memberships & rebuild custom claims for owner + all staff
   await Promise.all(
     Array.from(affectedUids).map(async (uid) => {
-      await db
-        .collection('users')
-        .doc(uid)
-        .collection('shopMemberships')
-        .doc(shopId)
-        .delete()
-        .catch((err) => warnings.push(`membership delete (${uid}): ${err?.message || err}`));
-      await rebuildCustomClaimsForUser(uid).catch((err) =>
-        warnings.push(`claim rebuild (${uid}): ${err?.message || err}`)
-      );
+      await db.collection('users').doc(uid).collection('shopMemberships').doc(shopId).delete().catch(() => {});
+      await rebuildCustomClaimsForUser(uid).catch(() => {});
     })
   );
 
-  // Delete tenant & platform payment storage folder assets cleanly
-  for (const prefix of [`shops/${shopId}/`, `platform/payments/${shopId}/`]) {
-    try {
-      await storage.bucket().deleteFiles({ prefix });
-    } catch (err: any) {
-      if (err?.code !== 404) {
-        console.warn(`Storage cleanup warning (${prefix}):`, err);
-        warnings.push(`storage cleanup (${prefix}): ${err?.message || err}`);
-      }
-    }
+  // Delete tenant storage folder assets cleanly
+  try {
+    await storage.bucket().deleteFiles({ prefix: `shops/${shopId}/` });
+  } catch (err) {
+    console.warn('Storage cleanup note during shop delete:', err);
   }
 
   const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
@@ -1019,11 +897,11 @@ export const deleteShopCompleteAdmin = onCall(async (request) => {
     action: 'Deleted Shop Permanently',
     targetType: 'shop',
     targetId: shopId,
-    details: `Deleted shop "${shopData.name || shopId}", cleared ${affectedUids.size} staff membership(s), retained CNIC registry lock`,
+    details: `Deleted shop "${shopData?.name || shopId}", cleared ${affectedUids.size} staff membership(s), retained CNIC registry lock`,
     createdAt: nowIso,
-  });
+  }).catch(() => {});
 
-  return { ok: true, clearedStaffCount: affectedUids.size, warnings };
+  return { ok: true, clearedStaffCount: affectedUids.size };
 });
 
 export const incrementProductUsage = onDocumentWritten(
@@ -1045,7 +923,7 @@ export const incrementProductUsage = onDocumentWritten(
 
 /**
  * Daily scheduled expiry checker: marks past-due active/trial subscriptions as 'expired'
- * in chunked batches (<= 400 writes/batch) without modifying merchant products/orders/settings.
+ * without modifying or deleting merchant products/orders/settings.
  */
 export const enforceExpiredSubscriptions = onSchedule('every 24 hours', async () => {
   const nowIso = new Date().toISOString();
@@ -1054,221 +932,22 @@ export const enforceExpiredSubscriptions = onSchedule('every 24 hours', async ()
     .where('subscription.status', 'in', ['active', 'trial'])
     .get();
 
-  const expiredDocs = activeSnap.docs.filter((docSnap) => {
+  const batch = db.batch();
+  let count = 0;
+
+  activeSnap.forEach((docSnap) => {
     const data = docSnap.data();
     const expiry = data.subscription?.expiryDate;
-    return Boolean(expiry && expiry < nowIso && data.subscription?.planId !== 'free-starter');
-  });
-
-  const CHUNK_SIZE = 400;
-  for (let i = 0; i < expiredDocs.length; i += CHUNK_SIZE) {
-    const chunk = expiredDocs.slice(i, i + CHUNK_SIZE);
-    const batch = db.batch();
-    chunk.forEach((docSnap) => {
+    if (expiry && expiry < nowIso && data.subscription?.planId !== 'free-starter') {
       batch.update(docSnap.ref, {
         'subscription.status': 'expired',
         updatedAt: nowIso,
       });
-    });
+      count++;
+    }
+  });
+
+  if (count > 0) {
     await batch.commit();
   }
 });
-
-// ====================================================
-// ISOLATED DEMO SUPER ADMIN SANDBOX FUNCTIONS
-// ====================================================
-
-async function ensureDemoAdminUser(passwordOverride?: string): Promise<{
-  uid: string;
-  email: string;
-  claims: Record<string, any>;
-}> {
-  const demoClaims = {
-    super_admin: false,
-    demo_super_admin: true,
-    account_type: DEMO_ACCOUNT_TYPE,
-    demo_scope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-    shops: {},
-    sales_role: null,
-  };
-
-  let userRecord: Awaited<ReturnType<typeof auth.getUserByEmail>> | null = null;
-  try {
-    userRecord = await auth.getUserByEmail(DEMO_ADMIN_EMAIL);
-  } catch (err: any) {
-    if (err?.code !== 'auth/user-not-found') {
-      throw err;
-    }
-  }
-
-  const effectivePassword = String(
-    passwordOverride || process.env.DEMO_ADMIN_PASSWORD || crypto.randomBytes(24).toString('hex')
-  );
-
-  if (!userRecord) {
-    userRecord = await auth.createUser({
-      email: DEMO_ADMIN_EMAIL,
-      emailVerified: true,
-      password: effectivePassword,
-      displayName: DEMO_ADMIN_DISPLAY_NAME,
-    });
-  } else {
-    const updatePayload: Record<string, any> = {
-      emailVerified: true,
-      displayName: DEMO_ADMIN_DISPLAY_NAME,
-      disabled: false,
-    };
-    if (passwordOverride || process.env.DEMO_ADMIN_PASSWORD) {
-      updatePayload.password = effectivePassword;
-    }
-    userRecord = await auth.updateUser(userRecord.uid, updatePayload);
-  }
-
-  await auth.setCustomUserClaims(userRecord.uid, demoClaims);
-  await db.collection('demo_admins').doc(userRecord.uid).set(
-    {
-      uid: userRecord.uid,
-      email: DEMO_ADMIN_EMAIL,
-      displayName: DEMO_ADMIN_DISPLAY_NAME,
-      accountType: DEMO_ACCOUNT_TYPE,
-      demoScope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true }
-  );
-
-  return {
-    uid: userRecord.uid,
-    email: DEMO_ADMIN_EMAIL,
-    claims: demoClaims,
-  };
-}
-
-async function seedDemoEnvironmentInternal(): Promise<{
-  writtenDocs: number;
-  seededCounts: Record<string, number>;
-}> {
-  const demoRootRef = db.collection(DEMO_ENV_ROOT).doc(DEMO_ENV_ID);
-  await db.recursiveDelete(demoRootRef);
-
-  try {
-    await storage.bucket().deleteFiles({ prefix: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}/` });
-  } catch (err: any) {
-    if (err?.code !== 404) {
-      console.warn('Demo storage reset note:', err?.message || err);
-    }
-  }
-
-  const ops = buildDemoAdminWriteOperations();
-  const CHUNK_SIZE = 400;
-  for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
-    const slice = ops.slice(i, i + CHUNK_SIZE);
-    const batch = db.batch();
-    for (const op of slice) {
-      batch.set(db.doc(op.pathSegments.join('/')), op.data);
-    }
-    await batch.commit();
-  }
-
-  const countCollection = (col: string) =>
-    ops.filter((op) => op.pathSegments.length === 4 && op.pathSegments[2] === col).length;
-  const countSubcollection = (sub: string) =>
-    ops.filter((op) => op.pathSegments.length === 6 && op.pathSegments[2] === 'shops' && op.pathSegments[4] === sub).length;
-  const salesOps = ops.filter((op) => op.pathSegments.length === 4 && op.pathSegments[2] === 'salesMembers');
-  const referralAgentsCount = salesOps.filter((op) => op.data?.role === 'referral_agent').length;
-
-  return {
-    writtenDocs: ops.length,
-    seededCounts: {
-      shops: countCollection('shops'),
-      products: countSubcollection('products'),
-      customers: countSubcollection('customers'),
-      orders: countSubcollection('orders'),
-      salesMembers: salesOps.length - referralAgentsCount,
-      referralAgents: referralAgentsCount,
-    },
-  };
-}
-
-export const provisionDemoSuperAdmin = onCall(async (request) => {
-  await assertSuperAdmin(
-    request.auth?.uid,
-    request.auth?.token?.email,
-    request.auth?.token?.email_verified,
-    request.auth?.token
-  );
-
-  const requestedPassword = typeof request.data?.password === 'string' ? request.data.password.trim() : '';
-  if (requestedPassword && requestedPassword.length < 8) {
-    throw new HttpsError('invalid-argument', 'Demo admin password override must be at least 8 characters.');
-  }
-
-  const ensured = await ensureDemoAdminUser(requestedPassword || undefined);
-  const demoRootSnap = await db.collection(DEMO_ENV_ROOT).doc(DEMO_ENV_ID).get();
-  if (!demoRootSnap.exists) {
-    await seedDemoEnvironmentInternal();
-  }
-
-  return {
-    ok: true,
-    uid: ensured.uid,
-    email: ensured.email,
-    accountType: DEMO_ACCOUNT_TYPE,
-    demoScope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-  };
-});
-
-export const issueDemoAdminToken = onCall(async () => {
-  const ensured = await ensureDemoAdminUser();
-  const demoRootSnap = await db.collection(DEMO_ENV_ROOT).doc(DEMO_ENV_ID).get();
-  if (!demoRootSnap.exists) {
-    await seedDemoEnvironmentInternal();
-  }
-
-  const customToken = await auth.createCustomToken(ensured.uid, {
-    super_admin: false,
-    demo_super_admin: true,
-    account_type: DEMO_ACCOUNT_TYPE,
-    demo_scope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-  });
-
-  return {
-    ok: true,
-    customToken,
-    uid: ensured.uid,
-    email: ensured.email,
-    accountType: DEMO_ACCOUNT_TYPE,
-    demoScope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-    demoTag: DEMO_DATA_TAG,
-  };
-});
-
-export const resetDemoEnvironmentAdmin = onCall(async (request) => {
-  await assertSuperAdmin(
-    request.auth?.uid,
-    request.auth?.token?.email,
-    request.auth?.token?.email_verified,
-    request.auth?.token
-  );
-
-  const result = await seedDemoEnvironmentInternal();
-  const nowIso = new Date().toISOString();
-  const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-  await db.collection('platform_activity_logs').doc(logId).set({
-    id: logId,
-    actorId: request.auth?.uid || 'super_admin',
-    actorEmail: request.auth?.token?.email || 'Super Admin',
-    action: 'Reset Demo Environment',
-    targetType: 'settings',
-    targetId: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-    details: `Reset and re-seeded isolated demo sandbox (${result.writtenDocs} documents)`,
-    createdAt: nowIso,
-  });
-
-  return {
-    ok: true,
-    ...result,
-    resetAt: nowIso,
-  };
-});
-

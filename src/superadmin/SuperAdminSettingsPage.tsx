@@ -10,24 +10,14 @@ import {
   RefreshCw,
   HardDrive,
   ExternalLink,
-  FlaskConical,
-  RotateCcw,
-  ShieldCheck,
 } from 'lucide-react';
-import {
-  getPlatformSettingsStrict,
-  updatePlatformSettings,
-  triggerDemoEnvironmentReset,
-  triggerProvisionDemoAdmin,
-} from '../services/platformService';
+import { getPlatformSettingsStrict, updatePlatformSettings } from '../services/platformService';
 import { checkStorageHealth, StorageHealthReport } from '../services/storageService';
 import { PlatformSettings } from '../types';
 import { DEFAULT_PLATFORM_SETTINGS } from '../data/seedData';
 import { ImageUploader } from '../components/common/ImageUploader';
 import { SOCIAL_PLATFORM_META, getConfiguredSocialLinks } from '../utils/socialLinks';
 import { apiFetch, isExternalApiConfigured } from '../utils/apiClient';
-import { useAuth } from '../context/AuthContext';
-import { DEMO_ADMIN_EMAIL, DEMO_SCOPE_PATH } from '../demo/demoConfig';
 import {
   BRAND,
   DEFAULT_PLATFORM_PRIVACY_POLICY,
@@ -46,7 +36,6 @@ interface ApiHealthReport {
 }
 
 export const SuperAdminSettingsPage: React.FC = () => {
-  const { isSuperAdmin, isDemoAdmin } = useAuth();
   const [settings, setSettings] = useState<PlatformSettings>(DEFAULT_PLATFORM_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -56,10 +45,6 @@ export const SuperAdminSettingsPage: React.FC = () => {
   const [diagLoading, setDiagLoading] = useState(false);
   const [storageHealth, setStorageHealth] = useState<StorageHealthReport | null>(null);
   const [apiHealth, setApiHealth] = useState<ApiHealthReport | null>(null);
-  const [demoBusy, setDemoBusy] = useState(false);
-  const [demoStatusMsg, setDemoStatusMsg] = useState<string | null>(null);
-  const [demoErrorMsg, setDemoErrorMsg] = useState<string | null>(null);
-  const [demoSeedPassword, setDemoSeedPassword] = useState('');
 
   const runDiagnostics = async () => {
     setDiagLoading(true);
@@ -130,45 +115,6 @@ export const SuperAdminSettingsPage: React.FC = () => {
       setErrorBanner(err?.message || 'Failed to save platform settings.');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleResetDemoSandbox = async () => {
-    setDemoBusy(true);
-    setDemoStatusMsg(null);
-    setDemoErrorMsg(null);
-    try {
-      const res = await triggerDemoEnvironmentReset();
-      const summary = res.seededCounts
-        ? Object.entries(res.seededCounts)
-            .map(([k, v]) => `${k}: ${v}`)
-            .join(', ')
-        : 're-seeded';
-      setDemoStatusMsg(`Demo sandbox (/${DEMO_SCOPE_PATH}) reset and re-seeded (${summary}).`);
-    } catch (err: any) {
-      setDemoErrorMsg(err?.message || 'Failed to reset demo sandbox.');
-    } finally {
-      setDemoBusy(false);
-    }
-  };
-
-  const handleProvisionDemoAccount = async () => {
-    setDemoBusy(true);
-    setDemoStatusMsg(null);
-    setDemoErrorMsg(null);
-    try {
-      const res = await triggerProvisionDemoAdmin(demoSeedPassword.trim() || undefined);
-      setDemoSeedPassword('');
-      setDemoStatusMsg(
-        `Verified Demo Super Admin account (${res.email || DEMO_ADMIN_EMAIL}, uid: ${res.uid || 'synced'}) with isolated DEMO claims.`
-      );
-    } catch (err: any) {
-      setDemoErrorMsg(
-        err?.message ||
-          'Provisioning requires Cloud Functions (`provisionDemoSuperAdmin`) or Admin CLI script with DEMO_ADMIN_PASSWORD.'
-      );
-    } finally {
-      setDemoBusy(false);
     }
   };
 
@@ -696,87 +642,6 @@ export const SuperAdminSettingsPage: React.FC = () => {
             )}
           </div>
         </div>
-      </div>
-
-      {/* 6. Demo Super Admin Environment Control */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 text-xs">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
-          <div className="flex items-center gap-2">
-            <FlaskConical className="w-4 h-4 text-amber-700" />
-            <h3 className="text-sm font-extrabold text-slate-900">
-              Demo Super Admin Sandbox Control (/{DEMO_SCOPE_PATH})
-            </h3>
-          </div>
-          <span className="px-2.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-900 text-[10px] font-extrabold uppercase">
-            {isDemoAdmin ? 'DEMO SESSION' : 'PRODUCTION ADMIN'}
-          </span>
-        </div>
-
-        {isDemoAdmin ? (
-          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 space-y-1.5">
-            <p className="font-bold flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-amber-700" />
-              Isolated Demo Sandbox Active ({DEMO_ADMIN_EMAIL})
-            </p>
-            <p className="text-[11px] leading-relaxed">
-              Changes made here are demo-safe and written exclusively under <code className="font-mono">/{DEMO_SCOPE_PATH}/platform_settings/general</code>. Production tenant settings, billing, and global demo reset controls remain locked and restricted to Production Super Admins.
-            </p>
-          </div>
-        ) : isSuperAdmin ? (
-          <div className="space-y-4">
-            <p className="text-[11px] text-slate-600 leading-relaxed">
-              Provision or reset the isolated Demo Super Admin environment (<code className="font-mono font-bold">{DEMO_ADMIN_EMAIL}</code> under <code className="font-mono">/{DEMO_SCOPE_PATH}</code>) without affecting any production shops, orders, or users.
-            </p>
-
-            {demoStatusMsg && (
-              <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl text-xs font-medium">
-                {demoStatusMsg}
-              </div>
-            )}
-            {demoErrorMsg && (
-              <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium">
-                {demoErrorMsg}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Optional Password Override (leave blank to use Cloud Function DEMO_ADMIN_PASSWORD env)
-                </label>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={demoSeedPassword}
-                  onChange={(e) => setDemoSeedPassword(e.target.value)}
-                  placeholder="Optional runtime password for provisioning"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg"
-                />
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5">
-                <button
-                  type="button"
-                  disabled={demoBusy}
-                  onClick={handleProvisionDemoAccount}
-                  className="px-4 py-2 border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
-                >
-                  {demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-[#065F46]" />}
-                  Verify / Provision Demo Account
-                </button>
-                <button
-                  type="button"
-                  disabled={demoBusy}
-                  onClick={handleResetDemoSandbox}
-                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
-                >
-                  {demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
-                  Reset &amp; Re-Seed Demo Sandbox
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
       </div>
     </form>
   );

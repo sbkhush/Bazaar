@@ -39,14 +39,6 @@ import {
   validatePickupDateInWindow,
   getDefaultPickupSlots,
 } from './src/data/seedData';
-import {
-  DEMO_ACCOUNT_TYPE,
-  DEMO_ADMIN_EMAIL,
-  DEMO_DATA_TAG,
-  DEMO_ENV_ID,
-  DEMO_ENV_ROOT,
-} from './src/demo/demoConfig';
-import { buildDemoSeedDataset } from './src/demo/demoSeedGenerator';
 
 dotenv.config();
 setLogLevel('error');
@@ -123,8 +115,6 @@ interface VerifiedFirebaseUser {
   email: string;
   emailVerified: boolean;
   idToken: string;
-  claims: Record<string, any>;
-  isDemoAccount: boolean;
 }
 
 async function verifyFirebaseIdToken(bearerHeader?: string): Promise<VerifiedFirebaseUser | null> {
@@ -143,33 +133,15 @@ async function verifyFirebaseIdToken(bearerHeader?: string): Promise<VerifiedFir
     );
     if (!response.ok) return null;
     const data = (await response.json()) as {
-      users?: { localId?: string; email?: string; emailVerified?: boolean; customAttributes?: string }[];
+      users?: { localId?: string; email?: string; emailVerified?: boolean }[];
     };
     const user = data.users?.[0];
     if (!user?.localId) return null;
-
-    let claims: Record<string, any> = {};
-    if (user.customAttributes) {
-      try {
-        claims = JSON.parse(user.customAttributes) as Record<string, any>;
-      } catch {
-        claims = {};
-      }
-    }
-
-    const email = String(user.email || '').toLowerCase();
-    const isDemoAccount =
-      email === DEMO_ADMIN_EMAIL ||
-      claims.account_type === DEMO_ACCOUNT_TYPE ||
-      claims.demo_super_admin === true;
-
     return {
       uid: user.localId,
-      email,
+      email: String(user.email || '').toLowerCase(),
       emailVerified: Boolean(user.emailVerified),
       idToken,
-      claims,
-      isDemoAccount,
     };
   } catch {
     return null;
@@ -177,8 +149,6 @@ async function verifyFirebaseIdToken(bearerHeader?: string): Promise<VerifiedFir
 }
 
 async function isAuthorizedSuperAdmin(user: VerifiedFirebaseUser): Promise<boolean> {
-  // Non-negotiable security invariant: Demo Super Admin NEVER receives production Super Admin access
-  if (user.isDemoAccount) return false;
   if (user.email === SUPER_ADMIN_EMAIL && user.emailVerified) return true;
   const adminDoc = await restGetDoc(['platform_admins', user.uid], user.idToken).catch(() => null);
   if (adminDoc && adminDoc.active !== false) return true;
@@ -203,7 +173,6 @@ interface TrustedSalesMemberDoc {
 const ALLOWED_SERVER_SALES_ROLES = ['salesman', 'senior_salesman', 'sales_manager', 'referral_agent'];
 
 async function resolveTrustedSalesMember(user: VerifiedFirebaseUser): Promise<TrustedSalesMemberDoc | null> {
-  if (user.isDemoAccount) return null;
   const byUid = await restQueryWhereEqual<TrustedSalesMemberDoc>('salesMembers', 'uid', user.uid, user.idToken, {
     limitCount: 1,
   }).catch(() => []);
@@ -227,9 +196,6 @@ async function resolveTrustedServerRole(user: VerifiedFirebaseUser): Promise<{
   role: TrustedServerRole;
   salesMember: TrustedSalesMemberDoc | null;
 }> {
-  if (user.isDemoAccount) {
-    return { role: 'customer', salesMember: null };
-  }
   if (await isAuthorizedSuperAdmin(user)) {
     return { role: 'super_admin', salesMember: null };
   }
@@ -255,7 +221,6 @@ async function resolveTrustedServerRole(user: VerifiedFirebaseUser): Promise<{
 }
 
 async function isAuthorizedShopMember(user: VerifiedFirebaseUser, shopId: string): Promise<boolean> {
-  if (user.isDemoAccount) return false;
   if (await isAuthorizedSuperAdmin(user)) return true;
   const [shopDoc, staffDoc] = await Promise.all([
     restGetDoc(['shops', shopId], user.idToken).catch(() => null),
@@ -383,7 +348,7 @@ Format cleanly in markdown with:
 4. **Buying Recommendation & Value Verdict**`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
+        model: 'gemini-3.8-flash',
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
@@ -2658,9 +2623,6 @@ Format cleanly in markdown with:
     if (!verifiedUser) {
       return res.status(401).json({ error: 'Authentication required to register a shop.' });
     }
-    if (verifiedUser.isDemoAccount) {
-      return res.status(403).json({ error: 'Forbidden: Demo accounts cannot register production shops.' });
-    }
 
     try {
       const body = req.body || {};
@@ -3125,240 +3087,6 @@ Format cleanly in markdown with:
       return res.json({ ok: true, cnicStatus: 'verified', cnicMasked: masked });
     } catch (err: any) {
       return res.status(err?.status || 500).json({ error: err?.message || 'CNIC management failed.' });
-    }
-  });
-
-  // ====================================================
-  // SB KHUSH DEMO ENVIRONMENT STATUS & ADMIN-ONLY RESET
-  // ====================================================
-
-  app.get('/api/demo/status', async (req, res) => {
-    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
-    let seeded = false;
-    let seededAt: string | null = null;
-    if (verifiedUser) {
-      const marker = await restGetDoc<Record<string, any>>(
-        [DEMO_ENV_ROOT, DEMO_ENV_ID],
-        verifiedUser.idToken
-      ).catch(() => null);
-      if (marker) {
-        seeded = true;
-        seededAt = marker.seededAt || null;
-      }
-    }
-    return res.json({
-      ok: true,
-      demoEmail: DEMO_ADMIN_EMAIL,
-      accountType: DEMO_ACCOUNT_TYPE,
-      demoScope: `${DEMO_ENV_ROOT}/${DEMO_ENV_ID}`,
-      seeded,
-      seededAt,
-    });
-  });
-
-  // Strictly restricted to authorized PRODUCTION Super Admins (never Demo Admin)
-  app.post('/api/demo/reset', async (req, res) => {
-    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
-    if (!verifiedUser || !(await isAuthorizedSuperAdmin(verifiedUser))) {
-      return res.status(403).json({
-        error: 'Forbidden: Only authorized production Super Admins can reset the demo environment.',
-      });
-    }
-
-    try {
-      const topDemoCollections = [
-        'platform_plans',
-        'platform_settings',
-        'platform_payments',
-        'platform_activity_logs',
-        'support_tickets',
-        'shop_slugs',
-        'shops_public',
-        'salesSettings',
-        'salesReferralIndex',
-        'salesMembers',
-        'salesTeams',
-        'salesLeads',
-        'salesActivities',
-        'salesTargets',
-        'referralAttributions',
-        'commissionLedger',
-        'commissionPayouts',
-        'salesExpenses',
-        'salesBonusRecommendations',
-        'salesMaterials',
-        'salesNotifications',
-        'salesQrEvents',
-        'salesAuditLogs',
-        'cnic_registry',
-        'archived_shops',
-        'users',
-        'shop_invites',
-      ];
-
-      const deleteOps: Parameters<typeof restCommitWrites>[0] = [];
-      const existingDemoShops = await restListCollection<Record<string, any>>(
-        [DEMO_ENV_ROOT, DEMO_ENV_ID, 'shops'],
-        verifiedUser.idToken
-      ).catch(() => []);
-
-      const shopSubcollections = [
-        'products',
-        'categories',
-        'banners',
-        'settings',
-        'pages',
-        'coupons',
-        'carts',
-        'wishlists',
-        'pickup_slots',
-        'newsletter_subscribers',
-        'payment_receipts',
-        'suppliers',
-        'purchases',
-        'pos_sales',
-        'stock_movements',
-        'khata_ledger',
-        'expenses',
-        'orders',
-        'order_tracking',
-        'reviews',
-        'inventory_logs',
-        'contact_messages',
-        'customers',
-        'staff',
-        'notifications',
-        'activity_logs',
-      ];
-
-      for (const sDoc of existingDemoShops) {
-        for (const sub of shopSubcollections) {
-          const subDocs = await restListCollection<Record<string, any>>(
-            [DEMO_ENV_ROOT, DEMO_ENV_ID, 'shops', sDoc.id, sub],
-            verifiedUser.idToken
-          ).catch(() => []);
-          subDocs.forEach((sd) => {
-            deleteOps.push({
-              type: 'delete',
-              pathSegments: [DEMO_ENV_ROOT, DEMO_ENV_ID, 'shops', sDoc.id, sub, sd.id],
-            });
-          });
-        }
-        deleteOps.push({
-          type: 'delete',
-          pathSegments: [DEMO_ENV_ROOT, DEMO_ENV_ID, 'shops', sDoc.id],
-        });
-      }
-
-      for (const colName of topDemoCollections) {
-        const docs = await restListCollection<Record<string, any>>(
-          [DEMO_ENV_ROOT, DEMO_ENV_ID, colName],
-          verifiedUser.idToken
-        ).catch(() => []);
-        docs.forEach((d) => {
-          deleteOps.push({
-            type: 'delete',
-            pathSegments: [DEMO_ENV_ROOT, DEMO_ENV_ID, colName, d.id],
-          });
-        });
-      }
-
-      for (let i = 0; i < deleteOps.length; i += 200) {
-        await restCommitWrites(deleteOps.slice(i, i + 200), verifiedUser.idToken);
-      }
-
-      const dataset = buildDemoSeedDataset();
-      const writeOps: Parameters<typeof restCommitWrites>[0] = [];
-      const pushSet = (segments: string[], data: Record<string, any>) => {
-        writeOps.push({
-          type: 'set',
-          pathSegments: [DEMO_ENV_ROOT, DEMO_ENV_ID, ...segments],
-          data: stripUndefined(data),
-        });
-      };
-
-      writeOps.push({
-        type: 'set',
-        pathSegments: [DEMO_ENV_ROOT, DEMO_ENV_ID],
-        data: {
-          id: DEMO_ENV_ID,
-          accountType: DEMO_ACCOUNT_TYPE,
-          demoTag: DEMO_DATA_TAG,
-          seededAt: dataset.generatedAt,
-          shopCount: dataset.shopBundles.length,
-          productCount: dataset.shopBundles.reduce((s, b) => s + b.products.length, 0),
-          customerCount: dataset.shopBundles.reduce((s, b) => s + b.customers.length, 0),
-          orderCount: dataset.shopBundles.reduce((s, b) => s + b.orders.length, 0),
-          salesMemberCount: dataset.salesMembers.length,
-          referralAgentCount: dataset.referralAgents.length,
-        },
-      });
-
-      dataset.plans.forEach((p) => pushSet(['platform_plans', p.id], p));
-      pushSet(['platform_settings', 'general'], dataset.platformSettings);
-      pushSet(['salesSettings', 'general'], dataset.salesSettings);
-      dataset.salesMembers.forEach((m) => pushSet(['salesMembers', m.id], m));
-      dataset.referralAgents.forEach((a) => pushSet(['salesMembers', a.id], a));
-      dataset.salesReferralIndex.forEach((idx) => pushSet(['salesReferralIndex', idx.referralCode], idx));
-      dataset.salesTeams.forEach((t) => pushSet(['salesTeams', t.id], t));
-      dataset.salesLeads.forEach((l) => pushSet(['salesLeads', l.id], l));
-      dataset.salesTargets.forEach((t) => pushSet(['salesTargets', t.id], t));
-      dataset.salesActivities.forEach((a) => pushSet(['salesActivities', a.id], a));
-      dataset.salesQrEvents.forEach((q) => pushSet(['salesQrEvents', q.id], q));
-      dataset.salesAuditLogs.forEach((l) => pushSet(['salesAuditLogs', l.id], l));
-      dataset.referralAttributions.forEach((a) => pushSet(['referralAttributions', a.id], a));
-      dataset.payments.forEach((p) => pushSet(['platform_payments', p.id], p));
-      dataset.commissionLedger.forEach((c) => pushSet(['commissionLedger', c.id], c));
-      dataset.commissionPayouts.forEach((p) => pushSet(['commissionPayouts', p.id], p));
-      dataset.supportTickets.forEach((t) => pushSet(['support_tickets', t.id], t));
-      dataset.activityLogs.forEach((l) => pushSet(['platform_activity_logs', l.id], l));
-
-      dataset.shopBundles.forEach((bundle) => {
-        const sid = bundle.shop.id;
-        pushSet(['shops', sid], bundle.shop);
-        pushSet(['shops_public', sid], bundle.shopPublic);
-        pushSet(['shop_slugs', bundle.shop.slug], {
-          slug: bundle.shop.slug,
-          shopId: sid,
-          ownerId: bundle.shop.ownerId,
-          name: bundle.shop.name,
-          createdAt: bundle.shop.createdAt,
-        });
-        pushSet(['shops', sid, 'settings', 'public'], bundle.publicSettings);
-        bundle.categories.forEach((c) => pushSet(['shops', sid, 'categories', c.id], c));
-        bundle.products.forEach((p) => pushSet(['shops', sid, 'products', p.id], p));
-        bundle.customers.forEach((c) => pushSet(['shops', sid, 'customers', c.id], c));
-        bundle.orders.forEach((o) => pushSet(['shops', sid, 'orders', o.id], o));
-      });
-
-      for (let i = 0; i < writeOps.length; i += 200) {
-        await restCommitWrites(writeOps.slice(i, i + 200), verifiedUser.idToken);
-      }
-
-      const nowIso = new Date().toISOString();
-      const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
-      await restSetDoc(
-        ['platform_activity_logs', logId],
-        {
-          id: logId,
-          actorId: verifiedUser.uid,
-          actorEmail: verifiedUser.email,
-          action: 'Reset Demo Environment',
-          targetType: 'settings',
-          targetId: 'demo_env/default',
-          details: `Reset isolated demo sandbox via API (${writeOps.length} documents seeded)`,
-          createdAt: nowIso,
-        },
-        verifiedUser.idToken
-      ).catch(() => {});
-
-      return res.json({
-        ok: true,
-        writtenDocs: writeOps.length,
-        resetAt: nowIso,
-      });
-    } catch (err: any) {
-      return res.status(err?.status || 500).json({ error: err?.message || 'Failed to reset demo environment.' });
     }
   });
 
