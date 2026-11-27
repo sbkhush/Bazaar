@@ -39,6 +39,7 @@ export const ShopInventoryPage: React.FC = () => {
   const loadData = async () => {
     if (!shopId) return;
     setLoading(true);
+    setActionError(null);
     try {
       const [prods, mvs] = await Promise.all([
         getShopProductsAdmin(shopId),
@@ -46,6 +47,8 @@ export const ShopInventoryPage: React.FC = () => {
       ]);
       setProducts(prods);
       setMovements(mvs);
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not load inventory ledger.');
     } finally {
       setLoading(false);
     }

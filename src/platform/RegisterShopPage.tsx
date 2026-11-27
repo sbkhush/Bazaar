@@ -165,8 +165,9 @@ export const RegisterShopPage: React.FC = () => {
       setError('Please enter a valid Pakistani mobile number (e.g. 03001234567).');
       return;
     }
-    if (!isValidCnic(cnic)) {
-      setError('Please enter a valid 13-digit Pakistani CNIC number (e.g. 35202-1234567-1).');
+    const cnicValidation = isValidCnic(cnic);
+    if (!cnicValidation.valid) {
+      setError(cnicValidation.error || 'Please enter a valid 13-digit Pakistani CNIC number (e.g. 35202-1234567-1).');
       return;
     }
     if (!city.trim()) {

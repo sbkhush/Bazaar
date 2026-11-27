@@ -26,6 +26,7 @@ export const PWAStatusBanner: React.FC = () => {
     const onOnline = () => setIsOffline(false);
     const onOffline = () => setIsOffline(true);
     const onBeforeInstall = (e: Event) => {
+      if (dismissed) return;
       e.preventDefault();
       setInstallPrompt(e as BeforeInstallPromptEvent);
     };
@@ -44,7 +45,7 @@ export const PWAStatusBanner: React.FC = () => {
       window.removeEventListener('beforeinstallprompt', onBeforeInstall);
       window.removeEventListener('appinstalled', onAppInstalled);
     };
-  }, []);
+  }, [dismissed]);
 
   const handleInstall = async () => {
     if (!installPrompt) return;

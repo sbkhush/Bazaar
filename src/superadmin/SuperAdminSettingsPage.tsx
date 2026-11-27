@@ -6,18 +6,25 @@ import {
   CheckCircle2,
   AlertCircle,
   Globe,
+  ExternalLink,
   Activity,
   RefreshCw,
   HardDrive,
-  ExternalLink,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
-import { getPlatformSettingsStrict, updatePlatformSettings } from '../services/platformService';
+import {
+  getPlatformSettingsStrict,
+  updatePlatformSettings,
+  triggerPurgeAllPlatformData,
+} from '../services/platformService';
 import { checkStorageHealth, StorageHealthReport } from '../services/storageService';
 import { PlatformSettings } from '../types';
 import { DEFAULT_PLATFORM_SETTINGS } from '../data/seedData';
 import { ImageUploader } from '../components/common/ImageUploader';
 import { SOCIAL_PLATFORM_META, getConfiguredSocialLinks } from '../utils/socialLinks';
 import { apiFetch, isExternalApiConfigured } from '../utils/apiClient';
+import { useAuth } from '../context/AuthContext';
 import {
   BRAND,
   DEFAULT_PLATFORM_PRIVACY_POLICY,
@@ -36,6 +43,7 @@ interface ApiHealthReport {
 }
 
 export const SuperAdminSettingsPage: React.FC = () => {
+  const { isSuperAdmin } = useAuth();
   const [settings, setSettings] = useState<PlatformSettings>(DEFAULT_PLATFORM_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -45,6 +53,11 @@ export const SuperAdminSettingsPage: React.FC = () => {
   const [diagLoading, setDiagLoading] = useState(false);
   const [storageHealth, setStorageHealth] = useState<StorageHealthReport | null>(null);
   const [apiHealth, setApiHealth] = useState<ApiHealthReport | null>(null);
+  const [purgeConfirmText, setPurgeConfirmText] = useState('');
+  const [purgeBusy, setPurgeBusy] = useState(false);
+  const [purgeCounts, setPurgeCounts] = useState<Record<string, number> | null>(null);
+  const [purgeStatusMsg, setPurgeStatusMsg] = useState<string | null>(null);
+  const [purgeErrorMsg, setPurgeErrorMsg] = useState<string | null>(null);
 
   const runDiagnostics = async () => {
     setDiagLoading(true);
@@ -115,6 +128,30 @@ export const SuperAdminSettingsPage: React.FC = () => {
       setErrorBanner(err?.message || 'Failed to save platform settings.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePurgeAllData = async () => {
+    if (!isSuperAdmin || purgeConfirmText !== 'PURGE ALL DATA') return;
+    setPurgeBusy(true);
+    setPurgeStatusMsg(null);
+    setPurgeErrorMsg(null);
+    setPurgeCounts(null);
+    try {
+      const res = await triggerPurgeAllPlatformData(purgeConfirmText);
+      setPurgeConfirmText('');
+      setPurgeCounts(res.deletedCounts || {});
+      const totalDeleted = Object.values(res.deletedCounts || {}).reduce((sum, n) => sum + Number(n || 0), 0);
+      setPurgeStatusMsg(
+        `Platform wipe completed cleanly (${totalDeleted} records removed). Platform config, plans, and Super Admin account remain preserved.`
+      );
+    } catch (err: any) {
+      setPurgeErrorMsg(
+        err?.message ||
+          'Complete platform purge requires Cloud Functions (purgeAllPlatformDataAdmin) or the authenticated Express API.'
+      );
+    } finally {
+      setPurgeBusy(false);
     }
   };
 
@@ -643,6 +680,91 @@ export const SuperAdminSettingsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* 6. Danger Zone: Purge All Platform & Demo Data (Production Super Admin Only) */}
+      {isSuperAdmin && (
+        <div className="bg-white border border-red-200 rounded-2xl p-6 space-y-4 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-red-100 pb-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600" />
+              <h3 className="text-sm font-extrabold text-red-800">
+                Danger Zone: Purge All Platform &amp; Demo Data
+              </h3>
+            </div>
+            <span className="px-2.5 py-0.5 rounded bg-red-50 border border-red-200 text-red-800 text-[10px] font-extrabold uppercase">
+              PRODUCTION SUPER ADMIN ONLY
+            </span>
+          </div>
+
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            Permanently deletes all demo leftovers (<code className="font-mono">demo_env/default</code>,{' '}
+            <code className="font-mono">demo_admins</code>, <code className="font-mono">demo-admin@sbkhush.com</code>), all registered shops &amp; subcollections (products, orders, POS sales, Khata, customers, staff, receipts), all sales team, referral, commission, payout, lead, QR, payment proof, support ticket, activity log, CNIC registry, legacy collections, non-admin users, and Storage assets.
+          </p>
+
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700">
+            <strong>Preserved safely:</strong> <code className="font-mono">platform_admins</code>,{' '}
+            <code className="font-mono">platform_plans</code>, <code className="font-mono">platform_settings</code>, and your Super Admin account.
+          </div>
+
+          {purgeStatusMsg && (
+            <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl text-xs space-y-2">
+              <p className="font-bold">{purgeStatusMsg}</p>
+              {purgeCounts && Object.keys(purgeCounts).length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                  {Object.entries(purgeCounts)
+                    .filter(([, v]) => v > 0)
+                    .map(([k, v]) => (
+                      <div key={k} className="bg-white/80 border border-emerald-200 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2">
+                        <span className="font-mono text-[10px] text-slate-600 truncate">{k}</span>
+                        <span className="font-extrabold text-emerald-900 tabular-nums">{v}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-[11px] font-bold"
+              >
+                Reload Dashboard
+              </button>
+            </div>
+          )}
+
+          {purgeErrorMsg && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium">
+              {purgeErrorMsg}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">
+                Type <code className="font-mono font-bold text-red-700">PURGE ALL DATA</code> to confirm irreversible deletion
+              </label>
+              <input
+                type="text"
+                value={purgeConfirmText}
+                onChange={(e) => setPurgeConfirmText(e.target.value)}
+                placeholder="PURGE ALL DATA"
+                className="w-full px-3 py-2 border border-red-200 rounded-lg font-mono text-xs focus:ring-2 focus:ring-red-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                disabled={purgeBusy || purgeConfirmText !== 'PURGE ALL DATA'}
+                onClick={handlePurgeAllData}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition"
+              >
+                {purgeBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                {purgeBusy ? 'Purging All Platform Data...' : 'Purge All Platform & Demo Data'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </form>
   );
 };

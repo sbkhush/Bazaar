@@ -960,7 +960,13 @@ export async function updateSelfPickupStatus(
         nextStatus === 'Cancelled' && existing.pickupSlotKey
           ? doc(db, 'shops', shopId, 'pickup_slots', existing.pickupSlotKey)
           : null;
-      const slotSnap = slotRef ? await tx.get(slotRef) : null;
+      const trackRef = existing.trackingTokenHash
+        ? doc(db, 'shops', shopId, 'order_tracking', `trk_${existing.trackingTokenHash.slice(0, 32)}`)
+        : null;
+      const [slotSnap, trackSnap] = await Promise.all([
+        slotRef ? tx.get(slotRef) : Promise.resolve(null),
+        trackRef ? tx.get(trackRef) : Promise.resolve(null),
+      ]);
 
       const nextPickupStatus = derivePickupStatusFromOrderStatus(nextStatus);
       const historyEntry: PickupHistoryEntry = {
@@ -1002,9 +1008,8 @@ export async function updateSelfPickupStatus(
         });
       }
 
-      if (existing.trackingTokenHash) {
-        const trackDocId = `trk_${existing.trackingTokenHash.slice(0, 32)}`;
-        tx.update(doc(db, 'shops', shopId, 'order_tracking', trackDocId), {
+      if (trackRef && trackSnap?.exists()) {
+        tx.update(trackRef, {
           orderStatus: nextStatus,
           updatedAt: now,
         });
@@ -1170,6 +1175,11 @@ export async function verifyAndCollectSelfPickupOrder(params: {
         newStock: number;
       }[] = [];
 
+      const trackRef = order.trackingTokenHash
+        ? doc(db, 'shops', shopId, 'order_tracking', `trk_${order.trackingTokenHash.slice(0, 32)}`)
+        : null;
+      const trackSnap = trackRef ? await tx.get(trackRef) : null;
+
       if (shouldDeductStock) {
         const qtyByProduct = new Map<string, number>();
         for (const item of order.items || []) {
@@ -1276,9 +1286,8 @@ export async function verifyAndCollectSelfPickupOrder(params: {
         updatedAt: nowIso,
       }));
 
-      if (order.trackingTokenHash) {
-        const trackDocId = `trk_${order.trackingTokenHash.slice(0, 32)}`;
-        tx.update(doc(db, 'shops', shopId, 'order_tracking', trackDocId), {
+      if (trackRef && trackSnap?.exists()) {
+        tx.update(trackRef, {
           orderStatus: 'Collected',
           paymentStatus: nextPaymentStatus,
           updatedAt: nowIso,
@@ -2059,7 +2068,11 @@ export async function getShopContactMessages(shopId: string): Promise<ContactMes
 }
 
 export async function updateShopContactMessageStatus(shopId: string, msgId: string, status: 'new' | 'resolved'): Promise<void> {
-  await updateDoc(doc(db, 'shops', shopId, 'contact_messages', msgId), { status });
+  try {
+    await updateDoc(doc(db, 'shops', shopId, 'contact_messages', msgId), { status });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `shops/${shopId}/contact_messages/${msgId}`);
+  }
 }
 
 export async function subscribeToShopNewsletter(

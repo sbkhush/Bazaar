@@ -5,11 +5,9 @@ import {
   BarChart3,
   Check,
   ChevronDown,
-  ExternalLink,
   Layers,
   Lock,
   Monitor,
-  Package,
   Receipt,
   ShieldCheck,
   ShoppingBag,
@@ -29,7 +27,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { PlatformSettings, ShopPublic, SubscriptionPlan } from '../../types';
-import { DEFAULT_SHOP_ID, formatPKR } from '../../data/seedData';
+import { formatPKR } from '../../data/seedData';
 import { BRAND } from '../../config/brand';
 import { BrandLogo } from '../../components/common/BrandLogo';
 import { SafeImage } from '../../components/common/SafeImage';
@@ -132,12 +130,6 @@ const DASHBOARD_TABS = [
   },
 ];
 
-const SAMPLE_STORE_ITEMS = [
-  { id: 's1', name: 'Super Kernel Basmati 5KG', category: 'Staples', price: 1950 },
-  { id: 's2', name: 'Cold Pressed Olive Oil 500ml', category: 'Pantry', price: 1450 },
-  { id: 's3', name: 'Stitched Cotton Kurta Set', category: 'Apparel', price: 3600 },
-];
-
 const WHY_POINTS = [
   {
     icon: Zap,
@@ -213,24 +205,12 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
 }) => {
   const prefersReducedMotion = useReducedMotion();
   const [activeTabId, setActiveTabId] = useState<'overview' | 'inventory' | 'profit'>('overview');
-  const [sampleCartIds, setSampleCartIds] = useState<string[]>(['s1']);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [openFaqIdx, setOpenFaqIdx] = useState<number | null>(0);
   const platformName = (platformSettings?.platformName || BRAND.name).trim();
   const platformSocials = getConfiguredSocialLinks(platformSettings?.socialLinks);
 
   const activeTab = DASHBOARD_TABS.find((t) => t.id === activeTabId) || DASHBOARD_TABS[0];
-
-  const toggleSampleCart = (id: string) => {
-    setSampleCartIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
-  };
-
-  const sampleCartTotal = SAMPLE_STORE_ITEMS.filter((i) => sampleCartIds.includes(i.id)).reduce(
-    (sum, i) => sum + i.price,
-    0
-  );
 
   return (
     <>
@@ -352,10 +332,10 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                   </div>
                   <div className="min-w-0">
                     <p className="text-xs font-bold text-white truncate">
-                      Shop Admin Workspace · Sample Retail Store
+                      Shop Admin Workspace · Cloud Console
                     </p>
                     <p className="text-[11px] text-slate-400 truncate">
-                      Illustrative Capability Preview — {activeTab.label}
+                      Architecture View — {activeTab.label}
                     </p>
                   </div>
                 </div>
@@ -436,8 +416,8 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
 
                     <div className="lg:col-span-5 rounded-xl border border-white/10 bg-white/[0.03] p-4 sm:p-5 space-y-3.5">
                       <div className="flex items-center justify-between">
-                        <p className="text-xs font-bold text-white">Recent Activity</p>
-                        <span className="text-[10px] font-medium text-slate-400">Sample Feed</span>
+                        <p className="text-xs font-bold text-white">Workflow Modules</p>
+                        <span className="text-[10px] font-medium text-slate-400">Cloud Sync</span>
                       </div>
 
                       <div className="space-y-2.5">
@@ -511,22 +491,22 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
 
               <div className="flex flex-wrap items-center gap-3 pt-2">
                 <Link
-                  to={`/s/${DEFAULT_SHOP_ID}`}
+                  to="/register"
                   className="px-5 py-3 rounded-xl bg-slate-950 hover:bg-indigo-600 text-white text-xs sm:text-sm font-bold transition flex items-center gap-2"
                 >
-                  Visit Flagship Store
-                  <ExternalLink className="w-4 h-4" />
+                  Create Your Store
+                  <ArrowRight className="w-4 h-4" />
                 </Link>
-                <Link
-                  to="/register"
+                <a
+                  href="#stores"
                   className="px-5 py-3 rounded-xl border border-slate-300 hover:border-indigo-400 text-slate-800 text-xs sm:text-sm font-semibold transition"
                 >
-                  Create Your Store
-                </Link>
+                  Browse Live Stores
+                </a>
               </div>
             </motion.div>
 
-            {/* Interactive Desktop + Mobile Storefront Preview */}
+            {/* Interactive Desktop + Mobile Storefront Architecture Preview */}
             <motion.div
               initial={prefersReducedMotion ? false : { opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
@@ -544,7 +524,7 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs font-extrabold text-slate-900 truncate">
-                          Sample General Store (Interactive Preview)
+                          Your Branded Online Storefront
                         </p>
                         <p className="text-[10px] font-mono text-slate-500 truncate">
                           /s/your-store
@@ -553,59 +533,52 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                     </div>
                     <div className="flex items-center gap-2 rounded-lg bg-indigo-50 border border-indigo-100 px-2.5 py-1.5 text-xs font-bold text-indigo-700 shrink-0">
                       <ShoppingBag className="w-3.5 h-3.5" />
-                      <span className="tabular-nums">{sampleCartIds.length}</span>
+                      <span>Mobile Cart</span>
                     </div>
                   </div>
 
-                  {/* Sample Product Cards inside Storefront Mockup */}
+                  {/* Clean Storefront Architecture Cards */}
                   <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    {SAMPLE_STORE_ITEMS.map((item) => {
-                      const inCart = sampleCartIds.includes(item.id);
-                      return (
-                        <div
-                          key={item.id}
-                          className="rounded-xl border border-slate-200 p-3 flex flex-col justify-between gap-3 bg-white"
-                        >
-                          <div className="space-y-1.5">
-                            <div className="h-16 rounded-lg bg-gradient-to-br from-indigo-50 via-slate-100 to-violet-50 flex items-center justify-center text-indigo-500">
-                              <Package className="w-6 h-6" />
-                            </div>
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                              {item.category}
-                            </p>
-                            <p className="text-xs font-bold text-slate-900 leading-snug">
-                              {item.name}
-                            </p>
-                          </div>
-
-                          <div className="space-y-2">
-                            <p className="text-sm font-extrabold text-slate-950 tabular-nums">
-                              {formatPKR(item.price)}
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => toggleSampleCart(item.id)}
-                              className={`w-full py-2 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                                inCart
-                                  ? 'bg-emerald-600 text-white'
-                                  : 'bg-slate-900 hover:bg-indigo-600 text-white'
-                              }`}
-                            >
-                              {inCart ? 'Added to Cart ✓' : 'Add to Cart'}
-                            </button>
-                          </div>
+                    {[
+                      {
+                        tag: 'Catalog & Units',
+                        title: 'Categories, SKUs & Variants',
+                        detail: 'Publish real products with multi-unit pricing, stock alerts, and hero banners.',
+                      },
+                      {
+                        tag: 'Fulfillment',
+                        title: 'Home Delivery & Self-Pickup',
+                        detail: 'Configure city courier fees, pickup time slots, and 6-digit QR counter passes.',
+                      },
+                      {
+                        tag: 'Payments',
+                        title: 'COD, EasyPaisa, JazzCash & IBFT',
+                        detail: 'Accept cash on delivery or verify digital payment receipt proofs per order.',
+                      },
+                    ].map((card) => (
+                      <div
+                        key={card.title}
+                        className="rounded-xl border border-slate-200 p-3.5 flex flex-col justify-between gap-2.5 bg-white"
+                      >
+                        <div className="space-y-1.5">
+                          <span className="inline-block text-[10px] font-bold uppercase tracking-wider text-indigo-600">
+                            {card.tag}
+                          </span>
+                          <p className="text-xs font-extrabold text-slate-900 leading-snug">
+                            {card.title}
+                          </p>
+                          <p className="text-[11px] text-slate-600 leading-relaxed">
+                            {card.detail}
+                          </p>
                         </div>
-                      );
-                    })}
+                      </div>
+                    ))}
                   </div>
 
-                  {/* Interactive Cart Drawer Bar */}
+                  {/* Checkout Workflow Footer Bar */}
                   <div className="px-4 py-3 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3 text-xs">
                     <span className="text-slate-300">
-                      Sample Cart Total:{' '}
-                      <strong className="text-white tabular-nums">
-                        {formatPKR(sampleCartTotal)}
-                      </strong>
+                      Isolated Tenant URL &amp; Non-PII Guest Tracking
                     </span>
                     <span className="text-cyan-300 font-semibold">
                       Checkout: COD · EasyPaisa · Self-Pickup
@@ -624,28 +597,30 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                   Live Storefronts Powered by {platformName}
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-500">
-                  Explore active stores running live on this multi-tenant platform.
+                  Active merchant stores currently published on this platform.
                 </p>
               </div>
               <Link
-                to={`/s/${DEFAULT_SHOP_ID}`}
+                to="/register"
                 className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
               >
-                Open Flagship Store <ExternalLink className="w-3.5 h-3.5" />
+                Launch Your Store <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {!shops.some((s) => s.slug === DEFAULT_SHOP_ID) && (
+              {shops.length === 0 && (
                 <Link
-                  to={`/s/${DEFAULT_SHOP_ID}`}
-                  className="p-4 rounded-xl border border-slate-200 hover:border-indigo-400 bg-slate-50 hover:bg-white transition flex items-center justify-between gap-3"
+                  to="/register"
+                  className="p-4 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 bg-slate-50 hover:bg-white transition flex items-center justify-between gap-3 sm:col-span-2 lg:col-span-3"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <BrandLogo variant="icon" size="md" />
+                    <div className="w-10 h-10 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                      <Store className="w-5 h-5" />
+                    </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-900 truncate">{platformName} Flagship</p>
-                      <p className="text-xs text-slate-500 truncate">/s/{DEFAULT_SHOP_ID} · Karachi</p>
+                      <p className="text-sm font-bold text-slate-900 truncate">No active stores published yet</p>
+                      <p className="text-xs text-slate-500 truncate">Register the first store on {platformName} to go live here.</p>
                     </div>
                   </div>
                   <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
@@ -1019,13 +994,13 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
               Start Free
               <ArrowRight className="w-4 h-4" />
             </Link>
-            <Link
-              to={`/s/${DEFAULT_SHOP_ID}`}
+            <a
+              href="#stores"
               className="px-6 py-3.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white text-sm font-semibold transition flex items-center gap-1.5"
             >
               <Store className="w-4 h-4 text-cyan-300" />
-              Explore Flagship Store
-            </Link>
+              Browse Live Stores
+            </a>
           </div>
         </div>
       </section>
@@ -1134,9 +1109,9 @@ export const ShowcaseAndPricingSection: React.FC<ShowcaseAndPricingSectionProps>
                   </Link>
                 </li>
                 <li>
-                  <Link to={`/s/${DEFAULT_SHOP_ID}`} className="hover:text-white transition">
-                    Flagship Storefront
-                  </Link>
+                  <a href="#stores" className="hover:text-white transition">
+                    Live Storefronts
+                  </a>
                 </li>
                 {platformSettings?.websiteUrl && (
                   <li>

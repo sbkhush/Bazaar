@@ -27,6 +27,7 @@ export const ShopKhataPage: React.FC = () => {
   const loadData = async (custId?: string) => {
     if (!shopId) return;
     setLoading(true);
+    setActionError(null);
     try {
       const [custs, kht] = await Promise.all([
         getShopCustomersWithKhata(shopId),
@@ -38,6 +39,8 @@ export const ShopKhataPage: React.FC = () => {
         const withBal = custs.find((c) => (c.outstandingBalance || 0) > 0) || custs[0];
         setSelectedCustomerId(withBal.id);
       }
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not load Khata ledger.');
     } finally {
       setLoading(false);
     }
@@ -49,7 +52,9 @@ export const ShopKhataPage: React.FC = () => {
 
   useEffect(() => {
     if (shopId && selectedCustomerId) {
-      getShopKhataEntries(shopId, selectedCustomerId).then(setEntries);
+      getShopKhataEntries(shopId, selectedCustomerId)
+        .then(setEntries)
+        .catch((err: any) => setActionError(err?.message || 'Could not load customer Khata entries.'));
     }
   }, [shopId, selectedCustomerId]);
 

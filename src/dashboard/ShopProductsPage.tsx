@@ -53,6 +53,7 @@ export const ShopProductsPage: React.FC = () => {
   const loadCatalog = async () => {
     if (!shopId) return;
     setLoading(true);
+    setError(null);
     try {
       const [prods, cats] = await Promise.all([
         getShopProductsAdmin(shopId),
@@ -60,6 +61,8 @@ export const ShopProductsPage: React.FC = () => {
       ]);
       setProducts(prods);
       setCategories(cats);
+    } catch (err: any) {
+      setError(err?.message || 'Could not load store catalog.');
     } finally {
       setLoading(false);
     }

@@ -246,7 +246,11 @@ export const ShopProfilePage: React.FC = () => {
                     {!isReadOnly && m.status !== 'resolved' && (
                       <button
                         type="button"
-                        onClick={() => updateShopContactMessageStatus(shopId, m.id, 'resolved').then(loadData)}
+                        onClick={() =>
+                          updateShopContactMessageStatus(shopId, m.id, 'resolved')
+                            .then(loadData)
+                            .catch((err: any) => setErrorMsg(err?.message || 'Could not update inquiry status.'))
+                        }
                         className="text-[11px] font-bold text-[#065F46] hover:underline flex items-center gap-1 pt-1"
                       >
                         <CheckCircle2 className="w-3 h-3" /> Mark Resolved

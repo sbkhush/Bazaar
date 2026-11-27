@@ -54,6 +54,82 @@ const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp
 const ALLOWED_IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
 
+export type VerifiedImageMime = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+
+export function normalizeImageMime(mime?: string | null): VerifiedImageMime | '' {
+  const clean = String(mime || '').toLowerCase().trim();
+  if (clean === 'image/jpg' || clean === 'image/jpeg') return 'image/jpeg';
+  if (clean === 'image/png') return 'image/png';
+  if (clean === 'image/webp') return 'image/webp';
+  if (clean === 'image/gif') return 'image/gif';
+  return '';
+}
+
+export async function detectImageMimeFromMagicBytes(file: Blob): Promise<VerifiedImageMime | null> {
+  try {
+    const headerBlob = typeof file.slice === 'function' ? file.slice(0, 12) : file;
+    const buffer =
+      typeof headerBlob.arrayBuffer === 'function'
+        ? await headerBlob.arrayBuffer()
+        : null;
+    if (!buffer || buffer.byteLength < 4) return null;
+
+    const bytes = new Uint8Array(buffer);
+    // JPEG: FF D8 FF
+    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+      return 'image/jpeg';
+    }
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (
+      bytes.length >= 8 &&
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47 &&
+      bytes[4] === 0x0d &&
+      bytes[5] === 0x0a &&
+      bytes[6] === 0x1a &&
+      bytes[7] === 0x0a
+    ) {
+      return 'image/png';
+    }
+    // GIF: 47 49 46 38 (GIF8)
+    if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
+      return 'image/gif';
+    }
+    // WebP: RIFF....WEBP
+    if (
+      bytes.length >= 12 &&
+      bytes[0] === 0x52 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x46 &&
+      bytes[3] === 0x46 &&
+      bytes[8] === 0x57 &&
+      bytes[9] === 0x45 &&
+      bytes[10] === 0x42 &&
+      bytes[11] === 0x50
+    ) {
+      return 'image/webp';
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveUploadContentType(
+  processedBlob: Blob,
+  sourceFile: File,
+  detectedMime?: VerifiedImageMime | null
+): VerifiedImageMime {
+  return (
+    normalizeImageMime(processedBlob.type) ||
+    detectedMime ||
+    normalizeImageMime(sourceFile.type) ||
+    'image/jpeg'
+  );
+}
+
 export function validateImageFile(file: File): void {
   const mime = String(file.type || '').toLowerCase().trim();
   const ext = String(file.name || '').toLowerCase().split('.').pop() || '';
@@ -70,6 +146,17 @@ export function validateImageFile(file: File): void {
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new Error('Image size exceeds 5 MB limit. Please pick a smaller image.');
   }
+}
+
+export async function validateImageFileWithMagicBytes(file: File): Promise<VerifiedImageMime> {
+  validateImageFile(file);
+  const magicMime = await detectImageMimeFromMagicBytes(file);
+  if (!magicMime) {
+    throw new Error(
+      'File contents do not match a valid JPG, PNG, WebP, or GIF image signature.'
+    );
+  }
+  return magicMime;
 }
 
 export function calculateNextStorageBytes(currentBytes: number, deltaBytes: number): number {
@@ -214,6 +301,15 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Failed to encode image stream.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 function sanitizeFileName(name: string): string {
   return (
     name
@@ -222,6 +318,68 @@ function sanitizeFileName(name: string): string {
       .replace(/^-+|-+$/g, '')
       .slice(0, 60) || 'image'
   );
+}
+
+let storageBucketReachable: boolean | null = null;
+
+export function isStorageFallbackTrigger(err: any): boolean {
+  const code = String(err?.code || '').toLowerCase();
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    code === 'storage/bucket-not-found' ||
+    code === 'storage/unauthorized' ||
+    code === 'storage/unauthenticated' ||
+    code === 'storage/unknown' ||
+    code === 'storage/retry-limit-exceeded' ||
+    code === 'storage/canceled' ||
+    /network|cors|fetch|timeout|unknown|preflight|failed|bucket|appcheck/i.test(msg)
+  );
+}
+
+async function isStorageLikelyReachable(): Promise<boolean> {
+  if (storageBucketReachable !== null) return storageBucketReachable;
+  const report = await checkStorageHealth();
+  return report.status === 'healthy' || report.status === 'permission_denied';
+}
+
+async function compressFileToFallbackDataUrl(
+  file: File,
+  detectedMime: VerifiedImageMime,
+  initialMaxDimension = 960,
+  maxBytes = 210 * 1024
+): Promise<{ dataUrl: string; compressedBytes: number; originalBytes: number; savedPercent: number }> {
+  const attempts: Array<{ dim: number; quality: number }> = [
+    { dim: initialMaxDimension, quality: 0.78 },
+    { dim: Math.min(initialMaxDimension, 800), quality: 0.68 },
+    { dim: Math.min(initialMaxDimension, 640), quality: 0.56 },
+    { dim: 480, quality: 0.45 },
+  ];
+
+  let lastResult = await compressImageToBlob(file, initialMaxDimension, 0.78);
+  for (const attempt of attempts) {
+    const res = await compressImageToBlob(file, attempt.dim, attempt.quality);
+    lastResult = res;
+    if (res.blob.size <= maxBytes) {
+      break;
+    }
+  }
+
+  if (lastResult.blob.size > maxBytes * 1.45) {
+    throw new Error(
+      'Image is too large for inline fallback storage. Please upload a smaller image or enable Firebase Storage CORS.'
+    );
+  }
+
+  const contentType = resolveUploadContentType(lastResult.blob, file, detectedMime);
+  const typedBlob =
+    lastResult.blob.type === contentType ? lastResult.blob : new Blob([lastResult.blob], { type: contentType });
+  const dataUrl = await blobToDataUrl(typedBlob);
+  return {
+    dataUrl,
+    compressedBytes: lastResult.compressedBytes,
+    originalBytes: lastResult.originalBytes,
+    savedPercent: lastResult.savedPercent,
+  };
 }
 
 async function runResumableStorageUpload(
@@ -259,12 +417,13 @@ export async function uploadShopImage(
   file: File,
   options: UploadProgressOptions
 ): Promise<UploadedImageResult> {
-  validateImageFile(file);
+  const detectedMime = await validateImageFileWithMagicBytes(file);
 
   const { shopId, folder, subPath, onProgress, maxDimension = 1400 } = options;
 
   const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
     await compressImageToBlob(file, maxDimension);
+  const uploadContentType = resolveUploadContentType(processedBlob, file, detectedMime);
 
   if (processedBlob.size > MAX_UPLOAD_BYTES) {
     throw new Error('Processed image still exceeds 5 MB limit.');
@@ -297,16 +456,17 @@ export async function uploadShopImage(
   const baseName = sanitizeFileName(file.name.replace(/\.[^.]+$/, ''));
   const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${baseName}.${ext}`;
 
-  let storagePath: string;
+  let rawStoragePath: string;
   if (folder === 'payments') {
     const sessionSegment = subPath || `sess_${Date.now()}`;
-    storagePath = `shops/${shopId}/payments/${sessionSegment}/${fileName}`;
+    rawStoragePath = `shops/${shopId}/payments/${sessionSegment}/${fileName}`;
   } else {
     const pathSegments = ['shops', shopId, folder];
     if (subPath) pathSegments.push(subPath);
     pathSegments.push(fileName);
-    storagePath = pathSegments.join('/');
+    rawStoragePath = pathSegments.join('/');
   }
+  const storagePath = rawStoragePath;
 
   const customMetadata: Record<string, string> = {
     shopId,
@@ -318,29 +478,53 @@ export async function uploadShopImage(
   }
 
   try {
-    let downloadUrl: string;
-    try {
-      downloadUrl = await runResumableStorageUpload(
-        storagePath,
-        processedBlob,
-        processedBlob.type || file.type,
-        customMetadata,
-        onProgress
-      );
-    } catch (firstErr: any) {
-      // Force refresh custom claims once on permission error in case staff/shop claim was just issued
-      if (firstErr?.code === 'storage/unauthorized' && auth.currentUser) {
-        await auth.currentUser.getIdToken(true).catch(() => {});
-        downloadUrl = await runResumableStorageUpload(
-          storagePath,
-          processedBlob,
-          processedBlob.type || file.type,
-          customMetadata,
-          onProgress
-        );
-      } else {
-        throw firstErr;
+    let downloadUrl = '';
+    let finalBytes = compressedBytes;
+    let finalOriginalBytes = originalBytes;
+    let finalSavedPercent = savedPercent;
+    let finalStoragePath = storagePath;
+
+    const storageReady = await isStorageLikelyReachable();
+    if (storageReady) {
+      try {
+        try {
+          downloadUrl = await runResumableStorageUpload(
+            storagePath,
+            processedBlob,
+            uploadContentType,
+            customMetadata,
+            onProgress
+          );
+        } catch (firstErr: any) {
+          if (firstErr?.code === 'storage/unauthorized' && auth.currentUser) {
+            await auth.currentUser.getIdToken(true).catch(() => {});
+            downloadUrl = await runResumableStorageUpload(
+              storagePath,
+              processedBlob,
+              uploadContentType,
+              customMetadata,
+              onProgress
+            );
+          } else {
+            throw firstErr;
+          }
+        }
+      } catch (storageErr: any) {
+        if (!isStorageFallbackTrigger(storageErr)) {
+          throw storageErr;
+        }
+        storageBucketReachable = false;
       }
+    }
+
+    if (!downloadUrl) {
+      onProgress?.(60);
+      const inlineFallback = await compressFileToFallbackDataUrl(file, detectedMime, 960, 210 * 1024);
+      downloadUrl = inlineFallback.dataUrl;
+      finalBytes = inlineFallback.compressedBytes;
+      finalOriginalBytes = inlineFallback.originalBytes;
+      finalSavedPercent = inlineFallback.savedPercent;
+      finalStoragePath = `inline_compressed/${storagePath}`;
     }
 
     // Record exact storage usage bytes safely using nested object merge (never dot-notation)
@@ -348,7 +532,7 @@ export async function uploadShopImage(
       const latestSnap = await getDoc(doc(db, 'shops', shopId)).catch(() => null);
       if (latestSnap && latestSnap.exists()) {
         const currentUsage = latestSnap.data()?.usage || {};
-        const nextBytes = calculateNextStorageBytes(Number(currentUsage.storageBytes || 0), processedBlob.size);
+        const nextBytes = calculateNextStorageBytes(Number(currentUsage.storageBytes || 0), finalBytes);
         await setDoc(
           doc(db, 'shops', shopId),
           {
@@ -363,61 +547,88 @@ export async function uploadShopImage(
     onProgress?.(100);
     return {
       url: downloadUrl,
-      storagePath,
-      bytes: compressedBytes,
-      originalBytes,
-      savedPercent,
+      storagePath: finalStoragePath,
+      bytes: finalBytes,
+      originalBytes: finalOriginalBytes,
+      savedPercent: finalSavedPercent,
     };
   } catch (storageErr: any) {
-    console.warn('Firebase Storage upload error:', storageErr);
+    console.warn('Image upload error:', storageErr);
     throw new Error(mapFirebaseStorageError(storageErr));
   }
 }
 
 /**
  * Uploads platform-level branding (logo / OG image) by Super Admin to /platform/brand/...
+ * Falls back cleanly to compressed WebP Data URL if Firebase Storage bucket or CORS isn't active yet.
  */
 export async function uploadPlatformLogo(
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<UploadedImageResult> {
-  validateImageFile(file);
+  const detectedMime = await validateImageFileWithMagicBytes(file);
+  onProgress?.(15);
   const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
     await compressImageToBlob(file, 1000);
-  const ext = processedBlob.type === 'image/webp' ? 'webp' : 'jpg';
+  const uploadContentType = resolveUploadContentType(processedBlob, file, detectedMime);
+  const ext = uploadContentType === 'image/webp' ? 'webp' : uploadContentType === 'image/png' ? 'png' : 'jpg';
   const baseName = sanitizeFileName(file.name.replace(/\.[^.]+$/, ''));
   const storagePath = `platform/brand/${Date.now()}_${baseName}.${ext}`;
 
   try {
-    let downloadUrl: string;
-    try {
-      downloadUrl = await runResumableStorageUpload(
-        storagePath,
-        processedBlob,
-        processedBlob.type || file.type,
-        {
-          purpose: 'platform_branding',
-          uploaderUid: auth.currentUser?.uid || 'super_admin',
-        },
-        onProgress
-      );
-    } catch (firstErr: any) {
-      if (firstErr?.code === 'storage/unauthorized' && auth.currentUser) {
-        await auth.currentUser.getIdToken(true).catch(() => {});
-        downloadUrl = await runResumableStorageUpload(
-          storagePath,
-          processedBlob,
-          processedBlob.type || file.type,
-          {
-            purpose: 'platform_branding',
-            uploaderUid: auth.currentUser?.uid || 'super_admin',
-          },
-          onProgress
-        );
-      } else {
-        throw firstErr;
+    let downloadUrl = '';
+    const storageReady = await isStorageLikelyReachable();
+    if (storageReady) {
+      try {
+        try {
+          downloadUrl = await runResumableStorageUpload(
+            storagePath,
+            processedBlob,
+            uploadContentType,
+            {
+              purpose: 'platform_branding',
+              uploaderUid: auth.currentUser?.uid || 'super_admin',
+            },
+            onProgress
+          );
+        } catch (firstErr: any) {
+          if (firstErr?.code === 'storage/unauthorized' && auth.currentUser) {
+            await auth.currentUser.getIdToken(true).catch(() => {});
+            downloadUrl = await runResumableStorageUpload(
+              storagePath,
+              processedBlob,
+              uploadContentType,
+              {
+                purpose: 'platform_branding',
+                uploaderUid: auth.currentUser?.uid || 'super_admin',
+              },
+              onProgress
+            );
+          } else {
+            throw firstErr;
+          }
+        }
+      } catch (storageErr: any) {
+        if (!isStorageFallbackTrigger(storageErr)) {
+          throw storageErr;
+        }
+        storageBucketReachable = false;
       }
     }
+
+    if (!downloadUrl) {
+      onProgress?.(65);
+      const inlineFallback = await compressFileToFallbackDataUrl(file, detectedMime, 800, 210 * 1024);
+      onProgress?.(100);
+      return {
+        url: inlineFallback.dataUrl,
+        storagePath: `inline_compressed/${storagePath}`,
+        bytes: inlineFallback.compressedBytes,
+        originalBytes: inlineFallback.originalBytes,
+        savedPercent: inlineFallback.savedPercent,
+      };
+    }
+
     onProgress?.(100);
     return {
       url: downloadUrl,
@@ -442,7 +653,7 @@ export async function uploadCheckoutPaymentProof(
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<UploadedImageResult> {
-  validateImageFile(file);
+  const detectedMime = await validateImageFileWithMagicBytes(file);
   onProgress?.(15);
 
   const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
@@ -454,7 +665,7 @@ export async function uploadCheckoutPaymentProof(
 
   onProgress?.(45);
   const base64Data = await blobToBase64(processedBlob);
-  const contentType = processedBlob.type || file.type || 'image/webp';
+  const contentType = resolveUploadContentType(processedBlob, file, detectedMime);
   const fileName = sanitizeFileName(file.name);
 
   // 1. Prefer server-side private upload endpoint when Express API is available
@@ -528,65 +739,85 @@ export async function uploadPlatformSubscriptionProof(
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<UploadedImageResult> {
-  validateImageFile(file);
+  const detectedMime = await validateImageFileWithMagicBytes(file);
   onProgress?.(15);
 
   const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
     await compressImageToBlob(file, 960, 0.75);
+  const uploadContentType = resolveUploadContentType(processedBlob, file, detectedMime);
 
-  const ext = processedBlob.type === 'image/webp' ? 'webp' : 'jpg';
+  const ext = uploadContentType === 'image/webp' ? 'webp' : uploadContentType === 'image/png' ? 'png' : 'jpg';
   const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_receipt.${ext}`;
   const storagePath = `platform/payments/${shopId}/${fileName}`;
 
   try {
-    const downloadUrl = await runResumableStorageUpload(
-      storagePath,
-      processedBlob,
-      processedBlob.type || file.type,
-      {
-        shopId,
-        purpose: 'subscription_payment_receipt',
-        uploaderUid: auth.currentUser?.uid || 'unknown',
-      },
-      onProgress
-    );
-    onProgress?.(100);
-    return {
-      url: downloadUrl,
-      storagePath,
-      bytes: compressedBytes,
-      originalBytes,
-      savedPercent,
-    };
-  } catch (err: any) {
-    // Store privately in Firestore (only owner & Super Admin can read via PrivateReceiptImage) if Storage claim isn't synced yet
-    if (err?.code === 'storage/unauthorized' || err?.code === 'storage/bucket-not-found') {
-      if (processedBlob.size > 360 * 1024) {
-        throw new Error(mapFirebaseStorageError(err));
+    let downloadUrl = '';
+    const storageReady = await isStorageLikelyReachable();
+    if (storageReady) {
+      try {
+        downloadUrl = await runResumableStorageUpload(
+          storagePath,
+          processedBlob,
+          uploadContentType,
+          {
+            shopId,
+            purpose: 'subscription_payment_receipt',
+            uploaderUid: auth.currentUser?.uid || 'unknown',
+          },
+          onProgress
+        );
+      } catch (storageErr: any) {
+        if (!isStorageFallbackTrigger(storageErr)) {
+          throw storageErr;
+        }
+        storageBucketReachable = false;
       }
-      const receiptId = `subrcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const base64Data = await blobToBase64(processedBlob);
-      const contentType = processedBlob.type || file.type || 'image/webp';
-      await setDoc(doc(db, 'platform_payment_receipts', receiptId), {
-        id: receiptId,
-        shopId,
-        ownerId: auth.currentUser?.uid || 'unknown',
-        contentType,
-        fileName: sanitizeFileName(file.name),
-        base64Data,
-        bytes: compressedBytes,
-        createdAt: new Date().toISOString(),
-      });
+    }
+
+    if (downloadUrl) {
       onProgress?.(100);
       return {
-        url: `/api/payments/proof?scope=platform&receiptId=${encodeURIComponent(receiptId)}`,
-        storagePath: `platform_payment_receipts/${receiptId}`,
+        url: downloadUrl,
+        storagePath,
         bytes: compressedBytes,
         originalBytes,
         savedPercent,
-        isPrivateReceipt: true,
       };
     }
+
+    // Store privately in Firestore (only owner & Super Admin can read via PrivateReceiptImage) if Storage is unavailable
+    let fallbackBlob = processedBlob;
+    let fallbackBytes = compressedBytes;
+    if (fallbackBlob.size > 340 * 1024) {
+      const tightened = await compressImageToBlob(file, 760, 0.58);
+      fallbackBlob = tightened.blob;
+      fallbackBytes = tightened.compressedBytes;
+    }
+    if (fallbackBlob.size > 360 * 1024) {
+      throw new Error('Compressed payment slip is too large. Please crop screenshot to under 350 KB.');
+    }
+    const receiptId = `subrcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const base64Data = await blobToBase64(fallbackBlob);
+    await setDoc(doc(db, 'platform_payment_receipts', receiptId), {
+      id: receiptId,
+      shopId,
+      ownerId: auth.currentUser?.uid || 'unknown',
+      contentType: resolveUploadContentType(fallbackBlob, file, detectedMime),
+      fileName: sanitizeFileName(file.name),
+      base64Data,
+      bytes: fallbackBytes,
+      createdAt: new Date().toISOString(),
+    });
+    onProgress?.(100);
+    return {
+      url: `/api/payments/proof?scope=platform&receiptId=${encodeURIComponent(receiptId)}`,
+      storagePath: `platform_payment_receipts/${receiptId}`,
+      bytes: fallbackBytes,
+      originalBytes,
+      savedPercent,
+      isPrivateReceipt: true,
+    };
+  } catch (err: any) {
     throw new Error(mapFirebaseStorageError(err));
   }
 }
@@ -596,36 +827,122 @@ export async function uploadUserProfileAvatar(
   file: File,
   onProgress?: (percent: number) => void
 ): Promise<UploadedImageResult> {
-  validateImageFile(file);
+  const detectedMime = await validateImageFileWithMagicBytes(file);
   const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
     await compressImageToBlob(file, 600);
-  const ext = processedBlob.type === 'image/webp' ? 'webp' : 'jpg';
+  const uploadContentType = resolveUploadContentType(processedBlob, file, detectedMime);
+  const ext = uploadContentType === 'image/webp' ? 'webp' : uploadContentType === 'image/png' ? 'png' : 'jpg';
   const storagePath = `users/${userId}/profile/${Date.now()}_avatar.${ext}`;
 
   try {
-    let downloadUrl: string;
-    try {
-      downloadUrl = await runResumableStorageUpload(
-        storagePath,
-        processedBlob,
-        processedBlob.type || file.type,
-        { userId, purpose: 'profile_avatar' },
-        onProgress
-      );
-    } catch (firstErr: any) {
-      if (firstErr?.code === 'storage/unauthorized' && auth.currentUser) {
-        await auth.currentUser.getIdToken(true).catch(() => {});
+    let downloadUrl = '';
+    const storageReady = await isStorageLikelyReachable();
+    if (storageReady) {
+      try {
+        try {
+          downloadUrl = await runResumableStorageUpload(
+            storagePath,
+            processedBlob,
+            uploadContentType,
+            { userId, purpose: 'profile_avatar', uploaderUid: auth.currentUser?.uid || userId },
+            onProgress
+          );
+        } catch (firstErr: any) {
+          if (firstErr?.code === 'storage/unauthorized' && auth.currentUser) {
+            await auth.currentUser.getIdToken(true).catch(() => {});
+            downloadUrl = await runResumableStorageUpload(
+              storagePath,
+              processedBlob,
+              uploadContentType,
+              { userId, purpose: 'profile_avatar', uploaderUid: auth.currentUser?.uid || userId },
+              onProgress
+            );
+          } else {
+            throw firstErr;
+          }
+        }
+      } catch (storageErr: any) {
+        if (!isStorageFallbackTrigger(storageErr)) {
+          throw storageErr;
+        }
+        storageBucketReachable = false;
+      }
+    }
+
+    if (!downloadUrl) {
+      const inlineFallback = await compressFileToFallbackDataUrl(file, detectedMime, 480, 140 * 1024);
+      onProgress?.(100);
+      return {
+        url: inlineFallback.dataUrl,
+        storagePath: `inline_compressed/${storagePath}`,
+        bytes: inlineFallback.compressedBytes,
+        originalBytes: inlineFallback.originalBytes,
+        savedPercent: inlineFallback.savedPercent,
+      };
+    }
+
+    onProgress?.(100);
+    return {
+      url: downloadUrl,
+      storagePath,
+      bytes: compressedBytes,
+      originalBytes,
+      savedPercent,
+    };
+  } catch (err: any) {
+    throw new Error(mapFirebaseStorageError(err));
+  }
+}
+
+export async function uploadSalesExpenseReceipt(
+  userId: string,
+  expenseId: string,
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<UploadedImageResult> {
+  const detectedMime = await validateImageFileWithMagicBytes(file);
+  const { blob: processedBlob, originalBytes, compressedBytes, savedPercent } =
+    await compressImageToBlob(file, 1000, 0.78);
+  const uploadContentType = resolveUploadContentType(processedBlob, file, detectedMime);
+  const ext = uploadContentType === 'image/webp' ? 'webp' : uploadContentType === 'image/png' ? 'png' : 'jpg';
+  const safeExpenseId = sanitizeFileName(expenseId || `exp_${Date.now()}`);
+  const storagePath = `sales/expenses/${userId}/${safeExpenseId}/${Date.now()}_receipt.${ext}`;
+
+  try {
+    let downloadUrl = '';
+    const storageReady = await isStorageLikelyReachable();
+    if (storageReady) {
+      try {
         downloadUrl = await runResumableStorageUpload(
           storagePath,
           processedBlob,
-          processedBlob.type || file.type,
-          { userId, purpose: 'profile_avatar' },
+          uploadContentType,
+          {
+            purpose: 'sales_expense_receipt',
+            uploaderUid: auth.currentUser?.uid || userId,
+          },
           onProgress
         );
-      } else {
-        throw firstErr;
+      } catch (storageErr: any) {
+        if (!isStorageFallbackTrigger(storageErr)) {
+          throw storageErr;
+        }
+        storageBucketReachable = false;
       }
     }
+
+    if (!downloadUrl) {
+      const inlineFallback = await compressFileToFallbackDataUrl(file, detectedMime, 800, 210 * 1024);
+      onProgress?.(100);
+      return {
+        url: inlineFallback.dataUrl,
+        storagePath: `inline_compressed/${storagePath}`,
+        bytes: inlineFallback.compressedBytes,
+        originalBytes: inlineFallback.originalBytes,
+        savedPercent: inlineFallback.savedPercent,
+      };
+    }
+
     onProgress?.(100);
     return {
       url: downloadUrl,
@@ -640,7 +957,8 @@ export async function uploadUserProfileAvatar(
 }
 
 export async function deleteStorageImageByUrl(url?: string, shopId?: string): Promise<boolean> {
-  if (!url || !url.includes('firebasestorage.googleapis.com')) return false;
+  if (!url || url.startsWith('data:') || url.startsWith('/api/payments/proof')) return true;
+  if (!url.includes('firebasestorage.googleapis.com')) return false;
   try {
     const imageRef = ref(storage, url);
     let exactBytes = 0;
@@ -677,6 +995,7 @@ export async function checkStorageHealth(): Promise<StorageHealthReport> {
   const bucketName = String(storage?.app?.options?.storageBucket || '');
   const checkedAt = new Date().toISOString();
   if (!bucketName) {
+    storageBucketReachable = false;
     return {
       configured: false,
       bucketName: 'unconfigured',
@@ -687,17 +1006,16 @@ export async function checkStorageHealth(): Promise<StorageHealthReport> {
   }
 
   try {
-    await getMetadata(ref(storage, 'shops/__health_probe__/ping.webp'));
-    return {
-      configured: true,
-      bucketName,
-      status: 'healthy',
-      message: `Connected cleanly to ${bucketName}`,
-      checkedAt,
-    };
-  } catch (err: any) {
-    const code = String(err?.code || '');
-    if (code === 'storage/object-not-found') {
+    const res = await fetch(
+      `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucketName)}/o?maxResults=1`,
+      {
+        method: 'GET',
+        signal: typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal ? AbortSignal.timeout(3500) : undefined,
+      }
+    );
+
+    if (res.ok) {
+      storageBucketReachable = true;
       return {
         configured: true,
         bucketName,
@@ -706,16 +1024,9 @@ export async function checkStorageHealth(): Promise<StorageHealthReport> {
         checkedAt,
       };
     }
-    if (code === 'storage/bucket-not-found') {
-      return {
-        configured: false,
-        bucketName,
-        status: 'bucket_missing',
-        message: `Bucket ${bucketName} not found in Firebase project.`,
-        checkedAt,
-      };
-    }
-    if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
+
+    if (res.status === 401 || res.status === 403) {
+      storageBucketReachable = true;
       return {
         configured: true,
         bucketName,
@@ -724,11 +1035,33 @@ export async function checkStorageHealth(): Promise<StorageHealthReport> {
         checkedAt,
       };
     }
+
+    if (res.status === 404) {
+      storageBucketReachable = false;
+      return {
+        configured: false,
+        bucketName,
+        status: 'bucket_missing',
+        message: `Bucket ${bucketName} is not initialized in Firebase Console yet; automatic compressed image fallback is active.`,
+        checkedAt,
+      };
+    }
+
+    storageBucketReachable = false;
     return {
       configured: true,
       bucketName,
       status: 'network_error',
-      message: err?.message || 'Could not reach Firebase Storage endpoint.',
+      message: `Storage returned HTTP ${res.status}; automatic compressed image fallback is active.`,
+      checkedAt,
+    };
+  } catch (err: any) {
+    storageBucketReachable = false;
+    return {
+      configured: true,
+      bucketName,
+      status: 'network_error',
+      message: 'Storage CORS or bucket provisioning pending; automatic compressed image fallback is active.',
       checkedAt,
     };
   }

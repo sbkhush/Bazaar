@@ -44,12 +44,8 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   const response = await fetch(targetUrl, init);
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
 
-  // GitHub Pages returns index.html / 404.html for unmatched relative /api/* paths
-  if (
-    contentType.includes('text/html') &&
-    !normalizedApiBaseUrl &&
-    (isStaticPagesHost() || !response.ok)
-  ) {
+  // Static SPA hosts (GitHub Pages, Cloud Run static previews, custom domains) return index.html / 404.html for unmatched /api/* paths
+  if (contentType.includes('text/html') && !normalizedApiBaseUrl) {
     throw new ApiClientError(
       'Dedicated Express API server is not configured for this static host (VITE_API_BASE_URL is empty).',
       response.status || 404,

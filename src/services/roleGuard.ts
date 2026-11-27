@@ -76,7 +76,10 @@ export function getPortalLoginPathForRoute(pathname: string): string {
   return '/login';
 }
 
-export function canAccessPortalRoute(role: AuthorizedPortalRole | null, pathname: string): boolean {
+export function canAccessPortalRoute(
+  role: AuthorizedPortalRole | null,
+  pathname: string
+): boolean {
   const normalized = pathname.trim().toLowerCase();
 
   // Public auth entry routes are always reachable

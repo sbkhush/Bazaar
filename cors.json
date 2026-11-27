@@ -1,0 +1,30 @@
+[
+  {
+    "origin": [
+      "https://sbkhush.github.io",
+      "https://sbkhush.com",
+      "https://www.sbkhush.com",
+      "https://*.ai.studio",
+      "https://*.run.app",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000"
+    ],
+    "method": [
+      "GET",
+      "HEAD",
+      "PUT",
+      "POST",
+      "DELETE",
+      "OPTIONS"
+    ],
+    "responseHeader": [
+      "Content-Type",
+      "Authorization",
+      "Content-Length",
+      "User-Agent",
+      "x-goog-resumable",
+      "x-firebase-storage-version"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

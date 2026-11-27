@@ -441,6 +441,9 @@
       "schema": { "$ref": "#/entities/PlatformPayment" },
       "description": "Subscription payment proof submissions"
     },
+    "/platform_payment_receipts/{receiptId}": {
+      "description": "Private compressed subscription payment proof records readable only by uploading shop owner and Super Admin"
+    },
     "/platform_activity_logs/{logId}": {
       "description": "Platform audit logs"
     },

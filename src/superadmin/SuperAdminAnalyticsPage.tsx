@@ -13,6 +13,7 @@ export const SuperAdminAnalyticsPage: React.FC = () => {
   const [stats, setStats] = useState<PlatformAnalyticsSummary | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([getPlatformAnalytics(), getPlatformActivityLogs(60)])
@@ -20,13 +21,24 @@ export const SuperAdminAnalyticsPage: React.FC = () => {
         setStats(s);
         setLogs(l);
       })
+      .catch((err: any) => {
+        setError(err?.message || 'Could not load platform analytics.');
+      })
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading || !stats) {
+  if (loading) {
     return (
       <div className="py-20 flex justify-center text-xs text-slate-500 gap-2">
         <Loader2 className="w-5 h-5 animate-spin text-[#065F46]" /> Loading platform analytics...
+      </div>
+    );
+  }
+
+  if (error || !stats) {
+    return (
+      <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium">
+        {error || 'Platform analytics could not be loaded.'}
       </div>
     );
   }

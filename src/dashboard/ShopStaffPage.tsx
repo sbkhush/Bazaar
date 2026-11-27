@@ -26,10 +26,13 @@ export const ShopStaffPage: React.FC = () => {
   const loadStaff = async () => {
     if (!shopId) return;
     setLoading(true);
+    setError(null);
     try {
       const res = await getShopStaff(shopId);
       setStaff(res.staff);
       setInvites(res.invites);
+    } catch (err: any) {
+      setError(err?.message || 'Could not load team members.');
     } finally {
       setLoading(false);
     }
@@ -165,7 +168,11 @@ export const ShopStaffPage: React.FC = () => {
                   {!isReadOnly && st.role !== 'shop_owner' && (
                     <button
                       type="button"
-                      onClick={() => removeShopStaff(shopId, st.uid).then(loadStaff)}
+                      onClick={() =>
+                        removeShopStaff(shopId, st.uid)
+                          .then(loadStaff)
+                          .catch((err: any) => setError(err?.message || 'Could not remove team member.'))
+                      }
                       className="p-1.5 border border-red-200 text-red-600 rounded-lg"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -183,7 +190,11 @@ export const ShopStaffPage: React.FC = () => {
                 {!isReadOnly && (
                   <button
                     type="button"
-                    onClick={() => cancelShopInvite(shopId, inv.id).then(loadStaff)}
+                    onClick={() =>
+                      cancelShopInvite(shopId, inv.id)
+                        .then(loadStaff)
+                        .catch((err: any) => setError(err?.message || 'Could not revoke pending invite.'))
+                    }
                     className="px-3 py-1.5 border border-red-200 text-red-600 rounded-lg font-semibold"
                   >
                     Revoke

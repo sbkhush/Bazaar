@@ -149,6 +149,7 @@ describe('Security, API Client, Shop Deletion & Reliability Invariants', () => {
   it('enforces global atomic CNIC registration and strict CORS in server.ts, Cloud Functions, and Firestore rules', () => {
     expect(platformServiceSrc).toContain("'registerShopWithCnic'");
     expect(platformServiceSrc).toContain("'/api/shops/register'");
+    expect(platformServiceSrc).toContain('SBKHUSH-CNIC-LOCK:');
     expect(serverSrc).toContain("app.post('/api/shops/register'");
     expect(serverSrc).toContain('cnic_registry');
     expect(serverSrc).toContain("type: 'create'");
@@ -162,6 +163,18 @@ describe('Security, API Client, Shop Deletion & Reliability Invariants', () => {
     expect(firestoreRulesSrc).toContain('!exists(/databases/$(database)/documents/cnic_registry/$(hmacKey))');
     expect(firestoreRulesSrc).toContain('allow update, delete: if isValidId(hmacKey) && isSuperAdmin();');
     expect(firestoreRulesSrc).toContain('match /archived_shops/{shopId}');
+  });
+
+  it('treats HTML responses without VITE_API_BASE_URL as unconfigured backend and splits registration commits for Firestore rules', () => {
+    const registerShopPageSrc = fs.readFileSync(
+      path.join(WORKSPACE_ROOT, 'src/platform/RegisterShopPage.tsx'),
+      'utf-8'
+    );
+    expect(apiClientSrc).toContain("if (contentType.includes('text/html') && !normalizedApiBaseUrl)");
+    expect(registerShopPageSrc).toContain('const cnicValidation = isValidCnic(cnic)');
+    expect(registerShopPageSrc).toContain('if (!cnicValidation.valid)');
+    expect(serverSrc).toContain('// Step 1: Atomic Firestore REST commit with exists=false preconditions');
+    expect(serverSrc).toContain('// Step 2: Provision public mirror, owner RBAC staff');
   });
 
   it('uses formula-safe CSV export in ShopReportsPage, PrivateReceiptImage in OrderSuccessPage, and non-Karachi pickup fallback in CheckoutPage', () => {

@@ -54,6 +54,7 @@ export const ShopPosPage: React.FC = () => {
   const [idempotencyKey, setIdempotencyKey] = useState(() => `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
 
   const [submitting, setSubmitting] = useState(false);
+  const [returningSaleId, setReturningSaleId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeReceipt, setActiveReceipt] = useState<PosSale | null>(null);
 
@@ -69,6 +70,8 @@ export const ShopPosPage: React.FC = () => {
       setProducts(prods.filter((p) => p.status !== 'archived'));
       setSales(sls);
       setCustomers(custs);
+    } catch (err: any) {
+      setError(err?.message || 'Could not load POS data.');
     } finally {
       setLoading(false);
     }
@@ -254,8 +257,16 @@ export const ShopPosPage: React.FC = () => {
 
   const handleReturnSale = async (sale: PosSale) => {
     if (isReadOnly || sale.status === 'returned') return;
-    await returnPosSale(shopId, sale.id);
-    await loadPosData();
+    setError(null);
+    setReturningSaleId(sale.id);
+    try {
+      await returnPosSale(shopId, sale.id);
+      await loadPosData();
+    } catch (err: any) {
+      setError(err?.message || 'Could not process POS return.');
+    } finally {
+      setReturningSaleId(null);
+    }
   };
 
   const exportPosSalesCsv = () => {
@@ -640,10 +651,12 @@ export const ShopPosPage: React.FC = () => {
                           {!isReadOnly && s.status === 'completed' && (
                             <button
                               type="button"
+                              disabled={returningSaleId === s.id}
                               onClick={() => handleReturnSale(s)}
-                              className="px-2.5 py-1 border border-rose-200 text-rose-700 rounded-lg hover:bg-rose-50 font-semibold flex items-center gap-1"
+                              className="px-2.5 py-1 border border-rose-200 text-rose-700 rounded-lg hover:bg-rose-50 font-semibold flex items-center gap-1 disabled:opacity-50"
                             >
-                              <RotateCcw className="w-3 h-3" /> Return
+                              <RotateCcw className="w-3 h-3" />
+                              {returningSaleId === s.id ? 'Returning...' : 'Return'}
                             </button>
                           )}
                         </div>

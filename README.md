@@ -1,43 +1,36 @@
-# SB Khush — Multi-Tenant eCommerce SaaS & Store Management Platform
+# SB Khush — Multi-Tenant eCommerce, POS & Store Management SaaS
 
-A full-stack, production-ready Pakistani multi-tenant eCommerce SaaS web application and administrative system built with React, TypeScript, Tailwind CSS, Express, and Firebase Firestore, Storage & Authentication (`https://sbkhush.com`).
+A full-stack Pakistani multi-tenant eCommerce, Counter POS, Customer Khata, Self-Pickup, and Sales Management SaaS platform built with React 19, TypeScript, Tailwind CSS, Express, and Firebase Firestore, Storage & Authentication (`https://sbkhush.com`).
 
-## Key Features
+## Key Capabilities
 
-### 1. Customer Storefront
-- **Modern Homepage**: Dynamic promotional banner slider, curated categories, trending products, best sellers, limited-time deals with coupon discounts, verified Pakistani customer reviews, and newsletter subscription.
-- **Shop Catalog**: Full faceted filters (by Category, Price Range Slider, Pakistani Brands, In-Stock Only), multiple sort orders (Popularity, Price Low to High, Price High to Low, Newest Arrivals), and instant predictive search dropdown.
-- **Product Details**: Multi-angle image gallery with thumbnail switcher, variants selector (sizes, colors), live stock indicator, verified price comparison, customer reviews with submission form, and courier delivery estimation.
-- **Cart & Slide-Over Drawer**: Real-time subtotal, free shipping progress tracker (e.g. "Add Rs. 650 more for FREE nationwide delivery"), voucher coupon code validator (e.g., `AZADI10`, `WELCOME500`), and session persistence in Firestore.
-- **Pakistani Optimized Checkout**:
-  - Full Pakistani mobile phone number validation (`03XXXXXXXXX` / `+923XXXXXXXXX`)
-  - 40+ Pakistani cities dropdown (Karachi, Lahore, Islamabad, Rawalpindi, Faisalabad, Multan, Peshawar, Quetta, Sialkot, etc.)
-  - Complete delivery address with courier notes
-  - Payment methods:
-    1. **Cash on Delivery (COD)**: Doorstep cash collection via TCS, Leopards, and Trax.
-    2. **Direct Bank Transfer (IBFT)**: Shows official Meezan Bank account details (Account Title, Account Number, IBAN) and captures the customer's transfer transaction ID.
-    3. **Online Payment Gateway**: Integration-ready modular architecture for Visa/Mastercard/PayPak.
-- **Celebratory Order Confirmation**: Instant order reference (`PK-XXXXXX`), downloadable/printable receipt, and celebratory confetti.
-- **Customer Account**: Order history with status tags, live courier shipment tracking visualizer, saved addresses book, and wishlist synchronization.
-- **Support & Policies**: Floating WhatsApp support button with pre-filled inquiries, FAQ page, 7-Day Return & Exchange Policy, Terms of Service, and Privacy Policy.
+### 1. Multi-Tenant Customer Storefront (`/s/:shopSlug`)
+- **Brandable Storefront**: Custom shop logos, promotional banners, categories, trending products, variant selectors, predictive search, and live stock tracking.
+- **Cart & Voucher Engine**: Slide-over cart drawer, free-shipping progress tracker, coupon validation, and saved carts/wishlists per tenant.
+- **Pakistani Checkout & Self-Pickup**:
+  - Pakistani mobile phone validation (`03XXXXXXXXX` / `+923XXXXXXXXX`) and nationwide city picker
+  - **Home Delivery** via courier partners (TCS, Leopards, Trax, Call Courier, PostEx, M&P)
+  - **Self-Pickup / Store Pickup** with store hours, pickup date/time slots, capacity enforcement, and QR + 6-digit OTP verification pass
+  - **Payment Options**: Cash on Delivery / Pay at Counter, EasyPaisa, JazzCash, and Bank Transfer (IBFT) with private receipt upload
+- **Tokenized Order Tracking**: Privacy-preserving guest order tracking via 256-bit tracking tokens.
 
-### 2. Admin Management Dashboard (`/admin`)
-- **Role-Based Access Control**: Protected admin routes strictly verifying administrative roles in Firestore `/admins/{uid}` and bootstrapped super admin (`hasanaamir815@gmail.com`). Includes a demo switch in the announcement bar for quick evaluation.
-- **Dashboard Overview**: Key metrics (Total Sales in PKR, Total Orders, Active Catalog Items, Low-Stock Alerts), recent orders table with status badges, and best-performing products.
-- **Product Management**: Complete CRUD operations, multi-image support, SKU generation, regular & sale pricing, stock counts, variant attributes, and published/featured toggles.
-- **Category Management**: Create, edit, and delete store categories with custom slugs, banners, and display ordering.
-- **Order Fulfillment & Logistics**: Filter orders by status (`Pending`, `Confirmed`, `Processing`, `Shipped`, `Delivered`, `Cancelled`), view complete shipping details, assign courier partners (TCS, Leopards, Trax, PostEx, M&P), record consignment tracking numbers, update payment status, and export orders to CSV.
-- **Inventory & Warehouse Logs**: Live stock monitoring, low-stock filter (< 5 units), manual stock adjustments with reason logging (`inventory_logs`).
-- **Coupon Management**: Create percentage or fixed discount vouchers with minimum order criteria, expiry dates, usage caps, and active/disabled switches.
-- **Website Settings**: Customize store name, announcement bar text, delivery charges, free shipping threshold, and official bank transfer details.
-- **One-Click Database Seeder**: Seed the initial Pakistani product catalog, categories, banners, and coupons directly into Firestore with one click.
+### 2. Merchant Dashboard (`/dashboard`)
+- **Counter POS & Billing**: Fast retail POS with barcode/SKU support, split payments, printable receipts, and stock + Khata synchronization.
+- **Inventory, Purchases & Suppliers**: Wholesale supplier payables, purchase invoices, and real-time stock movement ledgers.
+- **Customer Khata & Credit Ledger**: Track customer udhaar balances, payments, and return adjustments.
+- **Staff RBAC**: Invite team members (`shop_admin`, `shop_staff`) with granular module permissions.
+
+### 3. Platform Super Admin & Sales Portals (`/super-admin`, `/sales-manager`, `/salesman`, `/referral`)
+- **Super Admin Control**: Tenant store approvals, subscription plans & manual TID verification, global CNIC uniqueness registry, support tickets, audit logs, and full platform data purge controls.
+- **Field Sales & Referral Portals**: Strict role-isolated portals for Sales Managers, Field Salesmen, and Referral Partners with QR attribution and commission ledgers.
 
 ## Tech Stack
-- **Frontend**: React 19, TypeScript, React Router 7, Tailwind CSS v4, Lucide Icons, Canvas Confetti.
-- **Backend & Database**: Cloud Firestore, Firebase Authentication.
-- **Tooling**: Vite 8, ES2022, Strict TypeScript.
+- **Frontend**: React 19, TypeScript, React Router 7, Tailwind CSS v4, Lucide Icons, jsPDF, QRCode.
+- **Backend & Database**: Cloud Firestore, Firebase Authentication, Firebase Storage, Firebase Cloud Functions v2, Express.
+- **Tooling**: Vite 8, Vite PWA, Vitest, Strict TypeScript.
 
-## Deployment Instructions
-1. Run `npm run build` to create the production build in `/dist`.
-2. Deploy to Firebase Hosting or Cloud Run using the provisioned Firebase project (`primeval-objective-t8chg`).
-3. Firestore security rules are deployed at `firestore.rules`.
+## Development & Deployment
+1. Install dependencies: `npm install` (and `npm --prefix functions install` for Cloud Functions).
+2. Typecheck, test, and build: `npm run lint && npm test && npm run build`.
+3. Deploy Firestore rules, Storage rules, indexes, and Cloud Functions to Firebase project `primeval-objective-t8chg`:
+   `firebase deploy --only firestore,storage,functions --project primeval-objective-t8chg`

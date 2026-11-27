@@ -8,13 +8,17 @@ export const SuperAdminAuditLogsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [targetTypeFilter, setTargetTypeFilter] = useState<'all' | ActivityLog['targetType']>('all');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
+      setError(null);
       try {
         const list = await getPlatformActivityLogs(200);
         setLogs(list);
+      } catch (err: any) {
+        setError(err?.message || 'Could not load audit trail.');
       } finally {
         setLoading(false);
       }
@@ -49,6 +53,12 @@ export const SuperAdminAuditLogsPage: React.FC = () => {
           <ShieldCheck className="w-4 h-4" /> {filtered.length} Events
         </span>
       </div>
+
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium">
+          {error}
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="relative sm:col-span-2">

@@ -13,15 +13,17 @@ import {
   limit,
   runTransaction,
 } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { db, auth } from '../firebase/config';
+import { httpsCallable } from 'firebase/functions';
+import { db, auth, functions } from '../firebase/config';
 import { apiFetch } from '../utils/apiClient';
 import {
   DUPLICATE_CNIC_ERROR_MESSAGE,
   CNIC_AUDIT_BLOCK_MESSAGE,
   isValidCnic,
   normalizeCnic,
+  maskCnic,
 } from '../utils/cnic';
+import { sha256Hex } from '../utils/trackingCrypto';
 import {
   Shop,
   ShopPublic,
@@ -651,7 +653,6 @@ export async function registerNewShop(input: {
 
   // Primary atomic path: Firebase Cloud Function registerShopWithCnic (server-side HMAC + transaction)
   try {
-    const functions = getFunctions(auth.app);
     const registerFn = httpsCallable<typeof payload, { shop: Shop }>(functions, 'registerShopWithCnic');
     const result = await registerFn(payload);
     if (result?.data?.shop) {
@@ -678,7 +679,8 @@ export async function registerNewShop(input: {
       throw new Error(msg || 'CNIC shop registration rejected.');
     }
 
-    // Reachability fallback ONLY to trusted Express backend /api/shops/register (never unverified direct client DB)
+    // Reachability fallback 1: Trusted Express backend /api/shops/register
+    let backendReachable = false;
     const idToken = await currentUser.getIdToken();
     try {
       const apiRes = await apiFetch('/api/shops/register', {
@@ -689,27 +691,247 @@ export async function registerNewShop(input: {
         },
         body: JSON.stringify(payload),
       });
-      const contentType = apiRes.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        throw new Error(
-          'Shop registration verification service is temporarily unreachable. Please try again or contact SB Khush Support.'
-        );
+      const contentType = String(apiRes.headers.get('content-type') || '').toLowerCase();
+      if (contentType.includes('application/json')) {
+        backendReachable = true;
+        const json = await apiRes.json();
+        if (!apiRes.ok) {
+          if (apiRes.status === 409 && json?.code === 'DUPLICATE_CNIC') {
+            throw new Error(DUPLICATE_CNIC_ERROR_MESSAGE);
+          }
+          throw new Error(json?.error || 'Failed to verify CNIC and register shop.');
+        }
+        registeredShop = json.shop as Shop;
       }
-      const json = await apiRes.json();
-      if (!apiRes.ok) {
-        if (apiRes.status === 409 && json?.code === 'DUPLICATE_CNIC') {
+    } catch (apiErr: any) {
+      if (apiErr?.isUnconfiguredBackend || apiErr instanceof TypeError) {
+        backendReachable = false;
+      } else if (backendReachable) {
+        throw apiErr;
+      } else if (apiErr?.status === 400 || apiErr?.status === 401 || apiErr?.status === 403 || apiErr?.status === 409) {
+        throw apiErr;
+      }
+    }
+
+    // Reachability fallback 2 (Static SPA / undeployed Cloud Functions):
+    // Atomic 2-step Firestore writeBatch protected directly by firestore.rules existsAfter/!exists preconditions
+    if (!registeredShop) {
+      const cnicHash = await sha256Hex(`SBKHUSH-CNIC-LOCK:${cnicCheck.normalized}`);
+      const cnicMasked = maskCnic(cnicCheck.normalized);
+      const cnicLast4 = cnicCheck.normalized.slice(-4);
+      const cleanSlug = slugCheck.cleanSlug;
+      const shopId = cleanSlug;
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const expiryDate = new Date(
+        now.getTime() + (freePlan.durationDays || 36500) * 24 * 60 * 60 * 1000
+      ).toISOString();
+
+      const newShopDoc: Shop = stripUndefined({
+        id: shopId,
+        slug: cleanSlug,
+        name: payload.shopName,
+        businessType,
+        ownerId: input.ownerId,
+        ownerName: payload.ownerName,
+        ownerEmail: payload.ownerEmail,
+        ownerPhone: payload.ownerPhone,
+        city: payload.city,
+        address: payload.address,
+        cnicHash,
+        cnicMasked,
+        cnicLast4,
+        cnicVerified: true,
+        cnicStatus: 'verified',
+        cnicUpdatedAt: nowIso,
+        logoUrl: '',
+        status: 'active',
+        subscription: {
+          planId: freePlan.id,
+          planName: freePlan.name,
+          status: 'active',
+          billingCycle: 'monthly',
+          pricePaid: 0,
+          startDate: nowIso,
+          expiryDate,
+          autoRenew: false,
+        },
+        usage: {
+          productsCount: 0,
+          ordersCount: 0,
+          storageBytes: 0,
+          staffCount: 1,
+        },
+        theme: {
+          primaryColor: '#065f46',
+          accentColor: '#d97706',
+          heroTitle: `Welcome to ${payload.shopName}`,
+          heroSubtitle:
+            'Authentic curated essentials delivered across Pakistan with Cash on Delivery & Self-Pickup.',
+          showTestimonials: true,
+          showBuyingGuide: Boolean(freePlan.features?.buyingGuide),
+        },
+        onboardingChecklist: {
+          accountCreated: true,
+          logoUploaded: false,
+          paymentConfigured: false,
+          firstProductAdded: false,
+        },
+        lastActivityAt: nowIso,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+
+      const batch1 = writeBatch(db);
+      batch1.set(doc(db, 'cnic_registry', cnicHash), {
+        hmacKey: cnicHash,
+        cnicLast4,
+        cnicMasked,
+        shopId,
+        shopSlug: cleanSlug,
+        shopName: payload.shopName,
+        ownerId: input.ownerId,
+        status: 'active',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+      batch1.set(doc(db, 'shop_slugs', cleanSlug), {
+        slug: cleanSlug,
+        shopId,
+        ownerId: input.ownerId,
+        name: payload.shopName,
+        createdAt: nowIso,
+      });
+      batch1.set(doc(db, 'shops', shopId), newShopDoc);
+
+      try {
+        await batch1.commit();
+      } catch (batchErr: any) {
+        const bCode = String(batchErr?.code || '');
+        const bMsg = String(batchErr?.message || '');
+        if (bCode.includes('permission-denied') || bCode.includes('already-exists') || /permission|exists/i.test(bMsg)) {
+          const slugRecheck = await checkSlugAvailability(cleanSlug).catch(() => ({ available: true, reason: '' }));
+          if (!slugRecheck.available) {
+            throw new Error(slugRecheck.reason || `Store URL slug "${cleanSlug}" is already taken.`);
+          }
           throw new Error(DUPLICATE_CNIC_ERROR_MESSAGE);
         }
-        throw new Error(json?.error || 'Failed to verify CNIC and register shop.');
+        throw batchErr;
       }
-      registeredShop = json.shop as Shop;
-    } catch (apiErr: any) {
-      if (apiErr?.isUnconfiguredBackend) {
-        throw new Error(
-          'CNIC verification backend (Cloud Functions or VITE_API_BASE_URL) is unreachable. Registration halted to enforce One-CNIC-One-Shop.'
+
+      const fullSettings: StoreSettings = {
+        ...INITIAL_SETTINGS,
+        siteName: payload.shopName,
+        contactPhone: payload.ownerPhone,
+        whatsappNumber: payload.ownerPhone,
+        contactEmail: payload.ownerEmail,
+        address: `${payload.address}, ${payload.city}`,
+        city: payload.city,
+        bankDetails: { ...INITIAL_SETTINGS.bankDetails, accountTitle: payload.shopName },
+        easypaisaDetails: {
+          ...INITIAL_SETTINGS.easypaisaDetails,
+          accountTitle: payload.shopName,
+          accountNumber: payload.ownerPhone,
+        },
+        jazzcashDetails: {
+          ...INITIAL_SETTINGS.jazzcashDetails,
+          accountTitle: payload.shopName,
+          accountNumber: payload.ownerPhone,
+        },
+        selfPickupDetails: {
+          ...INITIAL_SETTINGS.selfPickupDetails,
+          title: `${payload.shopName} Outlet (${payload.city})`,
+          address: payload.address,
+          city: payload.city,
+          contactPhone: payload.ownerPhone,
+        },
+      };
+
+      const batch2 = writeBatch(db);
+      batch2.set(
+        doc(db, 'shops_public', shopId),
+        stripUndefined(buildValidShopPublicProjection(shopId, newShopDoc, null, fullSettings, { status: 'active', updatedAt: nowIso }))
+      );
+      batch2.set(doc(db, 'shops', shopId, 'staff', input.ownerId), {
+        uid: input.ownerId,
+        email: payload.ownerEmail,
+        name: payload.ownerName,
+        role: 'shop_owner',
+        permissions: [
+          'overview',
+          'products',
+          'categories',
+          'orders',
+          'customers',
+          'inventory',
+          'coupons',
+          'banners',
+          'appearance',
+          'settings',
+          'staff',
+          'reports',
+          'subscription',
+          'pos',
+          'suppliers',
+          'purchases',
+          'khata',
+        ],
+        status: 'active',
+        createdAt: nowIso,
+      });
+      batch2.set(doc(db, 'users', input.ownerId, 'shopMemberships', shopId), {
+        shopId,
+        shopName: payload.shopName,
+        shopSlug: cleanSlug,
+        role: 'shop_owner',
+        joinedAt: nowIso,
+      });
+      batch2.set(
+        doc(db, 'shops', shopId, 'settings', 'public'),
+        stripUndefined({
+          siteName: fullSettings.siteName,
+          logoUrl: fullSettings.logoUrl,
+          primaryColor: fullSettings.primaryColor,
+          accentColor: fullSettings.accentColor,
+          announcement: fullSettings.announcement,
+          contactPhone: fullSettings.contactPhone,
+          whatsappNumber: fullSettings.whatsappNumber,
+          contactEmail: fullSettings.contactEmail,
+          address: fullSettings.address,
+          city: fullSettings.city,
+          shippingFee: fullSettings.shippingFee,
+          freeShippingThreshold: fullSettings.freeShippingThreshold,
+          currency: fullSettings.currency,
+          currencySymbol: fullSettings.currencySymbol,
+          aboutUs: fullSettings.aboutUs,
+          selfPickupDetails: fullSettings.selfPickupDetails,
+          socialLinks: fullSettings.socialLinks,
+          easypaisaDetails: { enabled: false, accountTitle: '', accountNumber: '' },
+          jazzcashDetails: { enabled: false, accountTitle: '', accountNumber: '' },
+          bankDetails: fullSettings.bankDetails,
+          updatedAt: nowIso,
+        })
+      );
+      batch2.set(
+        doc(db, 'shops', shopId, 'settings', 'private'),
+        stripUndefined({
+          bankDetails: fullSettings.bankDetails,
+          easypaisaDetails: fullSettings.easypaisaDetails,
+          jazzcashDetails: fullSettings.jazzcashDetails,
+          ownerBillingEmail: payload.ownerEmail,
+          ownerPrivatePhone: payload.ownerPhone,
+          updatedAt: nowIso,
+        })
+      );
+      for (const cat of getDefaultCategoriesForBusinessType(businessType)) {
+        const catId = `cat_${cat.slug}`;
+        batch2.set(
+          doc(db, 'shops', shopId, 'categories', catId),
+          stripUndefined({ ...cat, id: catId, shopId })
         );
       }
-      throw apiErr;
+      await batch2.commit();
+      registeredShop = newShopDoc;
     }
   }
 
@@ -762,29 +984,49 @@ export async function registerNewShop(input: {
 export async function updateShopStatus(shopId: string, status: ShopStatus): Promise<void> {
   const now = new Date().toISOString();
   try {
-    const [shopSnap, pubSnap, settingsPubSnap] = await Promise.all([
-      getDoc(doc(db, 'shops', shopId)),
-      getDoc(doc(db, 'shops_public', shopId)).catch(() => null),
-      getDoc(doc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
-    ]);
-    if (!shopSnap.exists()) {
-      throw new Error(`Shop "${shopId}" was not found.`);
+    let handledByAdminFn = false;
+    try {
+      const fn = httpsCallable<{ shopId: string; status: ShopStatus }, { ok: boolean }>(
+        functions,
+        'updateShopStatusAdmin'
+      );
+      const res = await fn({ shopId, status });
+      if (res?.data?.ok) {
+        handledByAdminFn = true;
+      }
+    } catch (cfErr: any) {
+      const code = String(cfErr?.code || '');
+      if (code.includes('invalid-argument') || code.includes('not-found')) {
+        throw cfErr;
+      }
     }
-    const shopData = { ...(shopSnap.data() as Shop), id: shopId };
-    const existingPublic = pubSnap?.exists() ? (pubSnap.data() as ShopPublic) : null;
-    const publicSettings = settingsPubSnap?.exists() ? (settingsPubSnap.data() as Partial<StoreSettings>) : null;
-    const cleanPublicDoc = buildValidShopPublicProjection(
-      shopId,
-      shopData,
-      existingPublic,
-      publicSettings,
-      { status, updatedAt: now }
-    );
 
-    const batch = writeBatch(db);
-    batch.update(doc(db, 'shops', shopId), { status, updatedAt: now });
-    batch.set(doc(db, 'shops_public', shopId), cleanPublicDoc);
-    await batch.commit();
+    if (!handledByAdminFn) {
+      const [shopSnap, pubSnap, settingsPubSnap] = await Promise.all([
+        getDoc(doc(db, 'shops', shopId)),
+        getDoc(doc(db, 'shops_public', shopId)).catch(() => null),
+        getDoc(doc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
+      ]);
+      if (!shopSnap.exists()) {
+        throw new Error(`Shop "${shopId}" was not found.`);
+      }
+      const shopData = { ...(shopSnap.data() as Shop), id: shopId };
+      const existingPublic = pubSnap?.exists() ? (pubSnap.data() as ShopPublic) : null;
+      const publicSettings = settingsPubSnap?.exists() ? (settingsPubSnap.data() as Partial<StoreSettings>) : null;
+      const cleanPublicDoc = buildValidShopPublicProjection(
+        shopId,
+        shopData,
+        existingPublic,
+        publicSettings,
+        { status, updatedAt: now }
+      );
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'shops', shopId), { status, updatedAt: now });
+      batch.set(doc(db, 'shops_public', shopId), cleanPublicDoc);
+      await batch.commit();
+    }
+
     if (status === 'active') {
       await verifyReferralAttributionOnShopActivation(shopId).catch(() => {});
     }
@@ -824,33 +1066,69 @@ export async function assignShopSubscription(
   };
 
   try {
-    const [shopSnap, pubSnap, settingsPubSnap] = await Promise.all([
-      getDoc(doc(db, 'shops', shopId)),
-      getDoc(doc(db, 'shops_public', shopId)).catch(() => null),
-      getDoc(doc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
-    ]);
-    if (!shopSnap.exists()) {
-      throw new Error(`Shop "${shopId}" was not found.`);
+    let handledByAdminFn = false;
+    try {
+      const fn = httpsCallable<
+        {
+          shopId: string;
+          planId: string;
+          billingCycle: BillingCycle;
+          durationDays?: number;
+          isFreeOverride?: boolean;
+          status?: string;
+          pricePaid?: number;
+        },
+        { ok: boolean }
+      >(functions, 'assignShopSubscriptionAdmin');
+      const res = await fn({
+        shopId,
+        planId: plan.id,
+        billingCycle: params.billingCycle,
+        durationDays: days,
+        isFreeOverride: Boolean(params.isFreeOverride),
+        status: params.status || 'active',
+        pricePaid: subscription.pricePaid,
+      });
+      if (res?.data?.ok) {
+        handledByAdminFn = true;
+      }
+    } catch (cfErr: any) {
+      const code = String(cfErr?.code || '');
+      if (code.includes('invalid-argument')) {
+        throw cfErr;
+      }
     }
-    const shopData = { ...(shopSnap.data() as Shop), id: shopId };
-    const existingPublic = pubSnap?.exists() ? (pubSnap.data() as ShopPublic) : null;
-    const publicSettings = settingsPubSnap?.exists() ? (settingsPubSnap.data() as Partial<StoreSettings>) : null;
-    const cleanPublicDoc = buildValidShopPublicProjection(
-      shopId,
-      shopData,
-      existingPublic,
-      publicSettings,
-      { status: 'active', updatedAt: startDate }
-    );
 
-    const batch = writeBatch(db);
-    batch.update(doc(db, 'shops', shopId), {
-      subscription: stripUndefined(subscription),
-      status: 'active',
-      updatedAt: startDate,
-    });
-    batch.set(doc(db, 'shops_public', shopId), cleanPublicDoc);
-    await batch.commit();
+    if (!handledByAdminFn) {
+      const [shopSnap, pubSnap, settingsPubSnap] = await Promise.all([
+        getDoc(doc(db, 'shops', shopId)),
+        getDoc(doc(db, 'shops_public', shopId)).catch(() => null),
+        getDoc(doc(db, 'shops', shopId, 'settings', 'public')).catch(() => null),
+      ]);
+      if (!shopSnap.exists()) {
+        throw new Error(`Shop "${shopId}" was not found.`);
+      }
+      const shopData = { ...(shopSnap.data() as Shop), id: shopId };
+      const existingPublic = pubSnap?.exists() ? (pubSnap.data() as ShopPublic) : null;
+      const publicSettings = settingsPubSnap?.exists() ? (settingsPubSnap.data() as Partial<StoreSettings>) : null;
+      const cleanPublicDoc = buildValidShopPublicProjection(
+        shopId,
+        shopData,
+        existingPublic,
+        publicSettings,
+        { status: 'active', updatedAt: startDate }
+      );
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'shops', shopId), {
+        subscription: stripUndefined(subscription),
+        status: 'active',
+        updatedAt: startDate,
+      });
+      batch.set(doc(db, 'shops_public', shopId), cleanPublicDoc);
+      await batch.commit();
+    }
+
     await logPlatformActivity(
       'Updated Shop Plan',
       'shop',
@@ -908,7 +1186,6 @@ export async function manageShopCnic(params: {
   }
 
   try {
-    const functions = getFunctions(auth.app);
     const manageFn = httpsCallable<typeof cleanPayload, { ok: boolean; cnicStatus: string; cnicMasked: string }>(
       functions,
       'manageShopCnicAdmin'
@@ -951,7 +1228,6 @@ export async function deleteShopComplete(shopId: string): Promise<void> {
     throw new Error('Super Admin authentication required to delete a shop.');
   }
   try {
-    const functions = getFunctions(auth.app);
     const deleteFn = httpsCallable<{ shopId: string }, { ok: boolean }>(
       functions,
       'deleteShopCompleteAdmin'
@@ -1364,5 +1640,257 @@ export async function updateSupportTicket(
     await logPlatformActivity('Updated Support Ticket', 'ticket', ticketId, `Set status to ${updates.status}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `support_tickets/${ticketId}`);
+  }
+}
+
+// ====================================================
+// SUPER ADMIN FULL PLATFORM DATA PURGE (PRODUCTION ADMIN ONLY)
+// ====================================================
+
+export interface PurgePlatformDataResult {
+  ok: boolean;
+  deletedCounts?: Record<string, number>;
+  purgedAt?: string;
+}
+
+async function purgeStoragePrefixClient(prefix: string): Promise<number> {
+  try {
+    const { ref, listAll, deleteObject } = await import('firebase/storage');
+    const { storage } = await import('../firebase/config');
+    let deleted = 0;
+    const walk = async (folderRef: ReturnType<typeof ref>) => {
+      const listing = await listAll(folderRef);
+      for (const item of listing.items) {
+        await deleteObject(item).catch(() => {});
+        deleted += 1;
+      }
+      for (const sub of listing.prefixes) {
+        await walk(sub);
+      }
+    };
+    await walk(ref(storage, prefix));
+    return deleted;
+  } catch {
+    return 0;
+  }
+}
+
+async function deleteCollectionClientChunked(colPathSegments: string[]): Promise<number> {
+  try {
+    const colRef = collection(db, colPathSegments[0], ...colPathSegments.slice(1));
+    const snap = await getDocs(colRef);
+    if (snap.empty) return 0;
+    for (let i = 0; i < snap.docs.length; i += 400) {
+      const chunk = snap.docs.slice(i, i + 400);
+      const batch = writeBatch(db);
+      chunk.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+    return snap.size;
+  } catch {
+    return 0;
+  }
+}
+
+async function executeDirectSuperAdminClientPurge(): Promise<PurgePlatformDataResult> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error('Super Admin authentication required.');
+  }
+  const email = String(user.email || '').trim().toLowerCase();
+  const [adminDoc, legacyAdminDoc] = await Promise.all([
+    getDoc(doc(db, 'platform_admins', user.uid)).catch(() => null),
+    getDoc(doc(db, 'admins', user.uid)).catch(() => null),
+  ]);
+  const isVerifiedSuperAdmin =
+    email === 'hasanaamir815@gmail.com' ||
+    Boolean(adminDoc?.exists()) ||
+    Boolean(legacyAdminDoc?.exists() && legacyAdminDoc.data()?.role === 'super_admin');
+  if (!isVerifiedSuperAdmin) {
+    throw new Error('Forbidden: Super Admin privileges required to purge platform data.');
+  }
+
+  const deletedCounts: Record<string, number> = {};
+  const shopSubcollections = [
+    'products',
+    'categories',
+    'banners',
+    'settings',
+    'pages',
+    'coupons',
+    'carts',
+    'wishlists',
+    'pickup_slots',
+    'newsletter_subscribers',
+    'payment_receipts',
+    'suppliers',
+    'purchases',
+    'pos_sales',
+    'stock_movements',
+    'khata_ledger',
+    'expenses',
+    'orders',
+    'order_tracking',
+    'reviews',
+    'inventory_logs',
+    'contact_messages',
+    'customers',
+    'staff',
+    'notifications',
+    'activity_logs',
+  ];
+
+  // 1. Delete all shops and their subcollections
+  const shopsSnap = await getDocs(collection(db, 'shops')).catch(() => null);
+  let shopsDeleted = 0;
+  if (shopsSnap && !shopsSnap.empty) {
+    for (const sDoc of shopsSnap.docs) {
+      for (const sub of shopSubcollections) {
+        await deleteCollectionClientChunked(['shops', sDoc.id, sub]);
+      }
+      await deleteDoc(doc(db, 'shops', sDoc.id)).catch(() => {});
+      shopsDeleted += 1;
+    }
+  }
+  deletedCounts.shops = shopsDeleted;
+
+  // 2. Delete flat operational, sales, referral, payment, support, log, and legacy collections
+  const flatCollections = [
+    'shops_public',
+    'shop_slugs',
+    'shop_invites',
+    'cnic_registry',
+    'archived_shops',
+    'platform_payments',
+    'platform_payment_receipts',
+    'platform_activity_logs',
+    'support_tickets',
+    'salesMembers',
+    'salesTeams',
+    'salesLeads',
+    'salesTargets',
+    'salesActivities',
+    'salesReferralIndex',
+    'referralAttributions',
+    'commissionLedger',
+    'commissionPayouts',
+    'salesExpenses',
+    'salesBonusRecommendations',
+    'salesMaterials',
+    'salesNotifications',
+    'salesQrEvents',
+    'salesSettings',
+    'products',
+    'categories',
+    'banners',
+    'settings',
+    'coupons',
+    'orders',
+    'order_tracking',
+    'reviews',
+    'inventory_logs',
+    'contact_messages',
+  ];
+
+  for (const colName of flatCollections) {
+    const count = await deleteCollectionClientChunked([colName]);
+    if (count > 0) {
+      deletedCounts[colName] = count;
+    }
+  }
+
+  // 3. Delete non-admin users and their shopMemberships
+  const [usersSnap, adminsSnap] = await Promise.all([
+    getDocs(collection(db, 'users')).catch(() => null),
+    getDocs(collection(db, 'platform_admins')).catch(() => null),
+  ]);
+  const adminUids = new Set<string>(adminsSnap?.docs.map((d) => d.id) || []);
+  adminUids.add(user.uid);
+
+  let nonAdminUsersDeleted = 0;
+  if (usersSnap && !usersSnap.empty) {
+    for (const uDoc of usersSnap.docs) {
+      const uEmail = String(uDoc.data()?.email || '').trim().toLowerCase();
+      if (adminUids.has(uDoc.id) || uEmail === 'hasanaamir815@gmail.com') {
+        continue;
+      }
+      await deleteCollectionClientChunked(['users', uDoc.id, 'shopMemberships']);
+      await deleteDoc(doc(db, 'users', uDoc.id)).catch(() => {});
+      nonAdminUsersDeleted += 1;
+    }
+  }
+  deletedCounts.users = nonAdminUsersDeleted;
+
+  // 4. Best-effort Storage prefix cleanup
+  let storageDeleted = 0;
+  for (const prefix of ['shops', 'platform/payments', 'sales']) {
+    storageDeleted += await purgeStoragePrefixClient(prefix);
+  }
+  if (storageDeleted > 0) {
+    deletedCounts.storageFiles = storageDeleted;
+  }
+
+  const purgedAt = new Date().toISOString();
+  await logPlatformActivity(
+    'Purged All Platform Data',
+    'settings',
+    'platform',
+    'Purged all shops, operational records, sales/referral data, non-admin users, and storage assets.'
+  ).catch(() => {});
+
+  return {
+    ok: true,
+    deletedCounts,
+    purgedAt,
+  };
+}
+
+export async function triggerPurgeAllPlatformData(
+  confirmPhrase: string
+): Promise<PurgePlatformDataResult> {
+  if (confirmPhrase !== 'PURGE ALL DATA') {
+    throw new Error('Please type PURGE ALL DATA exactly to confirm.');
+  }
+  if (!auth.currentUser) {
+    throw new Error('Super Admin authentication required to purge platform data.');
+  }
+
+  try {
+    const fn = httpsCallable<{ confirm: string }, PurgePlatformDataResult>(
+      functions,
+      'purgeAllPlatformDataAdmin'
+    );
+    const res = await fn({ confirm: confirmPhrase });
+    return res.data;
+  } catch (cfErr: any) {
+    const code = String(cfErr?.code || '');
+    if (code.includes('permission-denied') || code.includes('invalid-argument')) {
+      throw new Error(cfErr?.message || 'Unauthorized or invalid purge confirmation.');
+    }
+    try {
+      const token = await auth.currentUser?.getIdToken().catch(() => '');
+      const apiRes = await apiFetch('/api/admin/purge-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ confirm: confirmPhrase }),
+      });
+      const ct = apiRes.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        const json = await apiRes.json();
+        if (!apiRes.ok) {
+          throw new Error(json?.error || 'Failed to purge platform data.');
+        }
+        return json as PurgePlatformDataResult;
+      }
+    } catch (apiErr: any) {
+      if (apiErr?.status === 401 || apiErr?.status === 403 || apiErr?.status === 400) {
+        throw apiErr;
+      }
+    }
+
+    return executeDirectSuperAdminClientPurge();
   }
 }

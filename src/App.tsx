@@ -169,10 +169,10 @@ const StorefrontLayout: React.FC = () => {
         </p>
         <div className="flex flex-wrap gap-3 pt-2 justify-center">
           <Link
-            to={`/s/${DEFAULT_SHOP_ID}`}
+            to="/register"
             className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5"
           >
-            Visit Flagship Store <ArrowRight className="w-3.5 h-3.5" />
+            Launch Your Store <ArrowRight className="w-3.5 h-3.5" />
           </Link>
           <Link
             to="/"

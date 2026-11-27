@@ -1,11 +1,17 @@
-import crypto from 'node:crypto';
+import * as crypto from 'node:crypto';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
+import { setGlobalOptions } from 'firebase-functions/v2';
+import { defineSecret } from 'firebase-functions/params';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+
+setGlobalOptions({ region: 'us-central1' });
+
+const cnicHmacSecret = defineSecret('CNIC_HMAC_SECRET');
 
 const app = initializeApp();
 const FIRESTORE_DB_ID =
@@ -35,9 +41,9 @@ function maskCnicServer(normalized: string): string {
 }
 
 function getFunctionsCnicHmacSecret(): string {
-  const configured = String(process.env.CNIC_HMAC_SECRET || '').trim();
+  const configured = String(cnicHmacSecret.value() || process.env.CNIC_HMAC_SECRET || '').trim();
   if (configured) return configured;
-  if (process.env.FUNCTIONS_EMULATOR === 'true' || process.env.NODE_ENV !== 'production') {
+  if (process.env.FUNCTIONS_EMULATOR === 'true') {
     return 'dev-local-cnic-hmac-fallback';
   }
   throw new HttpsError('failed-precondition', 'Server CNIC verification secret (CNIC_HMAC_SECRET) is not configured.');
@@ -131,6 +137,7 @@ async function rebuildCustomClaimsForUser(
   uid: string
 ): Promise<{ super_admin: boolean; shops: Record<string, string>; sales_role: string | null }> {
   const userRecord = await auth.getUser(uid);
+
   const [adminSnap, legacyAdminSnap] = await Promise.all([
     db.collection('platform_admins').doc(uid).get(),
     db.collection('admins').doc(uid).get(),
@@ -163,21 +170,65 @@ async function rebuildCustomClaimsForUser(
     }
   }
 
-  await auth.setCustomUserClaims(uid, {
-    ...(userRecord.customClaims || {}),
-    super_admin: isSuper,
-    shops,
-    sales_role: salesRole,
-  });
+  const existingClaims = userRecord.customClaims || {};
+  const preservedClaims: Record<string, any> = {};
+  for (const [k, v] of Object.entries(existingClaims)) {
+    if (!['super_admin', 'shops', 'sales_role', 'shopsTruncated'].includes(k)) {
+      preservedClaims[k] = v;
+    }
+  }
 
-  return { super_admin: isSuper, shops, sales_role: salesRole };
+  // Enforce Firebase Auth custom claims 1000-byte ceiling safely
+  const boundedShops: Record<string, string> = {};
+  let shopsTruncated = false;
+  for (const [sId, role] of Object.entries(shops)) {
+    const candidatePayload = {
+      ...preservedClaims,
+      super_admin: isSuper,
+      sales_role: salesRole,
+      shops: { ...boundedShops, [sId]: role },
+      shopsTruncated: false,
+    };
+    if (Buffer.byteLength(JSON.stringify(candidatePayload), 'utf8') <= 900) {
+      boundedShops[sId] = role;
+    } else {
+      shopsTruncated = true;
+    }
+  }
+
+  const nextClaims = {
+    ...preservedClaims,
+    super_admin: isSuper,
+    shops: boundedShops,
+    sales_role: salesRole,
+    ...(shopsTruncated ? { shopsTruncated: true } : {}),
+  };
+
+  await auth.setCustomUserClaims(uid, nextClaims);
+
+  return { super_admin: isSuper, shops: boundedShops, sales_role: salesRole };
 }
 
 /**
- * Automatically keep Firebase Auth Custom Claims (`super_admin`, `shops`) synchronized
- * whenever shop staff records or platform_admins change so storage.rules & firestore.rules
- * verify tenant authorization without bare request.auth != null checks.
+ * Automatically keep Firebase Auth Custom Claims (`super_admin`, `shops`, `sales_role`) synchronized
+ * whenever platform_admins, shop staff, or salesMembers change so storage.rules & firestore.rules
+ * verify tenant & platform authorization without stale tokens.
  */
+export const onPlatformAdminWritten = onDocumentWritten(
+  {
+    document: 'platform_admins/{adminId}',
+    database: FIRESTORE_DB_ID,
+  },
+  async (event) => {
+    const adminId = event.params.adminId;
+    try {
+      await rebuildCustomClaimsForUser(adminId);
+    } catch (err) {
+      console.error('Failed syncing super_admin claim:', adminId, err);
+    }
+  }
+);
+
 export const onShopStaffWritten = onDocumentWritten(
   {
     document: 'shops/{shopId}/staff/{staffUid}',
@@ -303,7 +354,7 @@ export const approvePlatformPayment = onCall(async (request) => {
       toCleanShopPublic(payment.shopId, shopData, existingPublic, 'active', nowIso)
     );
 
-    const logId = `plog_${Date.now()}`;
+    const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
     tx.set(db.collection('platform_activity_logs').doc(logId), {
       id: logId,
       actorId: request.auth?.uid,
@@ -338,7 +389,8 @@ export const rejectPlatformPayment = onCall(async (request) => {
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(paymentRef);
     if (!snap.exists) throw new HttpsError('not-found', 'Payment not found.');
-    if (snap.data()?.status !== 'pending') {
+    const paymentData = snap.data()!;
+    if (paymentData.status !== 'pending') {
       throw new HttpsError('failed-precondition', 'Payment was already processed.');
     }
     tx.update(paymentRef, {
@@ -346,6 +398,17 @@ export const rejectPlatformPayment = onCall(async (request) => {
       rejectionReason: reason,
       reviewedBy: request.auth?.token?.email || 'Super Admin',
       reviewedAt: nowIso,
+    });
+    const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+    tx.set(db.collection('platform_activity_logs').doc(logId), {
+      id: logId,
+      actorId: request.auth?.uid || 'super_admin',
+      actorEmail: request.auth?.token?.email || 'Super Admin',
+      action: 'Rejected Payment',
+      targetType: 'payment',
+      targetId: paymentId,
+      details: `Rejected Rs. ${paymentData.amount || 0} for ${paymentData.shopName || paymentData.shopId}: ${reason}`,
+      createdAt: nowIso,
     });
   });
 
@@ -435,7 +498,7 @@ export const assignShopSubscriptionAdmin = onCall(async (request) => {
   return { ok: true, expiryDate: expiryIso };
 });
 
-export const registerShopWithCnic = onCall(async (request) => {
+export const registerShopWithCnic = onCall({ secrets: [cnicHmacSecret] }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError('unauthenticated', 'Please sign in before registering a shop.');
@@ -677,7 +740,7 @@ export const registerShopWithCnic = onCall(async (request) => {
   return { shop: newShop };
 });
 
-export const manageShopCnicAdmin = onCall(async (request) => {
+export const manageShopCnicAdmin = onCall({ secrets: [cnicHmacSecret] }, async (request) => {
   await assertSuperAdmin(
     request.auth?.uid,
     request.auth?.token?.email,
@@ -831,10 +894,14 @@ export const deleteShopCompleteAdmin = onCall(async (request) => {
     shopRef.get(),
     shopRef.collection('staff').get(),
   ]);
-  const shopData = shopSnap.data();
+  if (!shopSnap.exists) {
+    throw new HttpsError('not-found', `Shop ${shopId} not found.`);
+  }
+  const shopData = shopSnap.data()!;
+  const warnings: string[] = [];
 
   const affectedUids = new Set<string>();
-  if (shopData?.ownerId) affectedUids.add(String(shopData.ownerId));
+  if (shopData.ownerId) affectedUids.add(String(shopData.ownerId));
   staffSnap.forEach((docSnap) => {
     if (docSnap.id) affectedUids.add(docSnap.id);
     const staffUid = docSnap.data()?.uid;
@@ -844,16 +911,16 @@ export const deleteShopCompleteAdmin = onCall(async (request) => {
   // Archive minimal non-PII retention metadata and preserve CNIC lock by default
   await db.collection('archived_shops').doc(shopId).set({
     shopId,
-    slug: shopData?.slug || shopId,
-    name: shopData?.name || shopId,
-    city: shopData?.city || '',
-    cnicHash: shopData?.cnicHash || null,
-    cnicMasked: shopData?.cnicMasked || null,
+    slug: shopData.slug || shopId,
+    name: shopData.name || shopId,
+    city: shopData.city || '',
+    cnicHash: shopData.cnicHash || null,
+    cnicMasked: shopData.cnicMasked || null,
     deletedBy: request.auth?.token?.email || 'Super Admin',
     deletedAt: nowIso,
   });
 
-  if (shopData?.cnicHash) {
+  if (shopData.cnicHash) {
     await db
       .collection('cnic_registry')
       .doc(String(shopData.cnicHash))
@@ -864,29 +931,45 @@ export const deleteShopCompleteAdmin = onCall(async (request) => {
           updatedAt: nowIso,
         },
         { merge: true }
-      )
-      .catch(() => {});
+      );
   }
 
   await db.recursiveDelete(shopRef);
-  await db.collection('shops_public').doc(shopId).delete().catch(() => {});
-  if (shopData?.slug) {
-    await db.collection('shop_slugs').doc(shopData.slug).delete().catch(() => {});
+  await db.collection('shops_public').doc(shopId).delete().catch((err) => {
+    if (err?.code !== 5) warnings.push(`shops_public delete: ${err?.message || err}`);
+  });
+  if (shopData.slug) {
+    await db.collection('shop_slugs').doc(shopData.slug).delete().catch((err) => {
+      if (err?.code !== 5) warnings.push(`shop_slugs delete: ${err?.message || err}`);
+    });
   }
 
   // Delete shop memberships & rebuild custom claims for owner + all staff
   await Promise.all(
     Array.from(affectedUids).map(async (uid) => {
-      await db.collection('users').doc(uid).collection('shopMemberships').doc(shopId).delete().catch(() => {});
-      await rebuildCustomClaimsForUser(uid).catch(() => {});
+      await db
+        .collection('users')
+        .doc(uid)
+        .collection('shopMemberships')
+        .doc(shopId)
+        .delete()
+        .catch((err) => warnings.push(`membership delete (${uid}): ${err?.message || err}`));
+      await rebuildCustomClaimsForUser(uid).catch((err) =>
+        warnings.push(`claim rebuild (${uid}): ${err?.message || err}`)
+      );
     })
   );
 
-  // Delete tenant storage folder assets cleanly
-  try {
-    await storage.bucket().deleteFiles({ prefix: `shops/${shopId}/` });
-  } catch (err) {
-    console.warn('Storage cleanup note during shop delete:', err);
+  // Delete tenant & platform payment storage folder assets cleanly
+  for (const prefix of [`shops/${shopId}/`, `platform/payments/${shopId}/`]) {
+    try {
+      await storage.bucket().deleteFiles({ prefix });
+    } catch (err: any) {
+      if (err?.code !== 404) {
+        console.warn(`Storage cleanup warning (${prefix}):`, err);
+        warnings.push(`storage cleanup (${prefix}): ${err?.message || err}`);
+      }
+    }
   }
 
   const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
@@ -897,11 +980,11 @@ export const deleteShopCompleteAdmin = onCall(async (request) => {
     action: 'Deleted Shop Permanently',
     targetType: 'shop',
     targetId: shopId,
-    details: `Deleted shop "${shopData?.name || shopId}", cleared ${affectedUids.size} staff membership(s), retained CNIC registry lock`,
+    details: `Deleted shop "${shopData.name || shopId}", cleared ${affectedUids.size} staff membership(s), retained CNIC registry lock`,
     createdAt: nowIso,
-  }).catch(() => {});
+  });
 
-  return { ok: true, clearedStaffCount: affectedUids.size };
+  return { ok: true, clearedStaffCount: affectedUids.size, warnings };
 });
 
 export const incrementProductUsage = onDocumentWritten(
@@ -923,7 +1006,7 @@ export const incrementProductUsage = onDocumentWritten(
 
 /**
  * Daily scheduled expiry checker: marks past-due active/trial subscriptions as 'expired'
- * without modifying or deleting merchant products/orders/settings.
+ * in chunked batches (<= 400 writes/batch) without modifying merchant products/orders/settings.
  */
 export const enforceExpiredSubscriptions = onSchedule('every 24 hours', async () => {
   const nowIso = new Date().toISOString();
@@ -932,22 +1015,182 @@ export const enforceExpiredSubscriptions = onSchedule('every 24 hours', async ()
     .where('subscription.status', 'in', ['active', 'trial'])
     .get();
 
-  const batch = db.batch();
-  let count = 0;
-
-  activeSnap.forEach((docSnap) => {
+  const expiredDocs = activeSnap.docs.filter((docSnap) => {
     const data = docSnap.data();
     const expiry = data.subscription?.expiryDate;
-    if (expiry && expiry < nowIso && data.subscription?.planId !== 'free-starter') {
+    return Boolean(expiry && expiry < nowIso && data.subscription?.planId !== 'free-starter');
+  });
+
+  const CHUNK_SIZE = 400;
+  for (let i = 0; i < expiredDocs.length; i += CHUNK_SIZE) {
+    const chunk = expiredDocs.slice(i, i + CHUNK_SIZE);
+    const batch = db.batch();
+    chunk.forEach((docSnap) => {
       batch.update(docSnap.ref, {
         'subscription.status': 'expired',
         updatedAt: nowIso,
       });
-      count++;
-    }
-  });
-
-  if (count > 0) {
+    });
     await batch.commit();
   }
 });
+
+// ====================================================
+// SUPER ADMIN FULL PLATFORM DATA PURGE
+// ====================================================
+
+async function deleteCollectionDocsChunked(collectionName: string): Promise<number> {
+  const snap = await db.collection(collectionName).get();
+  if (snap.empty) return 0;
+  const CHUNK_SIZE = 400;
+  const refs = snap.docs.map((d) => d.ref);
+  for (let i = 0; i < refs.length; i += CHUNK_SIZE) {
+    const batch = db.batch();
+    refs.slice(i, i + CHUNK_SIZE).forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }
+  return refs.length;
+}
+
+export const purgeAllPlatformDataAdmin = onCall(async (request) => {
+  await assertSuperAdmin(
+    request.auth?.uid,
+    request.auth?.token?.email,
+    request.auth?.token?.email_verified,
+    request.auth?.token
+  );
+
+  if (request.data?.confirm !== 'PURGE ALL DATA') {
+    throw new HttpsError('invalid-argument', 'Confirmation phrase "PURGE ALL DATA" is required.');
+  }
+
+  const callerUid = request.auth!.uid;
+  const deletedCounts: Record<string, number> = {};
+
+  // 1. Delete legacy demo-admin Auth account if present
+  try {
+    const demoUser = await auth.getUserByEmail('demo-admin@sbkhush.com');
+    await auth.deleteUser(demoUser.uid);
+    deletedCounts.demoAuthUsers = 1;
+  } catch (err: any) {
+    if (err?.code !== 'auth/user-not-found') {
+      console.warn('Demo auth deletion note:', err?.message || err);
+    }
+  }
+
+  // 2. Recursively delete any demo_env documents & demo_admins
+  const demoEnvSnap = await db.collection('demo_env').get();
+  let demoEnvCount = 0;
+  for (const docSnap of demoEnvSnap.docs) {
+    await db.recursiveDelete(docSnap.ref);
+    demoEnvCount += 1;
+  }
+  deletedCounts.demo_env = demoEnvCount;
+  deletedCounts.demo_admins = await deleteCollectionDocsChunked('demo_admins');
+
+  // 3. Recursively delete all shops and subcollections
+  const shopsSnap = await db.collection('shops').get();
+  let shopsDeleted = 0;
+  for (const shopDoc of shopsSnap.docs) {
+    await db.recursiveDelete(shopDoc.ref);
+    shopsDeleted += 1;
+  }
+  deletedCounts.shops = shopsDeleted;
+
+  // 4. Delete all operational, sales, referral, payment, log, support, and legacy collections
+  const flatCollections = [
+    'shops_public',
+    'shop_slugs',
+    'shop_invites',
+    'cnic_registry',
+    'archived_shops',
+    'platform_payments',
+    'platform_payment_receipts',
+    'platform_activity_logs',
+    'support_tickets',
+    'salesMembers',
+    'salesTeams',
+    'salesLeads',
+    'salesTargets',
+    'salesActivities',
+    'salesReferralIndex',
+    'referralAttributions',
+    'commissionLedger',
+    'commissionPayouts',
+    'salesExpenses',
+    'salesBonusRecommendations',
+    'salesMaterials',
+    'salesNotifications',
+    'salesQrEvents',
+    'salesAuditLogs',
+    'salesSettings',
+    'products',
+    'categories',
+    'banners',
+    'settings',
+    'coupons',
+    'orders',
+    'order_tracking',
+    'reviews',
+    'inventory_logs',
+    'contact_messages',
+  ];
+
+  for (const colName of flatCollections) {
+    const count = await deleteCollectionDocsChunked(colName);
+    if (count > 0) {
+      deletedCounts[colName] = count;
+    }
+  }
+
+  // 5. Delete non-admin users recursively (preserving Super Admin & platform_admins)
+  const [usersSnap, adminsSnap] = await Promise.all([
+    db.collection('users').get(),
+    db.collection('platform_admins').get(),
+  ]);
+  const adminUids = new Set<string>(adminsSnap.docs.map((d) => d.id));
+  adminUids.add(callerUid);
+
+  let nonAdminUsersDeleted = 0;
+  for (const userDoc of usersSnap.docs) {
+    const email = String(userDoc.data()?.email || '').trim().toLowerCase();
+    if (adminUids.has(userDoc.id) || email === SUPER_ADMIN_EMAIL) {
+      continue;
+    }
+    await db.recursiveDelete(userDoc.ref);
+    nonAdminUsersDeleted += 1;
+  }
+  deletedCounts.users = nonAdminUsersDeleted;
+
+  // 6. Delete Storage media under operational and demo prefixes
+  for (const prefix of ['demo_env/', 'shops/', 'platform/payments/', 'sales/']) {
+    try {
+      await storage.bucket().deleteFiles({ prefix });
+    } catch (err: any) {
+      if (err?.code !== 404) {
+        console.warn(`Storage purge note for ${prefix}:`, err?.message || err);
+      }
+    }
+  }
+
+  const purgedAt = new Date().toISOString();
+  const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+  await db.collection('platform_activity_logs').doc(logId).set({
+    id: logId,
+    actorId: callerUid,
+    actorEmail: request.auth?.token?.email || SUPER_ADMIN_EMAIL,
+    action: 'Purged All Platform Data',
+    targetType: 'settings',
+    targetId: 'platform',
+    details: 'Purged all shops, sales, entries, demo artifacts, and non-admin user profiles via Super Admin action.',
+    createdAt: purgedAt,
+  });
+
+  return {
+    ok: true,
+    deletedCounts,
+    purgedAt,
+  };
+});
+
+

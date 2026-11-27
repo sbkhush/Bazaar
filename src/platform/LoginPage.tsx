@@ -96,7 +96,9 @@ export const LoginPage: React.FC = () => {
       <div className="min-h-screen bg-[#FAF9F6] flex items-center justify-center p-4">
         <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-7 space-y-5">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-[#065F46]">Signed In</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-[#065F46]">
+              Signed In
+            </p>
             <h1 className="text-xl font-extrabold text-slate-900 mt-1">{currentUser.email}</h1>
             <p className="text-xs text-slate-500 mt-1">Select your workspace to continue.</p>
           </div>
@@ -111,7 +113,9 @@ export const LoginPage: React.FC = () => {
                   <ShieldCheck className="w-5 h-5 text-[#065F46]" />
                   <div>
                     <p className="text-sm font-bold text-slate-900">Super Admin Portal</p>
-                    <p className="text-[11px] text-slate-600">Manage all tenant shops, plans &amp; payments</p>
+                    <p className="text-[11px] text-slate-600">
+                      Manage all tenant shops, plans & payments
+                    </p>
                   </div>
                 </div>
                 <ArrowRight className="w-4 h-4 text-[#065F46]" />
@@ -245,12 +249,14 @@ export const LoginPage: React.FC = () => {
             </button>
           </form>
 
-          <p className="text-center text-xs text-slate-500 pt-2">
-            Want to launch an online store?{' '}
-            <Link to="/register" className="text-[#065F46] font-bold hover:underline">
-              Create your store free
-            </Link>
-          </p>
+          <div className="pt-2 border-t border-slate-100">
+            <p className="text-center text-xs text-slate-500">
+              Want to launch an online store?{' '}
+              <Link to="/register" className="text-[#065F46] font-bold hover:underline">
+                Create your store free
+              </Link>
+            </p>
+          </div>
         </div>
       </div>
     </div>

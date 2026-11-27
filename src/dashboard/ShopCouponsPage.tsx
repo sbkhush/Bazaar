@@ -30,8 +30,11 @@ export const ShopCouponsPage: React.FC = () => {
   const loadCoupons = async () => {
     if (!shopId) return;
     setLoading(true);
+    setError(null);
     try {
       setCoupons(await getShopCoupons(shopId));
+    } catch (err: any) {
+      setError(err?.message || 'Could not load coupons.');
     } finally {
       setLoading(false);
     }
@@ -150,7 +153,11 @@ export const ShopCouponsPage: React.FC = () => {
                 {!isReadOnly && (
                   <button
                     type="button"
-                    onClick={() => deleteShopCoupon(shopId, c.id).then(loadCoupons)}
+                    onClick={() =>
+                      deleteShopCoupon(shopId, c.id)
+                        .then(loadCoupons)
+                        .catch((err: any) => setError(err?.message || 'Could not delete coupon.'))
+                    }
                     className="p-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

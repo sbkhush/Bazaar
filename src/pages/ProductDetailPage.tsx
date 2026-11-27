@@ -71,16 +71,23 @@ export const ProductDetailPage: React.FC = () => {
           });
           setSelectedVariants(defs);
 
-          getShopProducts(shopId, { category: resolved.category }).then((all) => {
-            if (!active) return;
-            setRelatedProducts(all.filter((item) => item.id !== resolved.id).slice(0, 4));
-          });
+          getShopProducts(shopId, { category: resolved.category })
+            .then((all) => {
+              if (!active) return;
+              setRelatedProducts(all.filter((item) => item.id !== resolved.id).slice(0, 4));
+            })
+            .catch(() => {});
 
-          getShopProductReviews(shopId, resolved.id).then((revs) => {
-            if (active) setReviews(revs);
-          });
+          getShopProductReviews(shopId, resolved.id)
+            .then((revs) => {
+              if (active) setReviews(revs);
+            })
+            .catch(() => {});
         }
         window.scrollTo({ top: 0, behavior: 'smooth' });
+      })
+      .catch(() => {
+        if (active) setProduct(null);
       })
       .finally(() => {
         if (active) setLoading(false);

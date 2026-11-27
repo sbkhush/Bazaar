@@ -37,10 +37,13 @@ export const SuperAdminPlansPage: React.FC = () => {
 
   const loadPlans = async () => {
     setLoading(true);
+    setError(null);
     try {
       await seedDefaultPlansIfEmpty();
       const list = await getSubscriptionPlans();
       setPlans(list);
+    } catch (err: any) {
+      setError(err?.message || 'Could not load subscription plans.');
     } finally {
       setLoading(false);
     }
@@ -177,7 +180,11 @@ export const SuperAdminPlansPage: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => saveSubscriptionPlan({ ...plan, isActive: !plan.isActive }).then(loadPlans)}
+                  onClick={() =>
+                    saveSubscriptionPlan({ ...plan, isActive: !plan.isActive })
+                      .then(loadPlans)
+                      .catch((err: any) => setError(err?.message || 'Could not update plan status.'))
+                  }
                   className="px-3 py-2 border border-slate-200 hover:bg-slate-50 rounded-lg text-xs font-semibold"
                 >
                   {plan.isActive ? 'Disable' : 'Enable'}

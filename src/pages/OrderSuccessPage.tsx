@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useLocation, useSearchParams, Link } from 'react-router-dom';
 import confetti from 'canvas-confetti';
 import { CheckCircle2, Truck, Printer, ArrowRight, Store, Image as ImageIcon, Copy, Check, KeyRound, MapPin, Calendar, Clock, Bell, Phone } from 'lucide-react';
-import { getDoc, doc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { trackShopOrder } from '../services/tenantService';
 import { Order } from '../types';

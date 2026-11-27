@@ -749,9 +749,12 @@ export const AccountPage: React.FC = () => {
             </p>
             <button
               onClick={async () => {
-                if (currentUser.email) {
+                if (!currentUser.email) return;
+                try {
                   await resetPassword(currentUser.email);
                   showToast('Password reset link dispatched to your inbox!', 'success');
+                } catch (err: any) {
+                  showToast(err?.message || 'Could not send password reset email.', 'error');
                 }
               }}
               className="w-full py-2.5 px-4 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2"

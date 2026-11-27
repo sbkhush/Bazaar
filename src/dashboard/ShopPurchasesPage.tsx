@@ -33,6 +33,7 @@ export const ShopPurchasesPage: React.FC = () => {
   const loadAll = async () => {
     if (!shopId) return;
     setLoading(true);
+    setError(null);
     try {
       const [sups, prods, purs] = await Promise.all([
         getShopSuppliers(shopId),
@@ -43,6 +44,8 @@ export const ShopPurchasesPage: React.FC = () => {
       setProducts(prods.filter((p) => p.status !== 'archived'));
       setPurchases(purs);
       if (sups.length && !supplierId) setSupplierId(sups[0].id);
+    } catch (err: any) {
+      setError(err?.message || 'Could not load purchases and suppliers.');
     } finally {
       setLoading(false);
     }
@@ -147,6 +150,12 @@ export const ShopPurchasesPage: React.FC = () => {
             </div>
           )}
         </div>
+
+        {error && !modalOpen && (
+          <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium">
+            {error}
+          </div>
+        )}
 
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           {loading ? (

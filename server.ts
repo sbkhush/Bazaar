@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import http from 'node:http';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import crypto from 'node:crypto';
@@ -115,6 +116,7 @@ interface VerifiedFirebaseUser {
   email: string;
   emailVerified: boolean;
   idToken: string;
+  claims: Record<string, any>;
 }
 
 async function verifyFirebaseIdToken(bearerHeader?: string): Promise<VerifiedFirebaseUser | null> {
@@ -133,15 +135,28 @@ async function verifyFirebaseIdToken(bearerHeader?: string): Promise<VerifiedFir
     );
     if (!response.ok) return null;
     const data = (await response.json()) as {
-      users?: { localId?: string; email?: string; emailVerified?: boolean }[];
+      users?: { localId?: string; email?: string; emailVerified?: boolean; customAttributes?: string }[];
     };
     const user = data.users?.[0];
     if (!user?.localId) return null;
+
+    let claims: Record<string, any> = {};
+    if (user.customAttributes) {
+      try {
+        claims = JSON.parse(user.customAttributes) as Record<string, any>;
+      } catch {
+        claims = {};
+      }
+    }
+
+    const email = String(user.email || '').toLowerCase();
+
     return {
       uid: user.localId,
-      email: String(user.email || '').toLowerCase(),
+      email,
       emailVerified: Boolean(user.emailVerified),
       idToken,
+      claims,
     };
   } catch {
     return null;
@@ -348,7 +363,7 @@ Format cleanly in markdown with:
 4. **Buying Recommendation & Value Verdict**`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-4-hydrogen',
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
@@ -2861,7 +2876,7 @@ Format cleanly in markdown with:
 
       const defaultCats = getDefaultCategoriesForBusinessType(businessType);
 
-      // Atomic Firestore REST commit with exists=false preconditions on BOTH cnic_registry and shop_slugs
+      // Step 1: Atomic Firestore REST commit with exists=false preconditions on cnic_registry, shop_slugs & shops
       try {
         await restCommitWrites(
           [
@@ -2886,6 +2901,13 @@ Format cleanly in markdown with:
               pathSegments: ['shops', shopId],
               data: newShop,
             },
+          ],
+          verifiedUser.idToken
+        );
+
+        // Step 2: Provision public mirror, owner RBAC staff, memberships, settings & default categories
+        await restCommitWrites(
+          [
             {
               type: 'set',
               pathSegments: ['shops_public', shopId],
@@ -3090,6 +3112,199 @@ Format cleanly in markdown with:
     }
   });
 
+  // ====================================================
+  // SUPER ADMIN FULL PLATFORM DATA PURGE
+  // ====================================================
+
+  app.post('/api/admin/purge-all', async (req, res) => {
+    const verifiedUser = await verifyFirebaseIdToken(req.headers.authorization);
+    if (!verifiedUser || !(await isAuthorizedSuperAdmin(verifiedUser))) {
+      return res.status(403).json({
+        error: 'Forbidden: Only authorized Super Admins can purge platform data.',
+      });
+    }
+    if (req.body?.confirm !== 'PURGE ALL DATA') {
+      return res.status(400).json({
+        error: 'Confirmation phrase "PURGE ALL DATA" is required.',
+      });
+    }
+
+    try {
+      const deletedCounts: Record<string, number> = {};
+      const deleteOps: Parameters<typeof restCommitWrites>[0] = [];
+      const shopSubcollections = [
+        'products',
+        'categories',
+        'banners',
+        'settings',
+        'pages',
+        'coupons',
+        'carts',
+        'wishlists',
+        'pickup_slots',
+        'newsletter_subscribers',
+        'payment_receipts',
+        'suppliers',
+        'purchases',
+        'pos_sales',
+        'stock_movements',
+        'khata_ledger',
+        'expenses',
+        'orders',
+        'order_tracking',
+        'reviews',
+        'inventory_logs',
+        'contact_messages',
+        'customers',
+        'staff',
+        'notifications',
+        'activity_logs',
+      ];
+
+      // 1. Delete any legacy demo_env/default documents and demo_admins
+      const demoShops = await restListCollection<Record<string, any>>(
+        ['demo_env', 'default', 'shops'],
+        verifiedUser.idToken
+      ).catch(() => []);
+      for (const sDoc of demoShops) {
+        for (const sub of shopSubcollections) {
+          const subDocs = await restListCollection<Record<string, any>>(
+            ['demo_env', 'default', 'shops', sDoc.id, sub],
+            verifiedUser.idToken
+          ).catch(() => []);
+          subDocs.forEach((sd) =>
+            deleteOps.push({ type: 'delete', pathSegments: ['demo_env', 'default', 'shops', sDoc.id, sub, sd.id] })
+          );
+        }
+        deleteOps.push({ type: 'delete', pathSegments: ['demo_env', 'default', 'shops', sDoc.id] });
+      }
+      const demoAdmins = await restListCollection<Record<string, any>>(['demo_admins'], verifiedUser.idToken).catch(() => []);
+      demoAdmins.forEach((d) => deleteOps.push({ type: 'delete', pathSegments: ['demo_admins', d.id] }));
+      deletedCounts.demo_admins = demoAdmins.length;
+      deleteOps.push({ type: 'delete', pathSegments: ['demo_env', 'default'] });
+
+      // 2. Delete all production shops + subcollections
+      const existingShops = await restListCollection<Record<string, any>>(['shops'], verifiedUser.idToken).catch(() => []);
+      for (const sDoc of existingShops) {
+        for (const sub of shopSubcollections) {
+          const subDocs = await restListCollection<Record<string, any>>(
+            ['shops', sDoc.id, sub],
+            verifiedUser.idToken
+          ).catch(() => []);
+          subDocs.forEach((sd) =>
+            deleteOps.push({ type: 'delete', pathSegments: ['shops', sDoc.id, sub, sd.id] })
+          );
+        }
+        deleteOps.push({ type: 'delete', pathSegments: ['shops', sDoc.id] });
+      }
+      deletedCounts.shops = existingShops.length;
+
+      // 3. Delete all operational, sales, referral, payment, support, log, and legacy collections
+      const flatCollections = [
+        'shops_public',
+        'shop_slugs',
+        'shop_invites',
+        'cnic_registry',
+        'archived_shops',
+        'platform_payments',
+        'platform_payment_receipts',
+        'platform_activity_logs',
+        'support_tickets',
+        'salesMembers',
+        'salesTeams',
+        'salesLeads',
+        'salesTargets',
+        'salesActivities',
+        'salesReferralIndex',
+        'referralAttributions',
+        'commissionLedger',
+        'commissionPayouts',
+        'salesExpenses',
+        'salesBonusRecommendations',
+        'salesMaterials',
+        'salesNotifications',
+        'salesQrEvents',
+        'salesAuditLogs',
+        'salesSettings',
+        'products',
+        'categories',
+        'banners',
+        'settings',
+        'coupons',
+        'orders',
+        'order_tracking',
+        'reviews',
+        'inventory_logs',
+        'contact_messages',
+      ];
+
+      for (const colName of flatCollections) {
+        const docs = await restListCollection<Record<string, any>>([colName], verifiedUser.idToken).catch(() => []);
+        if (docs.length > 0) {
+          deletedCounts[colName] = docs.length;
+          docs.forEach((d) => deleteOps.push({ type: 'delete', pathSegments: [colName, d.id] }));
+        }
+      }
+
+      // 4. Delete non-admin users & shopMemberships
+      const [users, platformAdmins] = await Promise.all([
+        restListCollection<Record<string, any>>(['users'], verifiedUser.idToken).catch(() => []),
+        restListCollection<Record<string, any>>(['platform_admins'], verifiedUser.idToken).catch(() => []),
+      ]);
+      const adminUids = new Set<string>(platformAdmins.map((a) => a.id));
+      adminUids.add(verifiedUser.uid);
+
+      let deletedUsersCount = 0;
+      for (const u of users) {
+        const email = String(u.email || '').trim().toLowerCase();
+        if (adminUids.has(u.id) || email === SUPER_ADMIN_EMAIL) {
+          continue;
+        }
+        const memberships = await restListCollection<Record<string, any>>(
+          ['users', u.id, 'shopMemberships'],
+          verifiedUser.idToken
+        ).catch(() => []);
+        memberships.forEach((m) =>
+          deleteOps.push({ type: 'delete', pathSegments: ['users', u.id, 'shopMemberships', m.id] })
+        );
+        deleteOps.push({ type: 'delete', pathSegments: ['users', u.id] });
+        deletedUsersCount += 1;
+      }
+      deletedCounts.users = deletedUsersCount;
+
+      for (let i = 0; i < deleteOps.length; i += 200) {
+        await restCommitWrites(deleteOps.slice(i, i + 200), verifiedUser.idToken);
+      }
+
+      const purgedAt = new Date().toISOString();
+      const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
+      await restSetDoc(
+        ['platform_activity_logs', logId],
+        {
+          id: logId,
+          actorId: verifiedUser.uid,
+          actorEmail: verifiedUser.email,
+          action: 'Purged All Platform Data',
+          targetType: 'settings',
+          targetId: 'platform',
+          details: `Purged all operational collections via API (${deleteOps.length} deletes)`,
+          createdAt: purgedAt,
+        },
+        verifiedUser.idToken
+      ).catch(() => {});
+
+      return res.json({
+        ok: true,
+        deletedCounts,
+        purgedAt,
+      });
+    } catch (err: any) {
+      return res.status(err?.status || 500).json({ error: err?.message || 'Failed to purge platform data.' });
+    }
+  });
+
+  const httpServer = http.createServer(app);
+
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.resolve(__dirname, 'dist')));
     app.get('*', (req, res) => {
@@ -3099,8 +3314,33 @@ Format cleanly in markdown with:
       return res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   } else {
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      plugins: hmrDisabled
+        ? [
+            {
+              name: 'sbkhush-disable-hmr-client-ws',
+              transform(code: string, id: string) {
+                const normalizedId = id.replace(/\\/g, '/');
+                if (
+                  normalizedId.endsWith('/vite/dist/client/client.mjs') ||
+                  normalizedId === '/@vite/client'
+                ) {
+                  return code.replace(
+                    'transport.connect(createHMRHandler(handleMessage));',
+                    '/* HMR disabled: WebSocket connection skipped */'
+                  );
+                }
+                return null;
+              },
+            },
+          ]
+        : [],
+      server: {
+        middlewareMode: true,
+        hmr: hmrDisabled ? false : { server: httpServer },
+        ws: { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -3115,7 +3355,7 @@ Format cleanly in markdown with:
     });
   });
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 }

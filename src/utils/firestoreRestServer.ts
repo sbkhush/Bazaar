@@ -255,12 +255,15 @@ export async function restCommitWrites(ops: RestWriteOp[], idToken?: string): Pr
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (idToken) headers.Authorization = `Bearer ${idToken}`;
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ writes }),
-  });
-  if (!res.ok) throw await parseFirestoreError(res);
+  const CHUNK_SIZE = 400;
+  for (let i = 0; i < writes.length; i += CHUNK_SIZE) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ writes: writes.slice(i, i + CHUNK_SIZE) }),
+    });
+    if (!res.ok) throw await parseFirestoreError(res);
+  }
 }
 
 export async function restSetDoc(

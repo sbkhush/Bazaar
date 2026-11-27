@@ -115,7 +115,7 @@ export const SuperAdminLayout: React.FC = () => {
             <BrandLogo variant="icon" tone="light" size="sm" />
             <div>
               <p className="text-sm font-extrabold text-white leading-none">{BRAND.name}</p>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 mt-0.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider mt-0.5 text-emerald-400">
                 Super Admin
               </p>
             </div>

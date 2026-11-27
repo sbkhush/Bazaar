@@ -350,9 +350,23 @@ export async function returnPosSale(shopId: string, saleId: string, reason = 'Cu
         throw new Error('This POS invoice has already been returned.');
       }
 
-      for (const item of sale.items) {
-        const pRef = doc(db, 'shops', shopId, 'products', item.productId);
-        const pSnap = await tx.get(pRef);
+      // Firestore transactions require all reads before any writes
+      const productSnaps = await Promise.all(
+        sale.items.map(async (item) => {
+          const pRef = doc(db, 'shops', shopId, 'products', item.productId);
+          const pSnap = await tx.get(pRef);
+          return { item, pRef, pSnap };
+        })
+      );
+
+      const creditToReverse = Number(sale.creditAmount || 0);
+      const custRef =
+        creditToReverse > 0 && sale.customerId
+          ? doc(db, 'shops', shopId, 'customers', sale.customerId)
+          : null;
+      const custSnap = custRef ? await tx.get(custRef) : null;
+
+      for (const { item, pRef, pSnap } of productSnaps) {
         if (pSnap.exists()) {
           const prev = Number(pSnap.data().stock || 0);
           const next = prev + Number(item.quantity || 0);
@@ -378,6 +392,36 @@ export async function returnPosSale(shopId: string, saleId: string, reason = 'Cu
             })
           );
         }
+      }
+
+      if (creditToReverse > 0 && sale.customerId && custRef && custSnap?.exists()) {
+        const custData = custSnap.data();
+        const prevBal = Number(custData.outstandingBalance || 0);
+        const newBal = Math.max(0, prevBal - creditToReverse);
+        tx.update(custRef, {
+          outstandingBalance: newBal,
+          lastOrderAt: nowIso,
+        });
+
+        const kId = `kht_ret_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+        tx.set(
+          doc(db, 'shops', shopId, 'khata_ledger', kId),
+          stripUndefined<KhataEntry>({
+            id: kId,
+            shopId,
+            customerId: sale.customerId,
+            customerName: sale.customerName || custData.name || 'Customer',
+            customerPhone: sale.customerPhone || custData.phone || '',
+            type: 'adjustment',
+            amount: -creditToReverse,
+            previousBalance: prevBal,
+            newBalance: newBal,
+            reference: sale.invoiceNumber,
+            notes: `POS Return Credit Reversal (${sale.invoiceNumber})`,
+            recordedBy: actorName,
+            createdAt: nowIso,
+          })
+        );
       }
 
       tx.update(saleRef, { status: 'returned', updatedAt: nowIso });

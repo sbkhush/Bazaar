@@ -197,20 +197,20 @@ export const Hero3DShowcase: React.FC<{ announcement?: string }> = ({ announceme
                     </div>
                   </div>
 
-                  {/* Product & Stock Card */}
+                  {/* Catalog & Stock Capabilities Card */}
                   <div className="sm:col-span-5 rounded-xl border border-white/10 bg-white/[0.04] p-3.5 flex flex-col justify-between space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-semibold text-slate-200 flex items-center gap-1.5">
-                        <Store className="w-3.5 h-3.5 text-cyan-300" /> Top SKUs
+                        <Store className="w-3.5 h-3.5 text-cyan-300" /> Live Catalog
                       </span>
-                      <span className="text-[10px] text-slate-400 tabular-nums">3 Active</span>
+                      <span className="text-[10px] text-slate-400">Tenant Isolated</span>
                     </div>
 
                     <div className="space-y-2">
                       {[
-                        { name: 'Super Basmati 5KG', stock: '42 bags', price: 'Rs. 1,950' },
-                        { name: 'Glow Vitamin C Serum', stock: '18 pcs', price: 'Rs. 1,450' },
-                        { name: 'Cotton Kurta Set', stock: '14 pcs', price: 'Rs. 3,800' },
+                        { name: 'SKUs & Variants', detail: 'Size, color & weight options', badge: 'Synced' },
+                        { name: 'Low-Stock Alerts', detail: 'Auto deduct on POS & web', badge: 'Live' },
+                        { name: 'Barcode & Units', detail: 'Piece, KG, Gram, Litre & Box', badge: 'Ready' },
                       ].map((item) => (
                         <div
                           key={item.name}
@@ -218,10 +218,10 @@ export const Hero3DShowcase: React.FC<{ announcement?: string }> = ({ announceme
                         >
                           <div className="min-w-0">
                             <p className="text-[11px] font-semibold text-white truncate">{item.name}</p>
-                            <p className="text-[10px] text-slate-400">{item.stock}</p>
+                            <p className="text-[10px] text-slate-400">{item.detail}</p>
                           </div>
-                          <span className="text-[11px] font-bold text-indigo-300 tabular-nums shrink-0">
-                            {item.price}
+                          <span className="text-[10px] font-bold text-indigo-300 shrink-0">
+                            {item.badge}
                           </span>
                         </div>
                       ))}

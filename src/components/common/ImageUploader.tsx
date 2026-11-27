@@ -246,7 +246,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
             <div className="py-2 space-y-2">
               <div className="flex items-center justify-center gap-2 text-xs font-semibold text-emerald-800">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Uploading to Cloud Storage... {progress}%</span>
+                <span>Uploading image... {progress}%</span>
               </div>
               <div className="w-full max-w-xs mx-auto h-1.5 bg-slate-200 rounded-full overflow-hidden">
                 <div

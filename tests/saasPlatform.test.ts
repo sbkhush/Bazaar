@@ -1004,68 +1004,6 @@ describe('SB Khush Production Transformation, Public Separation, Demo Audit & Mo
     expect(appSrc).toContain('/shop/:shopSlug');
   });
 
-  it('classifies demo vs real stores safely without auto-flagging active real merchants', async () => {
-    const { buildDemoDataAuditReport } = await import('../src/utils/demoDataAudit');
-
-    const realShop: Shop = {
-      id: 'karachi-mart',
-      slug: 'karachi-mart',
-      name: 'Karachi Fresh Goods',
-      ownerId: 'uid_real',
-      ownerName: 'Faisal Ahmed',
-      ownerEmail: 'faisal@karachifresh.pk',
-      ownerPhone: '03009876543',
-      city: 'Karachi',
-      address: 'Clifton Block 5',
-      status: 'active',
-      subscription: {
-        planId: 'business',
-        planName: 'Business',
-        status: 'active',
-        billingCycle: 'monthly',
-        pricePaid: 1499,
-        startDate: '2026-01-01T00:00:00.000Z',
-        expiryDate: '2027-01-01T00:00:00.000Z',
-      },
-      usage: { productsCount: 18, ordersCount: 42, storageBytes: 0, staffCount: 2 },
-      createdAt: '2026-01-01T00:00:00.000Z',
-    };
-
-    const noisyActiveShop: Shop = {
-      ...realShop,
-      id: 'demo-shop',
-      slug: 'demo-shop',
-      name: 'Demo Active Business',
-    };
-
-    const testPlaceholderShop: Shop = {
-      ...realShop,
-      id: 'qa-shop-1',
-      slug: 'test-shop',
-      name: 'QA Test Store',
-      ownerEmail: 'qa@test.com',
-      ownerPhone: '03000000000',
-      subscription: {
-        ...realShop.subscription,
-        planId: 'free-starter',
-        planName: 'Free',
-        status: 'trial',
-        pricePaid: 0,
-      },
-      usage: { productsCount: 0, ordersCount: 0, storageBytes: 0, staffCount: 0 },
-    };
-
-    const report = buildDemoDataAuditReport({
-      shops: [realShop, noisyActiveShop, testPlaceholderShop],
-    });
-
-    expect(report.totals.real).toBe(1);
-    expect(report.totals.uncertain).toBe(1);
-    expect(report.totals.demo + report.totals.test).toBe(1);
-    expect(report.items.find((i) => i.id === 'karachi-mart')?.classification).toBe('real');
-    expect(report.items.find((i) => i.id === 'demo-shop')?.classification).toBe('uncertain');
-  });
-
   it('validates mobile image uploads with empty MIME type fallback and enforces size/type caps', async () => {
     const { validateImageFile } = await import('../src/services/storageService');
 

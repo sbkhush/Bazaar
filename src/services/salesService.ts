@@ -1419,7 +1419,8 @@ export async function getReferralCodeOwner(referralCode: string): Promise<Public
       const d = idxSnap.data() as PublicReferralOwner;
       return { ...d, referralCode: cleanCode };
     }
-    // Authorized fallback for legacy members not yet mirrored
+    if (!auth.currentUser) return null;
+    // Authorized fallback for authenticated users referencing legacy members not yet mirrored
     const q = query(collection(db, 'salesMembers'), where('referralCode', '==', cleanCode), limit(1));
     const snap = await getDocs(q);
     if (snap.empty) return null;
@@ -1864,7 +1865,7 @@ export async function updateCommissionDecision(params: {
   const reviewer = auth.currentUser?.email || 'Super Admin';
   const now = new Date().toISOString();
 
-  await runTransaction(db, async (tx) => {
+  const updatedCur = await runTransaction(db, async (tx) => {
     const ref = doc(db, 'commissionLedger', params.commissionId);
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('Commission ledger entry not found.');
@@ -1898,27 +1899,28 @@ export async function updateCommissionDecision(params: {
     }
 
     tx.update(ref, patch);
+    return cur;
+  });
 
-    await createSalesNotification({
-      recipientSalesmanId: cur.salesmanId,
-      recipientUid: cur.salesmanUid,
-      type: params.decision === 'approved' ? 'commission_approved' : 'commission_rejected',
-      title: `Commission ${params.decision.toUpperCase()}: ${formatPKRStr(cur.commissionAmount)}`,
-      message:
-        params.decision === 'approved'
-          ? `Commission for ${cur.shopName} approved and queued for payout.`
-          : `Commission for ${cur.shopName} ${params.decision}: ${params.reason || ''}`,
-      link: '/salesman/commissions',
-    });
+  await createSalesNotification({
+    recipientSalesmanId: updatedCur.salesmanId,
+    recipientUid: updatedCur.salesmanUid,
+    type: params.decision === 'approved' ? 'commission_approved' : 'commission_rejected',
+    title: `Commission ${params.decision.toUpperCase()}: ${formatPKRStr(updatedCur.commissionAmount)}`,
+    message:
+      params.decision === 'approved'
+        ? `Commission for ${updatedCur.shopName} approved and queued for payout.`
+        : `Commission for ${updatedCur.shopName} ${params.decision}: ${params.reason || ''}`,
+    link: '/salesman/commissions',
+  });
 
-    await logSalesAudit({
-      action: `Commission ${params.decision}`,
-      entityType: 'commission',
-      entityId: params.commissionId,
-      previousValue: cur.status,
-      newValue: params.decision,
-      details: `${cur.salesmanName} · ${cur.shopName} (${formatPKRStr(cur.commissionAmount)}) · ${params.reason || 'Verified'}`,
-    });
+  await logSalesAudit({
+    action: `Commission ${params.decision}`,
+    entityType: 'commission',
+    entityId: params.commissionId,
+    previousValue: updatedCur.status,
+    newValue: params.decision,
+    details: `${updatedCur.salesmanName} · ${updatedCur.shopName} (${formatPKRStr(updatedCur.commissionAmount)}) · ${params.reason || 'Verified'}`,
   });
 }
 

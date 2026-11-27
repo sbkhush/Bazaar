@@ -11,12 +11,16 @@ export const SuperAdminSupportPage: React.FC = () => {
   const [replyText, setReplyText] = useState('');
   const [statusChoice, setStatusChoice] = useState<SupportTicket['status']>('in_progress');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const loadTickets = async () => {
     setLoading(true);
+    setError(null);
     try {
       const list = await getAllSupportTickets();
       setTickets(list);
+    } catch (err: any) {
+      setError(err?.message || 'Could not load support tickets.');
     } finally {
       setLoading(false);
     }
@@ -38,6 +42,7 @@ export const SuperAdminSupportPage: React.FC = () => {
     e.preventDefault();
     if (!selected) return;
     setSaving(true);
+    setError(null);
     try {
       await updateSupportTicket(selected.id, {
         status: statusChoice,
@@ -45,6 +50,8 @@ export const SuperAdminSupportPage: React.FC = () => {
       });
       setSelected(null);
       await loadTickets();
+    } catch (err: any) {
+      setError(err?.message || 'Could not save support response.');
     } finally {
       setSaving(false);
     }
@@ -58,6 +65,12 @@ export const SuperAdminSupportPage: React.FC = () => {
           Respond to merchant billing, technical, and feature requests submitted from Shop Profile.
         </p>
       </div>
+
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium">
+          {error}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
         {(['open', 'in_progress', 'resolved', 'all'] as const).map((st) => (

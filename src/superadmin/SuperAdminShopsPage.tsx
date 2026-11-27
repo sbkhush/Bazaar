@@ -11,8 +11,6 @@ import {
   PauseCircle,
   Loader2,
   SlidersHorizontal,
-  FileSearch,
-  ShieldCheck,
   X,
 } from 'lucide-react';
 import {
@@ -26,8 +24,6 @@ import {
   auditShopCnicStatus,
 } from '../services/platformService';
 import { migrateLegacyBazaarPKToTenant } from '../services/migrationService';
-import { getAllSalesLeads } from '../services/salesService';
-import { buildDemoDataAuditReport, AuditClassification, DemoDataAuditReport } from '../utils/demoDataAudit';
 import { Shop, SubscriptionPlan, MigrationResult, BillingCycle, BusinessType } from '../types';
 import { BUSINESS_TYPE_OPTIONS } from '../data/seedData';
 import { useAuth } from '../context/AuthContext';
@@ -69,18 +65,15 @@ export const SuperAdminShopsPage: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<Shop | null>(null);
   const [deleteConfirmSlug, setDeleteConfirmSlug] = useState('');
 
-  // Demo & Legacy Data Audit state (non-destructive inspection)
-  const [auditOpen, setAuditOpen] = useState(false);
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [auditReport, setAuditReport] = useState<DemoDataAuditReport | null>(null);
-  const [auditFilter, setAuditFilter] = useState<'all' | AuditClassification>('all');
-
   const loadShops = async () => {
     setLoading(true);
+    setActionError(null);
     try {
       const [sList, pList] = await Promise.all([getAllShopsAdmin(), getSubscriptionPlans()]);
       setShops(sList);
       setPlans(pList);
+    } catch (err: any) {
+      setActionError(err?.message || 'Could not load tenant stores directory.');
     } finally {
       setLoading(false);
     }
@@ -170,29 +163,6 @@ export const SuperAdminShopsPage: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handleRunDemoAudit = async () => {
-    setAuditLoading(true);
-    setAuditOpen(true);
-    try {
-      const leads = await getAllSalesLeads().catch(() => []);
-      const report = buildDemoDataAuditReport({ shops, leads });
-      setAuditReport(report);
-    } finally {
-      setAuditLoading(false);
-    }
-  };
-
-  const downloadAuditReport = () => {
-    if (!auditReport) return;
-    const blob = new Blob([JSON.stringify(auditReport, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `sbkhush-demo-audit-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   const handleShopStatusChange = async (shop: Shop, nextStatus: 'active' | 'suspended') => {
     setActionError(null);
     setActionBusy(true);
@@ -264,19 +234,10 @@ export const SuperAdminShopsPage: React.FC = () => {
         <div>
           <h2 className="text-xl font-extrabold text-slate-900">Shops Management</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Inspect tenant stores, manage subscriptions, audit demo records safely, or migrate legacy store data.
+            Inspect tenant stores, manage subscriptions, or migrate legacy store data.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleRunDemoAudit}
-            disabled={auditLoading}
-            className="px-4 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-2 transition"
-          >
-            {auditLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSearch className="w-4 h-4 text-[#065F46]" />}
-            Demo &amp; Legacy Audit
-          </button>
           <button
             type="button"
             onClick={() => setMigrateModalOpen(true)}
@@ -288,105 +249,6 @@ export const SuperAdminShopsPage: React.FC = () => {
           </button>
         </div>
       </div>
-
-      {/* Non-Destructive Demo & Legacy Data Audit Panel */}
-      {auditOpen && (
-        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-[#065F46]" />
-                Production Data &amp; Demo Classification Audit
-              </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Non-destructive inspection only. Real and uncertain records are never auto-deleted. Export JSON backup before any manual cleanup.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {auditReport && (
-                <button
-                  type="button"
-                  onClick={downloadAuditReport}
-                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 hover:bg-slate-50"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Export Audit JSON
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setAuditOpen(false)}
-                className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-900"
-                aria-label="Close audit panel"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-
-          {auditLoading || !auditReport ? (
-            <div className="py-8 flex items-center justify-center gap-2 text-xs text-slate-500">
-              <Loader2 className="w-4 h-4 animate-spin text-[#065F46]" /> Classifying stores &amp; leads...
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs">
-                {(['all', 'real', 'demo', 'test', 'sample', 'uncertain'] as const).map((cls) => {
-                  const count =
-                    cls === 'all' ? auditReport.items.length : auditReport.totals[cls];
-                  const active = auditFilter === cls;
-                  return (
-                    <button
-                      key={cls}
-                      type="button"
-                      onClick={() => setAuditFilter(cls)}
-                      className={`p-2.5 rounded-lg border text-left transition ${
-                        active
-                          ? 'border-[#065F46] bg-emerald-50/70 text-[#065F46]'
-                          : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-white'
-                      }`}
-                    >
-                      <p className="text-[10px] uppercase font-bold tracking-wider">{cls}</p>
-                      <p className="text-base font-extrabold tabular-nums mt-0.5">{count}</p>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="max-h-64 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100 text-xs">
-                {auditReport.items
-                  .filter((item) => auditFilter === 'all' || item.classification === auditFilter)
-                  .slice(0, 50)
-                  .map((item) => (
-                    <div key={`${item.collection}-${item.id}`} className="px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="font-bold text-slate-900 truncate">
-                          {item.label}{' '}
-                          <span className="text-[10px] font-mono font-normal text-slate-400">
-                            ({item.collection})
-                          </span>
-                        </p>
-                        <p className="text-[11px] text-slate-500 truncate">{item.sublabel}</p>
-                        <p className="text-[10px] text-slate-400 truncate">{item.reasons.join(' · ')}</p>
-                      </div>
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${
-                          item.classification === 'real'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : item.classification === 'uncertain'
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-rose-100 text-rose-800'
-                        }`}
-                      >
-                        {item.classification}
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
 
       {actionError && (
         <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-medium flex items-center justify-between gap-2">
