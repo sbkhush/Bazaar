@@ -124,6 +124,7 @@ const ShopStaffPage = lazyNamed(() => import('./dashboard/ShopStaffPage'), 'Shop
 const ShopReportsPage = lazyNamed(() => import('./dashboard/ShopReportsPage'), 'ShopReportsPage');
 const ShopSubscriptionPage = lazyNamed(() => import('./dashboard/ShopSubscriptionPage'), 'ShopSubscriptionPage');
 const ShopProfilePage = lazyNamed(() => import('./dashboard/ShopProfilePage'), 'ShopProfilePage');
+const ShopMarketingPage = lazyNamed(() => import('./dashboard/ShopMarketingPage'), 'ShopMarketingPage');
 
 // Layer 4 (Secondary): Storefront Interior Pages
 const ShopPage = lazyNamed(() => import('./pages/ShopPage'), 'ShopPage');
@@ -424,6 +425,7 @@ export default function App() {
                 <Route path="reports" element={<ShopReportsPage />} />
                 <Route path="subscription" element={<ShopSubscriptionPage />} />
                 <Route path="profile" element={<ShopProfilePage />} />
+                <Route path="marketing" element={<ShopMarketingPage />} />
               </Route>
 
               {/* Layer 4: Multi-Tenant Public Storefronts (/s/:shopSlug & /shop/:shopSlug) */}

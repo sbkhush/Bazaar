@@ -21,9 +21,7 @@ import {
   CNIC_AUDIT_BLOCK_MESSAGE,
   isValidCnic,
   normalizeCnic,
-  maskCnic,
 } from '../utils/cnic';
-import { sha256Hex } from '../utils/trackingCrypto';
 import {
   Shop,
   ShopPublic,
@@ -40,8 +38,6 @@ import {
 import {
   DEFAULT_SUBSCRIPTION_PLANS,
   DEFAULT_PLATFORM_SETTINGS,
-  INITIAL_SETTINGS,
-  getDefaultCategoriesForBusinessType,
   sanitizeShopSlug,
   isValidShopSlug,
 } from '../data/seedData';
@@ -626,8 +622,7 @@ export async function registerNewShop(input: {
   }
 
   const plans = await getSubscriptionPlans();
-  const freePlan = plans.find((p) => p.id === 'free-starter') || DEFAULT_SUBSCRIPTION_PLANS[0];
-  const requestedPlan = plans.find((p) => p.id === input.planId) || freePlan;
+  const requestedPlan = plans.find((p) => p.id === input.planId) || plans[0] || DEFAULT_SUBSCRIPTION_PLANS[0];
   const businessType: BusinessType = input.businessType || 'general_store';
 
   const currentUser = auth.currentUser;
@@ -713,230 +708,18 @@ export async function registerNewShop(input: {
       }
     }
 
-    // Reachability fallback 2 (Static SPA / undeployed Cloud Functions):
-    // Atomic 2-step Firestore writeBatch protected directly by firestore.rules existsAfter/!exists preconditions
+    // Fail closed if neither Cloud Functions nor the trusted Express backend is reachable
     if (!registeredShop) {
-      const cnicHash = await sha256Hex(`SBKHUSH-CNIC-LOCK:${cnicCheck.normalized}`);
-      const cnicMasked = maskCnic(cnicCheck.normalized);
-      const cnicLast4 = cnicCheck.normalized.slice(-4);
-      const cleanSlug = slugCheck.cleanSlug;
-      const shopId = cleanSlug;
-      const now = new Date();
-      const nowIso = now.toISOString();
-      const expiryDate = new Date(
-        now.getTime() + (freePlan.durationDays || 36500) * 24 * 60 * 60 * 1000
-      ).toISOString();
-
-      const newShopDoc: Shop = stripUndefined({
-        id: shopId,
-        slug: cleanSlug,
-        name: payload.shopName,
-        businessType,
-        ownerId: input.ownerId,
-        ownerName: payload.ownerName,
-        ownerEmail: payload.ownerEmail,
-        ownerPhone: payload.ownerPhone,
-        city: payload.city,
-        address: payload.address,
-        cnicHash,
-        cnicMasked,
-        cnicLast4,
-        cnicVerified: true,
-        cnicStatus: 'verified',
-        cnicUpdatedAt: nowIso,
-        logoUrl: '',
-        status: 'active',
-        subscription: {
-          planId: freePlan.id,
-          planName: freePlan.name,
-          status: 'active',
-          billingCycle: 'monthly',
-          pricePaid: 0,
-          startDate: nowIso,
-          expiryDate,
-          autoRenew: false,
-        },
-        usage: {
-          productsCount: 0,
-          ordersCount: 0,
-          storageBytes: 0,
-          staffCount: 1,
-        },
-        theme: {
-          primaryColor: '#065f46',
-          accentColor: '#d97706',
-          heroTitle: `Welcome to ${payload.shopName}`,
-          heroSubtitle:
-            'Authentic curated essentials delivered across Pakistan with Cash on Delivery & Self-Pickup.',
-          showTestimonials: true,
-          showBuyingGuide: Boolean(freePlan.features?.buyingGuide),
-        },
-        onboardingChecklist: {
-          accountCreated: true,
-          logoUploaded: false,
-          paymentConfigured: false,
-          firstProductAdded: false,
-        },
-        lastActivityAt: nowIso,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      });
-
-      const batch1 = writeBatch(db);
-      batch1.set(doc(db, 'cnic_registry', cnicHash), {
-        hmacKey: cnicHash,
-        cnicLast4,
-        cnicMasked,
-        shopId,
-        shopSlug: cleanSlug,
-        shopName: payload.shopName,
-        ownerId: input.ownerId,
-        status: 'active',
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      });
-      batch1.set(doc(db, 'shop_slugs', cleanSlug), {
-        slug: cleanSlug,
-        shopId,
-        ownerId: input.ownerId,
-        name: payload.shopName,
-        createdAt: nowIso,
-      });
-      batch1.set(doc(db, 'shops', shopId), newShopDoc);
-
-      try {
-        await batch1.commit();
-      } catch (batchErr: any) {
-        const bCode = String(batchErr?.code || '');
-        const bMsg = String(batchErr?.message || '');
-        if (bCode.includes('permission-denied') || bCode.includes('already-exists') || /permission|exists/i.test(bMsg)) {
-          const slugRecheck = await checkSlugAvailability(cleanSlug).catch(() => ({ available: true, reason: '' }));
-          if (!slugRecheck.available) {
-            throw new Error(slugRecheck.reason || `Store URL slug "${cleanSlug}" is already taken.`);
-          }
-          throw new Error(DUPLICATE_CNIC_ERROR_MESSAGE);
-        }
-        throw batchErr;
-      }
-
-      const fullSettings: StoreSettings = {
-        ...INITIAL_SETTINGS,
-        siteName: payload.shopName,
-        contactPhone: payload.ownerPhone,
-        whatsappNumber: payload.ownerPhone,
-        contactEmail: payload.ownerEmail,
-        address: `${payload.address}, ${payload.city}`,
-        city: payload.city,
-        bankDetails: { ...INITIAL_SETTINGS.bankDetails, accountTitle: payload.shopName },
-        easypaisaDetails: {
-          ...INITIAL_SETTINGS.easypaisaDetails,
-          accountTitle: payload.shopName,
-          accountNumber: payload.ownerPhone,
-        },
-        jazzcashDetails: {
-          ...INITIAL_SETTINGS.jazzcashDetails,
-          accountTitle: payload.shopName,
-          accountNumber: payload.ownerPhone,
-        },
-        selfPickupDetails: {
-          ...INITIAL_SETTINGS.selfPickupDetails,
-          title: `${payload.shopName} Outlet (${payload.city})`,
-          address: payload.address,
-          city: payload.city,
-          contactPhone: payload.ownerPhone,
-        },
-      };
-
-      const batch2 = writeBatch(db);
-      batch2.set(
-        doc(db, 'shops_public', shopId),
-        stripUndefined(buildValidShopPublicProjection(shopId, newShopDoc, null, fullSettings, { status: 'active', updatedAt: nowIso }))
+      throw new Error(
+        'Shop registration verification service is temporarily unreachable. Please try again or contact SB Khush Support.'
       );
-      batch2.set(doc(db, 'shops', shopId, 'staff', input.ownerId), {
-        uid: input.ownerId,
-        email: payload.ownerEmail,
-        name: payload.ownerName,
-        role: 'shop_owner',
-        permissions: [
-          'overview',
-          'products',
-          'categories',
-          'orders',
-          'customers',
-          'inventory',
-          'coupons',
-          'banners',
-          'appearance',
-          'settings',
-          'staff',
-          'reports',
-          'subscription',
-          'pos',
-          'suppliers',
-          'purchases',
-          'khata',
-        ],
-        status: 'active',
-        createdAt: nowIso,
-      });
-      batch2.set(doc(db, 'users', input.ownerId, 'shopMemberships', shopId), {
-        shopId,
-        shopName: payload.shopName,
-        shopSlug: cleanSlug,
-        role: 'shop_owner',
-        joinedAt: nowIso,
-      });
-      batch2.set(
-        doc(db, 'shops', shopId, 'settings', 'public'),
-        stripUndefined({
-          siteName: fullSettings.siteName,
-          logoUrl: fullSettings.logoUrl,
-          primaryColor: fullSettings.primaryColor,
-          accentColor: fullSettings.accentColor,
-          announcement: fullSettings.announcement,
-          contactPhone: fullSettings.contactPhone,
-          whatsappNumber: fullSettings.whatsappNumber,
-          contactEmail: fullSettings.contactEmail,
-          address: fullSettings.address,
-          city: fullSettings.city,
-          shippingFee: fullSettings.shippingFee,
-          freeShippingThreshold: fullSettings.freeShippingThreshold,
-          currency: fullSettings.currency,
-          currencySymbol: fullSettings.currencySymbol,
-          aboutUs: fullSettings.aboutUs,
-          selfPickupDetails: fullSettings.selfPickupDetails,
-          socialLinks: fullSettings.socialLinks,
-          easypaisaDetails: { enabled: false, accountTitle: '', accountNumber: '' },
-          jazzcashDetails: { enabled: false, accountTitle: '', accountNumber: '' },
-          bankDetails: fullSettings.bankDetails,
-          updatedAt: nowIso,
-        })
-      );
-      batch2.set(
-        doc(db, 'shops', shopId, 'settings', 'private'),
-        stripUndefined({
-          bankDetails: fullSettings.bankDetails,
-          easypaisaDetails: fullSettings.easypaisaDetails,
-          jazzcashDetails: fullSettings.jazzcashDetails,
-          ownerBillingEmail: payload.ownerEmail,
-          ownerPrivatePhone: payload.ownerPhone,
-          updatedAt: nowIso,
-        })
-      );
-      for (const cat of getDefaultCategoriesForBusinessType(businessType)) {
-        const catId = `cat_${cat.slug}`;
-        batch2.set(
-          doc(db, 'shops', shopId, 'categories', catId),
-          stripUndefined({ ...cat, id: catId, shopId })
-        );
-      }
-      await batch2.commit();
-      registeredShop = newShopDoc;
     }
   }
 
   if (!registeredShop) {
-    throw new Error('Could not complete atomic CNIC shop registration.');
+    throw new Error(
+      'Shop registration verification service is temporarily unreachable. Please try again or contact SB Khush Support.'
+    );
   }
 
   // Refresh Firebase Auth custom claims so the new owner immediately receives shopRoles claims

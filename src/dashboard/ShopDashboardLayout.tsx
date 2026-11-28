@@ -29,6 +29,7 @@ import {
   BookOpen,
   Receipt,
   Lock,
+  QrCode,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { DashboardProvider, useDashboard } from './DashboardContext';
@@ -144,6 +145,7 @@ const DashboardShell: React.FC = () => {
     { to: '/dashboard/inventory', label: 'Inventory', icon: Boxes, perm: 'inventory' },
     { to: '/dashboard/coupons', label: 'Coupons', icon: Ticket, perm: 'coupons' },
     { to: '/dashboard/banners', label: 'Banners', icon: ImageIcon, perm: 'banners' },
+    { to: '/dashboard/marketing', label: 'Shop QR & Marketing', icon: QrCode, perm: 'overview' },
     { to: '/dashboard/appearance', label: 'Appearance & Pages', icon: Palette, perm: 'appearance' },
     { to: '/dashboard/settings', label: 'Payments & Self-Pickup', icon: Settings, perm: 'settings' },
     { to: '/dashboard/staff', label: 'Staff & Roles', icon: UserCog, perm: 'staff' },

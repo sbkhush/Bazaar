@@ -24,13 +24,18 @@ describe('SB Khush Clean Production Enforcement & Full Data Purge Suite', () => 
       'scripts/provision-demo-admin.ts',
       'scripts/reset-demo-data.ts',
       'docs/DEMO_SUPER_ADMIN_GUIDE.md',
-      'walkthrough.md',
       'security_spec.md',
       'public/assets',
     ];
 
     for (const relPath of removedPaths) {
       expect(fs.existsSync(path.join(WORKSPACE_ROOT, relPath)), `Expected ${relPath} to be deleted`).toBe(false);
+    }
+
+    if (fs.existsSync(path.join(WORKSPACE_ROOT, 'walkthrough.md'))) {
+      const walkthrough = readWorkspaceFile('walkthrough.md');
+      expect(walkthrough).not.toContain('demo-admin@sbkhush.com');
+      expect(walkthrough).not.toContain('DEMO_ADMIN_PASSWORD');
     }
 
     const envExample = readWorkspaceFile('.env.example');

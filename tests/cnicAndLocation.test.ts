@@ -146,10 +146,11 @@ describe('Security, API Client, Shop Deletion & Reliability Invariants', () => {
     expect(functionsSrc).toContain("collection('archived_shops')");
   });
 
-  it('enforces global atomic CNIC registration and strict CORS in server.ts, Cloud Functions, and Firestore rules', () => {
+  it('enforces global atomic CNIC registration without client-side SHA256 bypass and strict CORS in server.ts, Cloud Functions, and Firestore rules', () => {
     expect(platformServiceSrc).toContain("'registerShopWithCnic'");
     expect(platformServiceSrc).toContain("'/api/shops/register'");
-    expect(platformServiceSrc).toContain('SBKHUSH-CNIC-LOCK:');
+    expect(platformServiceSrc).not.toContain('SBKHUSH-CNIC-LOCK:');
+    expect(platformServiceSrc).toContain('Shop registration verification service is temporarily unreachable.');
     expect(serverSrc).toContain("app.post('/api/shops/register'");
     expect(serverSrc).toContain('cnic_registry');
     expect(serverSrc).toContain("type: 'create'");

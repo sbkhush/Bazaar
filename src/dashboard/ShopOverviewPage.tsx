@@ -14,6 +14,7 @@ import {
   ExternalLink,
   Calculator,
   TrendingUp,
+  QrCode,
 } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import {
@@ -204,6 +205,12 @@ export const ShopOverviewPage: React.FC = () => {
               className="px-4 py-2 bg-[#065F46] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
             >
               <Plus className="w-3.5 h-3.5" /> Add Product
+            </Link>
+            <Link
+              to="/dashboard/marketing"
+              className="px-4 py-2 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-[#065F46] rounded-xl text-xs font-bold flex items-center gap-1.5"
+            >
+              <QrCode className="w-3.5 h-3.5" /> Shop QR &amp; Poster
             </Link>
             <Link
               to="/dashboard/settings"

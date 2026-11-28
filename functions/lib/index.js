@@ -16,6 +16,8 @@ const cnicHmacSecret = (0, params_1.defineSecret)('CNIC_HMAC_SECRET');
 const app = (0, app_1.initializeApp)();
 const FIRESTORE_DB_ID = process.env.FIRESTORE_DATABASE_ID ||
     'ai-studio-bazaarpkecommerc-94c8ec32-7dba-4ff3-a6e4-6aa9072c863c';
+const STORAGE_BUCKET = process.env.FIREBASE_STORAGE_BUCKET ||
+    'primeval-objective-t8chg.firebasestorage.app';
 const db = (0, firestore_1.getFirestore)(app, FIRESTORE_DB_ID);
 const auth = (0, auth_1.getAuth)(app);
 const storage = (0, storage_1.getStorage)(app);
@@ -53,6 +55,38 @@ const RESERVED_SLUGS = new Set([
     'privacy-policy', 'terms-and-conditions', 'contact',
     'salesman', 'sales-manager', 'referral', 'r',
 ]);
+function getDefaultCategoriesForBusinessTypeServer(businessType) {
+    switch (businessType) {
+        case 'cosmetics':
+            return [
+                { name: 'Skincare & Serums', slug: 'skincare', description: 'Cleansers, moisturizers, serums & sunscreens', order: 1 },
+                { name: 'Makeup & Lipsticks', slug: 'makeup', description: 'Foundations, lip shades, palettes & brushes', order: 2 },
+                { name: 'Hair & Body Care', slug: 'hair-care', description: 'Shampoos, oils, masks & body lotions', order: 3 },
+                { name: 'Fragrances & Perfumes', slug: 'fragrances', description: 'Attar, body mists & designer perfumes', order: 4 },
+            ];
+        case 'clothing':
+            return [
+                { name: 'Men & Boys Wear', slug: 'menswear', description: 'Shalwar kameez, kurtas, shirts & trousers', order: 1 },
+                { name: 'Women & Lawn Suits', slug: 'womenswear', description: 'Stitched & unstitched 3-piece suites and pret', order: 2 },
+                { name: 'Footwear & Chappals', slug: 'footwear', description: 'Casual shoes, sandals, Peshawari & khussa', order: 3 },
+                { name: 'Accessories & Bags', slug: 'accessories', description: 'Shawls, dupattas, handbags & belts', order: 4 },
+            ];
+        case 'other_retail':
+            return [
+                { name: 'Featured Essentials', slug: 'featured-essentials', description: 'Popular everyday store products', order: 1 },
+                { name: 'New Arrivals', slug: 'new-arrivals', description: 'Latest stock added to the store', order: 2 },
+                { name: 'Value Bundles', slug: 'value-bundles', description: 'Saver packs and combo deals', order: 3 },
+            ];
+        case 'general_store':
+        default:
+            return [
+                { name: 'Atta, Rice & Pulses', slug: 'staples-grains', description: 'Everyday kitchen staples, flour, rice & daal', order: 1 },
+                { name: 'Cooking Oil & Beverages', slug: 'oils-beverages', description: 'Cooking oils, ghee, tea, milk & cold drinks', order: 2 },
+                { name: 'Personal & Home Care', slug: 'home-personal-care', description: 'Soaps, detergents, cleaners & hygiene essentials', order: 3 },
+                { name: 'Snacks & Bakery', slug: 'snacks-bakery', description: 'Biscuits, spices, sauces & breakfast items', order: 4 },
+            ];
+    }
+}
 function resolveCleanSlug(shopId, candidate) {
     for (const raw of [candidate, shopId]) {
         const clean = String(raw || '')
@@ -595,6 +629,7 @@ exports.registerShopWithCnic = (0, https_1.onCall)({ secrets: [cnicHmacSecret] }
                 cashOnPickupEnabled: true,
                 advanceDays: 5,
             },
+            aboutUs: `${shopName} delivers curated everyday essentials in ${city} and across Pakistan with Cash on Delivery, digital wallets, and store pickup.`,
             socialLinks: {},
             updatedAt: nowIso,
         });
@@ -606,6 +641,14 @@ exports.registerShopWithCnic = (0, https_1.onCall)({ secrets: [cnicHmacSecret] }
             ownerPrivatePhone: ownerPhone,
             updatedAt: nowIso,
         });
+        for (const cat of getDefaultCategoriesForBusinessTypeServer(businessType)) {
+            const catId = `cat_${cat.slug}`;
+            tx.set(shopRef.collection('categories').doc(catId), {
+                ...cat,
+                id: catId,
+                shopId,
+            });
+        }
         const logId = `plog_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`;
         tx.set(db.collection('platform_activity_logs').doc(logId), {
             id: logId,
@@ -807,7 +850,7 @@ exports.deleteShopCompleteAdmin = (0, https_1.onCall)(async (request) => {
     // Delete tenant & platform payment storage folder assets cleanly
     for (const prefix of [`shops/${shopId}/`, `platform/payments/${shopId}/`]) {
         try {
-            await storage.bucket().deleteFiles({ prefix });
+            await storage.bucket(STORAGE_BUCKET).deleteFiles({ prefix });
         }
         catch (err) {
             if (err?.code !== 404) {
@@ -986,7 +1029,7 @@ exports.purgeAllPlatformDataAdmin = (0, https_1.onCall)(async (request) => {
     // 6. Delete Storage media under operational and demo prefixes
     for (const prefix of ['demo_env/', 'shops/', 'platform/payments/', 'sales/']) {
         try {
-            await storage.bucket().deleteFiles({ prefix });
+            await storage.bucket(STORAGE_BUCKET).deleteFiles({ prefix });
         }
         catch (err) {
             if (err?.code !== 404) {

@@ -26,6 +26,12 @@ import { QuickViewModal } from '../components/common/QuickViewModal';
 import { FALLBACK_PRODUCT_IMAGE } from '../data/seedData';
 import { useTenant } from '../context/TenantContext';
 import defaultStoreBanner from '../assets/images/storefront_banner_default_1795028612348.webp';
+import {
+  getAccessibleContrastText,
+  normalizeHexColor,
+  resolveHeroButtonLabel,
+  resolveHeroStoreLink,
+} from '../utils/storefrontHero';
 
 export const HomePage: React.FC = () => {
   const { shopId, settings, storeBasePath } = useTenant();
@@ -36,13 +42,6 @@ export const HomePage: React.FC = () => {
   const [currentBanner, setCurrentBanner] = useState(0);
   const [quickViewProduct, setQuickViewProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
-
-  const resolveStoreLink = (link?: string) => {
-    if (!link) return `${storeBasePath}/shop`;
-    if (link.startsWith('http://') || link.startsWith('https://')) return link;
-    if (link.startsWith('/s/')) return link;
-    return `${storeBasePath}${link.startsWith('/') ? link : `/${link}`}`;
-  };
 
   useEffect(() => {
     let active = true;
@@ -69,7 +68,7 @@ export const HomePage: React.FC = () => {
               subtitle: `Quality everyday essentials, verified brands, and express courier or self-pickup service in ${settings.city || 'Pakistan'}.`,
               link: '/shop',
               imageUrl: defaultStoreBanner,
-              buttonText: 'Shop Catalog',
+              buttonText: 'Shop Now',
               isActive: true,
               order: 1,
             },
@@ -95,81 +94,111 @@ export const HomePage: React.FC = () => {
 
   const trendingProducts = products.slice(0, 8);
   const bestSellers = [...products].sort((a, b) => b.reviewCount - a.reviewCount).slice(0, 4);
-  const brandColor = settings.primaryColor || '#065f46';
+  const brandColor = normalizeHexColor(settings.primaryColor, '#065f46');
+  const brandCtaText = getAccessibleContrastText(brandColor);
 
   return (
     <div className="space-y-10 sm:space-y-16 pb-16">
-      {/* 1. Hero Banner Carousel */}
+      {/* 1. Hero Banner Carousel — CSS grid stack keeps full intrinsic height so CTA is never clipped on mobile */}
       <section className="relative bg-slate-900 text-white overflow-hidden">
-        <div className="relative min-h-[420px] sm:min-h-[500px] lg:min-h-[540px] flex items-center">
-          {banners.map((banner, index) => (
-            <div
-              key={banner.id}
-              className={`absolute inset-0 transition-opacity duration-1000 ${
-                index === currentBanner ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
-              }`}
-            >
-              <img
-                src={banner.imageUrl || defaultStoreBanner}
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src = defaultStoreBanner;
-                }}
-                alt={banner.title}
-                decoding="async"
-                loading={index === 0 ? 'eager' : 'lazy'}
-                fetchPriority={index === currentBanner ? 'high' : 'low'}
-                className="w-full h-full object-cover object-center"
-              />
-              <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/75 to-slate-950/20" />
+        <div className="relative grid min-h-[420px] sm:min-h-[500px] lg:min-h-[540px]">
+          {banners.map((banner, index) => {
+            const isCurrent = index === currentBanner;
+            const ctaLabel = resolveHeroButtonLabel(banner.buttonText);
+            const resolvedLink = resolveHeroStoreLink(banner.link, storeBasePath);
 
-              <div className="relative z-10 max-w-7xl mx-auto px-5 sm:px-14 h-full flex flex-col justify-center">
-                <div className="max-w-xl space-y-3 sm:space-y-4">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-[10px] sm:text-xs font-semibold uppercase tracking-wider backdrop-blur-xs">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    {settings.siteName} • {settings.city || 'Pakistan'}
-                  </div>
+            return (
+              <div
+                key={banner.id}
+                aria-hidden={!isCurrent}
+                className={`[grid-area:1/1] relative flex items-center transition-opacity duration-700 ${
+                  isCurrent ? 'opacity-100 z-10 pointer-events-auto' : 'opacity-0 z-0 pointer-events-none'
+                }`}
+              >
+                <img
+                  src={banner.imageUrl || defaultStoreBanner}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = defaultStoreBanner;
+                  }}
+                  alt={banner.title}
+                  decoding="async"
+                  loading={index === 0 ? 'eager' : 'lazy'}
+                  fetchPriority={isCurrent ? 'high' : 'low'}
+                  className="absolute inset-0 w-full h-full object-cover object-center"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/75 to-slate-950/35 sm:bg-gradient-to-r sm:from-slate-950/95 sm:via-slate-950/75 sm:to-slate-950/25" />
 
-                  <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black text-white leading-tight tracking-tight">
-                    {banner.title}
-                  </h1>
+                <div className="relative z-10 w-full max-w-7xl mx-auto px-5 sm:px-14 py-14 pb-16 sm:py-20">
+                  <div className="max-w-xl space-y-3 sm:space-y-4">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-[10px] sm:text-xs font-semibold uppercase tracking-wider backdrop-blur-xs">
+                      <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                      {settings.siteName} • {settings.city || 'Pakistan'}
+                    </div>
 
-                  <p className="text-xs sm:text-base text-slate-200 leading-relaxed max-w-lg">
-                    {banner.subtitle}
-                  </p>
+                    <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black text-white leading-tight tracking-tight">
+                      {banner.title}
+                    </h1>
 
-                  <div className="flex flex-wrap gap-2.5 sm:gap-3 pt-2">
-                    <Link
-                      to={resolveStoreLink(banner.link)}
-                      className="px-5 sm:px-6 py-3 sm:py-3.5 text-white rounded-xl font-bold text-xs sm:text-sm shadow-xl flex items-center gap-2 transition hover:brightness-110"
-                      style={{ backgroundColor: brandColor }}
-                    >
-                      {banner.buttonText || 'Shop Collection'}
-                      <ArrowRight className="w-4 h-4" />
-                    </Link>
-                    <Link
-                      to={`${storeBasePath}/shop`}
-                      className="px-5 sm:px-6 py-3 sm:py-3.5 bg-white/10 hover:bg-white/20 text-white rounded-xl font-semibold text-xs sm:text-sm backdrop-blur-xs transition"
-                    >
-                      Explore All Products
-                    </Link>
+                    {banner.subtitle && (
+                      <p className="text-xs sm:text-base text-slate-200 leading-relaxed max-w-lg">
+                        {banner.subtitle}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 pt-2">
+                      {resolvedLink.isExternal ? (
+                        <a
+                          href={resolvedLink.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          tabIndex={isCurrent ? 0 : -1}
+                          data-testid="hero-primary-cta"
+                          className="inline-flex items-center justify-center gap-2 px-5 sm:px-6 py-3 sm:py-3.5 min-h-[44px] rounded-xl font-bold text-xs sm:text-sm shadow-xl border border-white/15 transition hover:brightness-110"
+                          style={{ backgroundColor: brandColor, color: brandCtaText }}
+                        >
+                          <span>{ctaLabel}</span>
+                          <ArrowRight className="w-4 h-4 shrink-0" />
+                        </a>
+                      ) : (
+                        <Link
+                          to={resolvedLink.href}
+                          tabIndex={isCurrent ? 0 : -1}
+                          data-testid="hero-primary-cta"
+                          className="inline-flex items-center justify-center gap-2 px-5 sm:px-6 py-3 sm:py-3.5 min-h-[44px] rounded-xl font-bold text-xs sm:text-sm shadow-xl border border-white/15 transition hover:brightness-110"
+                          style={{ backgroundColor: brandColor, color: brandCtaText }}
+                        >
+                          <span>{ctaLabel}</span>
+                          <ArrowRight className="w-4 h-4 shrink-0" />
+                        </Link>
+                      )}
+                      <Link
+                        to={`${storeBasePath}/shop`}
+                        tabIndex={isCurrent ? 0 : -1}
+                        className="inline-flex items-center justify-center px-5 sm:px-6 py-3 sm:py-3.5 min-h-[44px] bg-slate-950/60 hover:bg-slate-900/80 border border-white/30 text-white rounded-xl font-semibold text-xs sm:text-sm backdrop-blur-xs transition"
+                      >
+                        Explore All Products
+                      </Link>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {banners.length > 1 && (
             <>
               <button
+                type="button"
                 onClick={() => setCurrentBanner((prev) => (prev - 1 + banners.length) % banners.length)}
-                className="hidden sm:flex absolute left-3 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/70 text-white backdrop-blur-xs transition"
+                className="hidden sm:flex absolute left-3 top-1/2 -translate-y-1/2 z-20 p-2.5 rounded-full bg-black/45 hover:bg-black/75 text-white backdrop-blur-xs transition"
                 aria-label="Previous Slide"
               >
                 <ChevronLeft className="w-5 h-5" />
               </button>
               <button
+                type="button"
                 onClick={() => setCurrentBanner((prev) => (prev + 1) % banners.length)}
-                className="hidden sm:flex absolute right-3 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/70 text-white backdrop-blur-xs transition"
+                className="hidden sm:flex absolute right-3 top-1/2 -translate-y-1/2 z-20 p-2.5 rounded-full bg-black/45 hover:bg-black/75 text-white backdrop-blur-xs transition"
                 aria-label="Next Slide"
               >
                 <ChevronRight className="w-5 h-5" />
@@ -178,6 +207,7 @@ export const HomePage: React.FC = () => {
               <div className="absolute bottom-4 sm:bottom-5 inset-x-0 z-20 flex justify-center gap-2">
                 {banners.map((_, i) => (
                   <button
+                    type="button"
                     key={i}
                     onClick={() => setCurrentBanner(i)}
                     aria-label={`Slide ${i + 1}`}

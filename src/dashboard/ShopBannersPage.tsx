@@ -40,7 +40,12 @@ export const ShopBannersPage: React.FC = () => {
     setSaving(true);
     setErrorMsg(null);
     try {
-      await saveShopBanner(shopId, editing);
+      const normalizedBanner: Partial<Banner> = {
+        ...editing,
+        buttonText: String(editing.buttonText || '').trim() || 'Shop Now',
+        link: String(editing.link || '').trim() || '/shop',
+      };
+      await saveShopBanner(shopId, normalizedBanner);
       setEditing(null);
       await loadBanners();
     } catch (err: any) {
@@ -108,9 +113,12 @@ export const ShopBannersPage: React.FC = () => {
             <div key={b.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col">
               <img src={b.imageUrl} alt={b.title} className="w-full h-40 object-cover bg-slate-100" />
               <div className="p-4 flex-1 flex items-center justify-between gap-3">
-                <div className="min-w-0">
+                <div className="min-w-0 space-y-1">
                   <p className="text-sm font-bold text-slate-900 truncate">{b.title}</p>
                   <p className="text-[11px] text-slate-500 truncate">{b.subtitle}</p>
+                  <p className="text-[10px] font-semibold text-[#065F46] truncate">
+                    CTA: {(b.buttonText || '').trim() || 'Shop Now'} → {b.link || '/shop'}
+                  </p>
                 </div>
                 {!isReadOnly && (
                   <div className="flex gap-1.5 shrink-0">
