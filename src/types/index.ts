@@ -10,10 +10,28 @@ export type UserRole =
   | 'referral_agent';
 
 export * from './sales';
+export * from './industries';
 
-export type StaffRole = 'shop_owner' | 'shop_admin' | 'shop_staff';
+export type StaffRole =
+  | 'shop_owner'
+  | 'shop_admin'
+  | 'manager'
+  | 'shop_staff'
+  | 'doctor'
+  | 'trainer'
+  | 'salesperson';
 
-export type BusinessType = 'general_store' | 'cosmetics' | 'clothing' | 'other_retail';
+export type BusinessType =
+  | 'general_store'
+  | 'clothing'
+  | 'cosmetics'
+  | 'electronics'
+  | 'pharmacy'
+  | 'gym'
+  | 'clinic'
+  | 'carwash'
+  | 'car_dealer'
+  | 'other_retail';
 
 export type StaffPermission =
   | 'overview'
@@ -32,7 +50,23 @@ export type StaffPermission =
   | 'settings'
   | 'staff'
   | 'reports'
-  | 'subscription';
+  | 'subscription'
+  | 'marketing_qr'
+  | 'payments_record'
+  | 'gym_members'
+  | 'gym_attendance'
+  | 'gym_trainers'
+  | 'clinic_patients'
+  | 'clinic_appointments'
+  | 'clinic_notes'
+  | 'clinic_doctors'
+  | 'carwash_queue'
+  | 'carwash_vehicles'
+  | 'carwash_packages'
+  | 'dealer_vehicles'
+  | 'dealer_private_pricing'
+  | 'dealer_leads'
+  | 'dealer_deals';
 
 export interface UserAddress {
   id: string;
@@ -86,6 +120,12 @@ export interface PlanFeatures {
   advancedInventory: boolean;
   advancedReports: boolean;
   prioritySupport?: boolean;
+  gymModule?: boolean;
+  clinicModule?: boolean;
+  carwashModule?: boolean;
+  dealerModule?: boolean;
+  qrAttendance?: boolean;
+  automatedReminders?: boolean;
 }
 
 export interface SubscriptionPlan {
@@ -96,7 +136,8 @@ export interface SubscriptionPlan {
   monthlyPrice: number;
   yearlyPrice: number;
   durationDays: number;
-  maxProducts: number; // -1 means unlimited active products
+  maxProducts: number; // -1 means unlimited active products / records
+  maxRecords?: number; // Industry records limit (-1 = unlimited)
   maxStorageMB: number;
   maxStaff: number;
   features: PlanFeatures;
@@ -221,7 +262,7 @@ export interface ShopInvite {
   shopSlug: string;
   email: string;
   name: string;
-  role: 'shop_admin' | 'shop_staff';
+  role: Exclude<StaffRole, 'shop_owner'>;
   permissions: StaffPermission[];
   invitedBy: string;
   status: 'pending' | 'accepted';

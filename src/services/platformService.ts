@@ -43,8 +43,10 @@ import {
 } from '../data/seedData';
 import {
   BusinessType,
+  IndustryCategoryConfig,
   SupportTicket,
 } from '../types';
+import { ALL_INDUSTRY_META, getIndustryGroup } from '../config/industryConfig';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
 import { normalizeAndValidateSocialLinks, normalizeOptionalHttpUrl } from '../utils/socialLinks';
 import {
@@ -285,6 +287,7 @@ export async function saveSubscriptionPlan(plan: Partial<SubscriptionPlan>): Pro
     yearlyPrice: Number(plan.yearlyPrice) || 0,
     durationDays: Number(plan.durationDays) || 30,
     maxProducts: plan.maxProducts !== undefined ? Number(plan.maxProducts) : 50,
+    maxRecords: plan.maxRecords !== undefined ? Number(plan.maxRecords) : (plan.maxProducts !== undefined ? Number(plan.maxProducts) : 120),
     maxStorageMB: Number(plan.maxStorageMB) || 100,
     maxStaff: Number(plan.maxStaff) || 1,
     features: plan.features || DEFAULT_SUBSCRIPTION_PLANS[1].features,
@@ -1242,6 +1245,12 @@ export interface PlatformAnalyticsSummary {
   totalProductsAcrossShops: number;
   totalOrdersAcrossShops: number;
   totalRegisteredOwners: number;
+  totalRetailShops: number;
+  totalGyms: number;
+  totalClinics: number;
+  totalCarWashes: number;
+  totalCarDealers: number;
+  industryBreakdown: { id: BusinessType; label: string; count: number }[];
   monthlyRegistrationsChart: { label: string; count: number }[];
   planBreakdown: { planName: string; count: number }[];
 }
@@ -1268,14 +1277,29 @@ export async function getPlatformAnalytics(): Promise<PlatformAnalyticsSummary> 
   let shopsRegisteredThisMonth = 0;
   let totalProductsAcrossShops = 0;
   let totalOrdersAcrossShops = 0;
+  let totalRetailShops = 0;
+  let totalGyms = 0;
+  let totalClinics = 0;
+  let totalCarWashes = 0;
+  let totalCarDealers = 0;
   const uniqueOwners = new Set<string>();
   const planCounts = new Map<string, number>();
+  const industryCounts = new Map<BusinessType, number>();
 
   for (const s of shops) {
     if (s.ownerId) uniqueOwners.add(s.ownerId);
     if (s.status === 'active') activeShops++;
     else if (s.status === 'suspended') suspendedShops++;
     else inactiveShops++;
+
+    const bType = (s.businessType || 'general_store') as BusinessType;
+    industryCounts.set(bType, (industryCounts.get(bType) || 0) + 1);
+    const group = getIndustryGroup(bType);
+    if (group === 'gym') totalGyms++;
+    else if (group === 'clinic') totalClinics++;
+    else if (group === 'carwash') totalCarWashes++;
+    else if (group === 'car_dealer') totalCarDealers++;
+    else totalRetailShops++;
 
     const sub = s.subscription;
     const plan = planMap.get(sub?.planId || '');
@@ -1322,6 +1346,12 @@ export async function getPlatformAnalytics(): Promise<PlatformAnalyticsSummary> 
     count,
   }));
 
+  const industryBreakdown = ALL_INDUSTRY_META.map((m) => ({
+    id: m.id,
+    label: m.label,
+    count: industryCounts.get(m.id) || 0,
+  }));
+
   return {
     totalShops: shops.length,
     activeShops,
@@ -1338,9 +1368,65 @@ export async function getPlatformAnalytics(): Promise<PlatformAnalyticsSummary> 
     totalProductsAcrossShops,
     totalOrdersAcrossShops,
     totalRegisteredOwners: uniqueOwners.size,
+    totalRetailShops,
+    totalGyms,
+    totalClinics,
+    totalCarWashes,
+    totalCarDealers,
+    industryBreakdown,
     monthlyRegistrationsChart,
     planBreakdown,
   };
+}
+
+export async function getIndustryCategoryConfigs(): Promise<IndustryCategoryConfig[]> {
+  const defaults: IndustryCategoryConfig[] = ALL_INDUSTRY_META.map((m) => ({
+    id: m.id,
+    label: m.label,
+    group: m.group,
+    publicPrefix: m.publicPrefix,
+    description: m.description,
+    enabled: true,
+    defaultMaxRecords: m.isServiceIndustry ? 20 : 50,
+  }));
+
+  try {
+    const snap = await getDoc(doc(db, 'platform_settings', 'industries'));
+    if (!snap.exists()) return defaults;
+    const savedMap = (snap.data()?.categories || {}) as Record<string, Partial<IndustryCategoryConfig>>;
+    return defaults.map((def) => ({
+      ...def,
+      ...(savedMap[def.id] || {}),
+      id: def.id,
+      group: def.group,
+      publicPrefix: def.publicPrefix,
+    }));
+  } catch {
+    return defaults;
+  }
+}
+
+export async function saveIndustryCategoryConfigs(configs: IndustryCategoryConfig[]): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const categories: Record<string, IndustryCategoryConfig> = {};
+  configs.forEach((c) => {
+    categories[c.id] = stripUndefined(c);
+  });
+  try {
+    await setDoc(
+      doc(db, 'platform_settings', 'industries'),
+      { categories, updatedAt: nowIso },
+      { merge: true }
+    );
+    await logPlatformActivity(
+      'Updated Industry Categories',
+      'settings',
+      'industries',
+      `Updated availability and record limits for ${configs.length} business categories`
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, 'platform_settings/industries');
+  }
 }
 
 export async function updateShopAdminNotes(shopId: string, adminNotes: string): Promise<void> {
@@ -1521,6 +1607,27 @@ async function executeDirectSuperAdminClientPurge(): Promise<PurgePlatformDataRe
     'staff',
     'notifications',
     'activity_logs',
+    'gym_plans',
+    'gym_trainers',
+    'gym_workout_plans',
+    'gym_members',
+    'gym_attendance',
+    'clinic_doctors',
+    'clinic_patients',
+    'clinic_medical_notes',
+    'clinic_appointments',
+    'carwash_packages',
+    'carwash_customers',
+    'carwash_vehicles',
+    'carwash_jobs',
+    'vehicles',
+    'publicVehicles',
+    'dealer_inquiries',
+    'dealer_leads',
+    'dealer_deals',
+    'industry_payments',
+    'auditLogs',
+    'public_offerings',
   ];
 
   // 1. Delete all shops and their subcollections

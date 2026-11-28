@@ -93,6 +93,17 @@ export const SuperAdminAnalyticsPage: React.FC = () => {
         </div>
       </div>
 
+      <div className="bg-white border border-slate-200 rounded-xl p-5">
+        <h3 className="text-sm font-bold text-slate-900 mb-4">Tenants by Business Industry</h3>
+        <DistributionMeters
+          items={stats.industryBreakdown.map((ind, idx) => ({
+            label: ind.label,
+            count: ind.count,
+            color: ['#065F46', '#0f172a', '#d97706', '#0284c7', '#7c3aed'][idx % 5],
+          }))}
+        />
+      </div>
+
       <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
         <h3 className="text-sm font-bold text-slate-900">Platform Audit Trail</h3>
         {logs.length === 0 ? (

@@ -28,6 +28,7 @@ import {
   OrderCustomerNotification,
   Coupon,
   Review,
+  StaffRole,
   StoreSettings,
   Banner,
   InventoryLog,
@@ -2140,7 +2141,7 @@ export async function inviteShopStaff(
   input: {
     email: string;
     name: string;
-    role: 'shop_admin' | 'shop_staff';
+    role: Exclude<StaffRole, 'shop_owner'>;
     permissions: StaffPermission[];
   }
 ): Promise<string> {
@@ -2149,7 +2150,7 @@ export async function inviteShopStaff(
     throw new Error('Subscription expired or store suspended. Renew your plan to invite staff.');
   }
   if (plan && plan.features && plan.features.staffAccounts === false) {
-    throw new Error('Team staff accounts require Growth or Enterprise plan.');
+    throw new Error('Team staff accounts require Starter or higher plan.');
   }
   const current = await getShopStaff(shopId);
   const totalHeadcount = current.staff.length + current.invites.length;
@@ -2184,7 +2185,7 @@ export async function inviteShopStaff(
 export async function updateShopStaffRole(
   shopId: string,
   staffUid: string,
-  role: 'shop_admin' | 'shop_staff',
+  role: Exclude<StaffRole, 'shop_owner'>,
   permissions: StaffPermission[],
   status: 'active' | 'inactive'
 ): Promise<void> {

@@ -30,11 +30,58 @@ import {
   Receipt,
   Lock,
   QrCode,
+  Dumbbell,
+  CalendarCheck,
+  Stethoscope,
+  Car,
+  Sparkles,
+  Handshake,
+  Wallet,
+  ClipboardList,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { DashboardProvider, useDashboard } from './DashboardContext';
-import { StaffPermission, NotificationItem, PlanFeatures } from '../types';
+import { NotificationItem } from '../types';
 import { getShopNotifications, markNotificationRead } from '../services/tenantService';
+import {
+  buildIndustryPublicPath,
+  getIndustryMeta,
+  getSidebarNavForIndustry,
+  NavIconKey,
+} from '../config/industryConfig';
+
+const NAV_ICONS: Record<NavIconKey, any> = {
+  overview: LayoutDashboard,
+  pos: Calculator,
+  products: Package,
+  categories: Grid,
+  orders: ShoppingCart,
+  purchases: Receipt,
+  suppliers: Truck,
+  customers: Users,
+  khata: BookOpen,
+  inventory: Boxes,
+  coupons: Ticket,
+  banners: ImageIcon,
+  marketing: QrCode,
+  appearance: Palette,
+  settings: Settings,
+  staff: UserCog,
+  reports: BarChart3,
+  subscription: CreditCard,
+  profile: UserCircle,
+  members: Users,
+  attendance: QrCode,
+  trainers: Dumbbell,
+  appointments: CalendarCheck,
+  patients: ClipboardList,
+  doctors: Stethoscope,
+  queue: Sparkles,
+  vehicles: Car,
+  packages: Package,
+  deals: Handshake,
+  payments: Wallet,
+};
 
 const DashboardShell: React.FC = () => {
   const {
@@ -50,6 +97,8 @@ const DashboardShell: React.FC = () => {
   const {
     shopId,
     shop,
+    businessType,
+    publicStorePath,
     loading: dashLoading,
     isReadOnly,
     isSuspended,
@@ -125,35 +174,8 @@ const DashboardShell: React.FC = () => {
     );
   }
 
-  const navItems: {
-    to: string;
-    label: string;
-    icon: any;
-    perm: StaffPermission;
-    feature?: keyof PlanFeatures;
-    end?: boolean;
-  }[] = [
-    { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, perm: 'overview', end: true },
-    { to: '/dashboard/pos', label: 'POS & Billing', icon: Calculator, perm: 'pos', feature: 'pos' },
-    { to: '/dashboard/products', label: 'Products', icon: Package, perm: 'products' },
-    { to: '/dashboard/categories', label: 'Categories', icon: Grid, perm: 'categories' },
-    { to: '/dashboard/orders', label: 'Orders & Invoices', icon: ShoppingCart, perm: 'orders' },
-    { to: '/dashboard/purchases', label: 'Purchases', icon: Receipt, perm: 'purchases', feature: 'suppliersPurchases' },
-    { to: '/dashboard/suppliers', label: 'Suppliers', icon: Truck, perm: 'suppliers', feature: 'suppliersPurchases' },
-    { to: '/dashboard/customers', label: 'Customers', icon: Users, perm: 'customers' },
-    { to: '/dashboard/khata', label: 'Customer Khata', icon: BookOpen, perm: 'khata', feature: 'khata' },
-    { to: '/dashboard/inventory', label: 'Inventory', icon: Boxes, perm: 'inventory' },
-    { to: '/dashboard/coupons', label: 'Coupons', icon: Ticket, perm: 'coupons' },
-    { to: '/dashboard/banners', label: 'Banners', icon: ImageIcon, perm: 'banners' },
-    { to: '/dashboard/marketing', label: 'Shop QR & Marketing', icon: QrCode, perm: 'overview' },
-    { to: '/dashboard/appearance', label: 'Appearance & Pages', icon: Palette, perm: 'appearance' },
-    { to: '/dashboard/settings', label: 'Payments & Self-Pickup', icon: Settings, perm: 'settings' },
-    { to: '/dashboard/staff', label: 'Staff & Roles', icon: UserCog, perm: 'staff' },
-    { to: '/dashboard/reports', label: 'Reports & Profit', icon: BarChart3, perm: 'reports' },
-    { to: '/dashboard/subscription', label: 'Subscription Plan', icon: CreditCard, perm: 'subscription' },
-    { to: '/dashboard/profile', label: 'Support, Logs & Profile', icon: UserCircle, perm: 'overview' },
-  ];
-
+  const navItems = getSidebarNavForIndustry(businessType);
+  const industryMeta = getIndustryMeta(businessType);
   const visibleNav = navItems.filter((item) => hasPermission(item.perm));
   const unreadCount = notifications.filter((n) => !n.isRead).length;
   const querySuffix = isReadOnly && shopId ? `?inspectShopId=${encodeURIComponent(shopId)}` : '';
@@ -184,7 +206,9 @@ const DashboardShell: React.FC = () => {
             )}
             <div className="min-w-0">
               <p className="text-xs font-extrabold text-slate-900 truncate">{shop?.name || 'Shop Admin'}</p>
-              <p className="text-[10px] font-mono text-slate-500 truncate">/s/{shop?.slug || shopId}</p>
+              <p className="text-[10px] font-mono text-slate-500 truncate">
+                {buildIndustryPublicPath(shop?.slug || shopId, businessType)}
+              </p>
             </div>
           </div>
           <button type="button" onClick={() => setSidebarOpen(false)} className="lg:hidden text-slate-400">
@@ -215,6 +239,7 @@ const DashboardShell: React.FC = () => {
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
           {visibleNav.map((item) => {
             const locked = item.feature ? !canUseFeature(item.feature) : false;
+            const IconComp = NAV_ICONS[item.iconKey] || LayoutDashboard;
             return (
               <NavLink
                 key={item.to}
@@ -230,7 +255,7 @@ const DashboardShell: React.FC = () => {
                 }
               >
                 <span className="flex items-center gap-2.5 min-w-0">
-                  <item.icon className="w-4 h-4 shrink-0" />
+                  <IconComp className="w-4 h-4 shrink-0" />
                   <span className="truncate">{item.label}</span>
                 </span>
                 {locked && <Lock className="w-3 h-3 shrink-0 opacity-60" />}
@@ -242,11 +267,11 @@ const DashboardShell: React.FC = () => {
         <div className="p-3 border-t border-slate-200 space-y-1.5 text-xs">
           {shop && (
             <Link
-              to={`/s/${shop.slug}`}
+              to={publicStorePath}
               target="_blank"
               className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 hover:bg-slate-100 font-semibold text-slate-800"
             >
-              <span>View Public Storefront</span>
+              <span>{industryMeta.isServiceIndustry ? 'View Public Page' : 'View Public Storefront'}</span>
               <ExternalLink className="w-3.5 h-3.5" />
             </Link>
           )}

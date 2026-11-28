@@ -30,6 +30,7 @@ import { CartDrawer } from './components/common/CartDrawer';
 import { WhatsAppButton } from './components/common/WhatsAppButton';
 import { DynamicSeoHead } from './components/common/DynamicSeoHead';
 import { DEFAULT_SHOP_ID } from './data/seedData';
+import { getIndustryGroup, getIndustryMeta } from './config/industryConfig';
 
 function lazyNamed<T extends React.ComponentType<any>>(
   loader: () => Promise<Record<string, unknown>>,
@@ -126,7 +127,23 @@ const ShopSubscriptionPage = lazyNamed(() => import('./dashboard/ShopSubscriptio
 const ShopProfilePage = lazyNamed(() => import('./dashboard/ShopProfilePage'), 'ShopProfilePage');
 const ShopMarketingPage = lazyNamed(() => import('./dashboard/ShopMarketingPage'), 'ShopMarketingPage');
 
-// Layer 4 (Secondary): Storefront Interior Pages
+// Layer 3B: Multi-Industry Vertical Dashboard Pages
+const GymMembersPage = lazyNamed(() => import('./dashboard/industries/GymMembersPage'), 'GymMembersPage');
+const GymAttendancePage = lazyNamed(() => import('./dashboard/industries/GymAttendancePage'), 'GymAttendancePage');
+const GymTrainersPage = lazyNamed(() => import('./dashboard/industries/GymTrainersPage'), 'GymTrainersPage');
+const ClinicAppointmentsPage = lazyNamed(() => import('./dashboard/industries/ClinicAppointmentsPage'), 'ClinicAppointmentsPage');
+const ClinicPatientsPage = lazyNamed(() => import('./dashboard/industries/ClinicPatientsPage'), 'ClinicPatientsPage');
+const ClinicDoctorsPage = lazyNamed(() => import('./dashboard/industries/ClinicDoctorsPage'), 'ClinicDoctorsPage');
+const CarWashQueuePage = lazyNamed(() => import('./dashboard/industries/CarWashQueuePage'), 'CarWashQueuePage');
+const CarWashVehiclesPage = lazyNamed(() => import('./dashboard/industries/CarWashVehiclesPage'), 'CarWashVehiclesPage');
+const CarWashPackagesPage = lazyNamed(() => import('./dashboard/industries/CarWashPackagesPage'), 'CarWashPackagesPage');
+const DealerInventoryPage = lazyNamed(() => import('./dashboard/industries/DealerInventoryPage'), 'DealerInventoryPage');
+const DealerLeadsDealsPage = lazyNamed(() => import('./dashboard/industries/DealerLeadsDealsPage'), 'DealerLeadsDealsPage');
+const IndustryPaymentsPage = lazyNamed(() => import('./dashboard/industries/IndustryPaymentsPage'), 'IndustryPaymentsPage');
+const IndustryReportsPage = lazyNamed(() => import('./dashboard/industries/IndustryReportsPage'), 'IndustryReportsPage');
+
+// Layer 4 (Secondary): Storefront Interior Pages & Service Industry Public Page
+const IndustryPublicPage = lazyNamed(() => import('./pages/IndustryPublicPage'), 'IndustryPublicPage');
 const ShopPage = lazyNamed(() => import('./pages/ShopPage'), 'ShopPage');
 const ProductDetailPage = lazyNamed(() => import('./pages/ProductDetailPage'), 'ProductDetailPage');
 const CartPage = lazyNamed(() => import('./pages/CartPage'), 'CartPage');
@@ -214,6 +231,9 @@ const StorefrontLayout: React.FC = () => {
     );
   }
 
+  const isServiceTenant = getIndustryGroup(shop?.businessType) !== 'retail';
+  const industryMeta = getIndustryMeta(shop?.businessType);
+
   // Fallback check if storeBasePath has unknown child route rendered via Outlet
   return (
     <div
@@ -221,22 +241,69 @@ const StorefrontLayout: React.FC = () => {
       data-store-path={storeBasePath}
     >
       {!hasChildSeo && <DynamicSeoHead shop={shop} settings={settings} />}
-      <Header />
+      {isServiceTenant ? (
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+            <Link to={storeBasePath} className="flex items-center gap-2.5 min-w-0">
+              {settings.logoUrl || shop?.logoUrl ? (
+                <img
+                  src={settings.logoUrl || shop?.logoUrl}
+                  alt={shop?.name || settings.siteName}
+                  className="w-8 h-8 rounded-lg object-cover border border-slate-200"
+                />
+              ) : (
+                <div className="w-8 h-8 rounded-lg bg-[#065F46] text-white flex items-center justify-center text-xs font-extrabold">
+                  {(shop?.name || settings.siteName || 'SB').slice(0, 2).toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-extrabold text-slate-900 truncate">
+                  {shop?.name || settings.siteName}
+                </p>
+                <p className="text-[10px] font-semibold text-[#065F46] uppercase tracking-wider">
+                  {industryMeta.shortLabel}
+                </p>
+              </div>
+            </Link>
+            <div className="flex items-center gap-3 text-xs">
+              <Link to={`${storeBasePath}/contact`} className="font-semibold text-slate-600 hover:text-slate-900 hidden sm:inline">
+                Contact
+              </Link>
+              <Link
+                to="/login"
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-800"
+              >
+                Staff Login
+              </Link>
+            </div>
+          </div>
+        </header>
+      ) : (
+        <Header />
+      )}
       <main className="flex-1">
         <React.Suspense fallback={<RouteLoader compact />}>
           <Outlet />
         </React.Suspense>
       </main>
-      <CartDrawer />
+      {!isServiceTenant && <CartDrawer />}
       <WhatsAppButton />
       <Footer />
     </div>
   );
 };
 
-const TenantRouteWrapper: React.FC<{ basePrefix?: '/s' | '/shop' }> = ({
-  basePrefix = '/s',
-}) => {
+const StorefrontIndexPage: React.FC = () => {
+  const { shop } = useTenant();
+  if (getIndustryGroup(shop?.businessType) !== 'retail') {
+    return <IndustryPublicPage />;
+  }
+  return <HomePage />;
+};
+
+const TenantRouteWrapper: React.FC<{
+  basePrefix?: '/s' | '/shop' | '/gym' | '/clinic' | '/carwash' | '/dealer';
+}> = ({ basePrefix = '/s' }) => {
   const { shopSlug } = useParams<{ shopSlug: string }>();
   return (
     <TenantProvider slug={shopSlug || DEFAULT_SHOP_ID} basePrefix={basePrefix}>
@@ -426,6 +493,19 @@ export default function App() {
                 <Route path="subscription" element={<ShopSubscriptionPage />} />
                 <Route path="profile" element={<ShopProfilePage />} />
                 <Route path="marketing" element={<ShopMarketingPage />} />
+                <Route path="gym/members" element={<GymMembersPage />} />
+                <Route path="gym/attendance" element={<GymAttendancePage />} />
+                <Route path="gym/trainers" element={<GymTrainersPage />} />
+                <Route path="clinic/appointments" element={<ClinicAppointmentsPage />} />
+                <Route path="clinic/patients" element={<ClinicPatientsPage />} />
+                <Route path="clinic/doctors" element={<ClinicDoctorsPage />} />
+                <Route path="carwash/queue" element={<CarWashQueuePage />} />
+                <Route path="carwash/vehicles" element={<CarWashVehiclesPage />} />
+                <Route path="carwash/packages" element={<CarWashPackagesPage />} />
+                <Route path="dealer/inventory" element={<DealerInventoryPage />} />
+                <Route path="dealer/leads-deals" element={<DealerLeadsDealsPage />} />
+                <Route path="payments" element={<IndustryPaymentsPage />} />
+                <Route path="industry-reports" element={<IndustryReportsPage />} />
               </Route>
 
               {/* Layer 4: Multi-Tenant Public Storefronts (/s/:shopSlug & /shop/:shopSlug) */}
@@ -438,7 +518,7 @@ export default function App() {
                   path={mount.path}
                   element={<TenantRouteWrapper basePrefix={mount.prefix} />}
                 >
-                  <Route index element={<HomePage />} />
+                  <Route index element={<StorefrontIndexPage />} />
                   <Route path="shop" element={<ShopPage />} />
                   <Route path="product/:id" element={<ProductDetailPage />} />
                   <Route path="cart" element={<CartPage />} />
@@ -450,6 +530,29 @@ export default function App() {
                   <Route path="about" element={<AboutPage />} />
                   <Route path="faq" element={<FAQPage />} />
                   <Route path="return-policy" element={<ReturnPolicyPage />} />
+                  <Route path="terms" element={<TermsPage />} />
+                  <Route path="terms-and-conditions" element={<TermsPage />} />
+                  <Route path="privacy" element={<PrivacyPage />} />
+                  <Route path="privacy-policy" element={<PrivacyPage />} />
+                  <Route path="*" element={<StoreNotFoundPage />} />
+                </Route>
+              ))}
+
+              {/* Layer 4B: Industry Vertical Public Portals (/gym, /clinic, /carwash, /dealer) */}
+              {[
+                { path: '/gym/:shopSlug', prefix: '/gym' as const },
+                { path: '/clinic/:shopSlug', prefix: '/clinic' as const },
+                { path: '/carwash/:shopSlug', prefix: '/carwash' as const },
+                { path: '/dealer/:shopSlug', prefix: '/dealer' as const },
+              ].map((mount) => (
+                <Route
+                  key={mount.path}
+                  path={mount.path}
+                  element={<TenantRouteWrapper basePrefix={mount.prefix} />}
+                >
+                  <Route index element={<IndustryPublicPage />} />
+                  <Route path="contact" element={<ContactPage />} />
+                  <Route path="about" element={<AboutPage />} />
                   <Route path="terms" element={<TermsPage />} />
                   <Route path="terms-and-conditions" element={<TermsPage />} />
                   <Route path="privacy" element={<PrivacyPage />} />

@@ -17,9 +17,11 @@ import {
   getPlatformSettingsStrict,
   updatePlatformSettings,
   triggerPurgeAllPlatformData,
+  getIndustryCategoryConfigs,
+  saveIndustryCategoryConfigs,
 } from '../services/platformService';
 import { checkStorageHealth, StorageHealthReport } from '../services/storageService';
-import { PlatformSettings } from '../types';
+import { IndustryCategoryConfig, PlatformSettings } from '../types';
 import { DEFAULT_PLATFORM_SETTINGS } from '../data/seedData';
 import { ImageUploader } from '../components/common/ImageUploader';
 import { SOCIAL_PLATFORM_META, getConfiguredSocialLinks } from '../utils/socialLinks';
@@ -45,6 +47,7 @@ interface ApiHealthReport {
 export const SuperAdminSettingsPage: React.FC = () => {
   const { isSuperAdmin } = useAuth();
   const [settings, setSettings] = useState<PlatformSettings>(DEFAULT_PLATFORM_SETTINGS);
+  const [industryConfigs, setIndustryConfigs] = useState<IndustryCategoryConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedBanner, setSavedBanner] = useState(false);
@@ -96,8 +99,12 @@ export const SuperAdminSettingsPage: React.FC = () => {
       setLoading(true);
       setErrorBanner(null);
       try {
-        const res = await getPlatformSettingsStrict();
+        const [res, indCfgs] = await Promise.all([
+          getPlatformSettingsStrict(),
+          getIndustryCategoryConfigs(),
+        ]);
         setSettings(res.settings);
+        setIndustryConfigs(indCfgs);
         if (res.error) {
           setErrorBanner(res.error);
         }
@@ -122,6 +129,9 @@ export const SuperAdminSettingsPage: React.FC = () => {
         gracePeriodDays: Math.max(0, Number(settings.gracePeriodDays ?? 5)),
         legalUpdatedAt: new Date().toISOString(),
       });
+      if (industryConfigs.length > 0) {
+        await saveIndustryCategoryConfigs(industryConfigs);
+      }
       setSettings(updated);
       setSavedBanner(true);
     } catch (err: any) {
@@ -606,6 +616,69 @@ export const SuperAdminSettingsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* 4C. Business Categories & Industry Record Limits */}
+      {industryConfigs.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 text-xs">
+          <div className="border-b border-slate-100 pb-2">
+            <h3 className="text-sm font-extrabold text-slate-900">
+              Business Categories &amp; Record Limits
+            </h3>
+            <p className="text-[11px] text-slate-500">
+              Enable or disable registration categories and set starter record allowances saved to{' '}
+              <code className="font-mono">platform_settings/industries</code>.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {industryConfigs.map((cfg) => (
+              <div
+                key={cfg.id}
+                className="p-3.5 border border-slate-200 rounded-xl flex items-center justify-between gap-3"
+              >
+                <label className="flex items-start gap-2.5 cursor-pointer min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={cfg.enabled}
+                    onChange={(e) =>
+                      setIndustryConfigs((prev) =>
+                        prev.map((item) =>
+                          item.id === cfg.id ? { ...item, enabled: e.target.checked } : item
+                        )
+                      )
+                    }
+                    className="mt-0.5"
+                  />
+                  <div className="min-w-0">
+                    <p className="font-bold text-slate-900 truncate">{cfg.label}</p>
+                    <p className="text-[11px] font-mono text-slate-500">
+                      {cfg.publicPrefix}/:slug
+                    </p>
+                  </div>
+                </label>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[11px] text-slate-500">Starter Cap:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50000}
+                    value={cfg.defaultMaxRecords}
+                    onChange={(e) =>
+                      setIndustryConfigs((prev) =>
+                        prev.map((item) =>
+                          item.id === cfg.id
+                            ? { ...item, defaultMaxRecords: Math.max(1, Number(e.target.value) || 20) }
+                            : item
+                        )
+                      )
+                    }
+                    className="w-20 px-2 py-1 border border-slate-200 rounded-lg text-right tabular-nums font-semibold"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 5. Cloud Storage & Backend API Health Diagnostics */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 text-xs">

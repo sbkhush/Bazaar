@@ -17,6 +17,7 @@ import {
   isValidShopSlug,
   sanitizeShopSlug,
 } from '../data/seedData';
+import { getIndustryMeta, getIndustryPublicPrefix } from '../config/industryConfig';
 import { BillingCycle, BusinessType, PlatformSettings, SubscriptionPlan } from '../types';
 import {
   checkSlugAvailability,
@@ -144,6 +145,8 @@ export const RegisterShopPage: React.FC = () => {
       ? selectedPlan.yearlyPrice
       : selectedPlan.monthlyPrice
     : 0;
+  const publicPrefix = getIndustryPublicPrefix(businessType);
+  const selectedIndustryMeta = getIndustryMeta(businessType);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -357,26 +360,80 @@ export const RegisterShopPage: React.FC = () => {
                 2. Store Identity &amp; Location
               </h2>
 
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-2">
+                    Business Category * <span className="text-slate-400 font-normal">(Your dashboard, modules &amp; public page tailor automatically)</span>
+                  </label>
+                  <div className="space-y-3">
+                    {(['Retail & Commerce', 'Service & Vertical SaaS'] as const).map((groupName) => (
+                      <div key={groupName}>
+                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                          {groupName}
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                          {BUSINESS_TYPE_OPTIONS.filter((opt) => opt.group === groupName).map((opt) => {
+                            const selected = businessType === opt.value;
+                            return (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => setBusinessType(opt.value)}
+                                className={`text-left p-3 rounded-xl border transition ${
+                                  selected
+                                    ? 'border-[#065F46] bg-emerald-50/60 ring-1 ring-[#065F46]'
+                                    : 'border-slate-200 bg-white hover:border-slate-300'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-bold text-slate-900">{opt.label}</span>
+                                  {selected && <CheckCircle2 className="w-3.5 h-3.5 text-[#065F46] shrink-0" />}
+                                </div>
+                                <p className="text-[11px] text-slate-500 mt-1 line-clamp-2 leading-snug">
+                                  {opt.description}
+                                </p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Shop Name *</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    {selectedIndustryMeta.isServiceIndustry ? 'Business / Center Name *' : 'Shop Name *'}
+                  </label>
                   <input
                     type="text"
                     required
                     value={shopName}
                     onChange={(e) => setShopName(e.target.value)}
-                    placeholder="Lahore Heritage Store"
+                    placeholder={
+                      businessType === 'gym'
+                        ? 'Iron Peak Fitness'
+                        : businessType === 'clinic'
+                        ? 'Al-Shifa Medical Clinic'
+                        : businessType === 'carwash'
+                        ? 'Shine Hub Auto Detailing'
+                        : businessType === 'car_dealer'
+                        ? 'Lahore Motors Showroom'
+                        : 'Lahore Heritage Store'
+                    }
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-[#065F46] focus:outline-none"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Unique Store URL Slug *
+                    Unique Public URL Slug *
                   </label>
                   <div className="flex items-center border border-slate-200 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-[#065F46]">
                     <span className="px-3 py-2.5 bg-slate-50 border-r border-slate-200 text-xs font-mono text-slate-500">
-                      /s/
+                      {publicPrefix}/
                     </span>
                     <input
                       type="text"
@@ -396,7 +453,7 @@ export const RegisterShopPage: React.FC = () => {
                         <Loader2 className="w-3 h-3 animate-spin" /> Checking availability...
                       </span>
                     ) : slugStatus.available ? (
-                      <span className="text-emerald-700 font-medium">Available: /s/{shopSlug}</span>
+                      <span className="text-emerald-700 font-medium">Available: {publicPrefix}/{shopSlug}</span>
                     ) : (
                       <span className="text-red-600">{slugStatus.reason}</span>
                     )}
@@ -432,7 +489,7 @@ export const RegisterShopPage: React.FC = () => {
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs font-mono focus:ring-2 focus:ring-[#065F46] focus:outline-none"
                   />
                   <p className="mt-1 text-[11px] text-slate-500">
-                    One SB Khush shop is allowed per CNIC. Verified securely on the server.
+                    One SB Khush business account is allowed per CNIC. Verified securely on the server.
                   </p>
                 </div>
 
@@ -442,35 +499,20 @@ export const RegisterShopPage: React.FC = () => {
                     value={city}
                     onChange={setCity}
                     required
-                    placeholder="Select store city..."
+                    placeholder="Select business city..."
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Business Type *</label>
-                  <select
-                    value={businessType}
-                    onChange={(e) => setBusinessType(e.target.value as BusinessType)}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-2 focus:ring-[#065F46] focus:outline-none"
-                  >
-                    {BUSINESS_TYPE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Shop Address (also used for Self-Pickup counter) *
+                    {selectedIndustryMeta.isServiceIndustry ? 'Business Address *' : 'Shop Address (also used for Self-Pickup counter) *'}
                   </label>
                   <input
                     type="text"
                     required
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Shop 14, Main Boulevard, Gulberg III"
+                    placeholder="Plot 14, Main Boulevard, Gulberg III"
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-[#065F46] focus:outline-none"
                   />
                 </div>
@@ -545,8 +587,12 @@ export const RegisterShopPage: React.FC = () => {
                         {pPrice === 0 ? 'Rs. 0 / Free' : `${formatPKR(pPrice)}/${billingCycle === 'yearly' ? 'yr' : 'mo'}`}
                       </p>
                       <p className="text-[11px] text-slate-500 mt-1">
-                        {p.maxProducts === -1 ? 'Unlimited' : p.maxProducts}{' '}
-                        {p.maxProducts === 1 ? 'product' : 'products'} · {p.maxStorageMB} MB · {p.maxStaff} staff
+                        {selectedIndustryMeta.isServiceIndustry
+                          ? p.maxRecords === -1 || p.maxProducts === -1
+                            ? `Unlimited ${selectedIndustryMeta.recordPluralNoun.toLowerCase()}`
+                            : `${p.maxRecords ?? p.maxProducts} ${selectedIndustryMeta.recordPluralNoun.toLowerCase()}`
+                          : `${p.maxProducts === -1 ? 'Unlimited' : p.maxProducts} ${p.maxProducts === 1 ? 'product' : 'products'}`}{' '}
+                        · {p.maxStorageMB} MB · {p.maxStaff} staff
                       </p>
                     </button>
                   );

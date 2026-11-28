@@ -24,6 +24,7 @@ import { Shop, PlatformPayment } from '../types';
 import { formatPKR } from '../data/seedData';
 import { SimpleBarChart, DistributionMeters } from '../components/common/SimpleCharts';
 import { useAuth } from '../context/AuthContext';
+import { buildIndustryPublicPath, getIndustryMeta } from '../config/industryConfig';
 
 export const SuperAdminDashboardPage: React.FC = () => {
   const { currentUser } = useAuth();
@@ -97,7 +98,7 @@ export const SuperAdminDashboardPage: React.FC = () => {
         <div>
           <h2 className="text-xl font-extrabold text-slate-900">SaaS Platform Overview</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Live metrics aggregated across all registered general store tenants.
+            Live multi-industry metrics across retail stores, gyms, clinics, car washes &amp; car showrooms.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
@@ -198,6 +199,22 @@ export const SuperAdminDashboardPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Multi-Industry Vertical Breakdown */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        {[
+          { label: 'Retail Stores', count: stats.totalRetailShops },
+          { label: 'Gyms & Fitness', count: stats.totalGyms },
+          { label: 'Clinics & Medical', count: stats.totalClinics },
+          { label: 'Car Wash Stations', count: stats.totalCarWashes },
+          { label: 'Car Showrooms', count: stats.totalCarDealers },
+        ].map((item) => (
+          <div key={item.label} className="bg-white border border-slate-200 rounded-xl p-4">
+            <p className="text-[11px] font-semibold text-slate-500">{item.label}</p>
+            <p className="text-xl font-extrabold text-slate-900 mt-1 tabular-nums">{item.count}</p>
+          </div>
+        ))}
+      </div>
+
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5">
@@ -249,7 +266,7 @@ export const SuperAdminDashboardPage: React.FC = () => {
                       {s.name}
                     </Link>
                     <p className="text-[11px] text-slate-500 truncate">
-                      /s/{s.slug} · {s.ownerEmail}
+                      {buildIndustryPublicPath(s.slug, s.businessType)} · {getIndustryMeta(s.businessType).shortLabel} · {s.ownerEmail}
                     </p>
                   </div>
                   <div className="text-right shrink-0">

@@ -39,7 +39,8 @@ service cloud.firestore {
         slug.matches('^[a-z0-9\\-]+$') &&
         !(slug in [
           'admin', 'super-admin', 'dashboard', 'login', 'merchant', 'register', 'api',
-          's', 'shop', 'cart', 'checkout', 'account', 'tracking',
+          's', 'shop', 'gym', 'clinic', 'carwash', 'dealer',
+          'cart', 'checkout', 'account', 'tracking',
           'platform', 'pricing', 'about', 'faq', 'terms', 'privacy',
           'privacy-policy', 'terms-and-conditions', 'contact',
           'salesman', 'sales-manager', 'referral', 'r'
@@ -313,7 +314,7 @@ service cloud.firestore {
       allow create: if isValidId(inviteId) && isSignedIn() && (
         isSuperAdmin() || (
           isShopAdmin(incoming().shopId) &&
-          incoming().role in ['shop_admin', 'shop_staff'] &&
+          incoming().role in ['shop_admin', 'manager', 'doctor', 'trainer', 'salesperson', 'shop_staff'] &&
           (incoming().role != 'shop_admin' || isShopOwner(incoming().shopId)) &&
           incoming().status == 'pending'
         )
@@ -413,7 +414,7 @@ service cloud.firestore {
         allow create, update: if isValidId(userId) && isValidId(shopId) && isSignedIn() && (
           isSuperAdmin() ||
           isShopOwner(shopId) ||
-          (isShopAdmin(shopId) && incoming().role == 'shop_staff') ||
+          (isShopAdmin(shopId) && incoming().role in ['manager', 'doctor', 'trainer', 'salesperson', 'shop_staff']) ||
           (request.auth.uid == userId && incoming().role == 'shop_owner' &&
             exists(/databases/$(database)/documents/shops/$(shopId)) &&
             get(/databases/$(database)/documents/shops/$(shopId)).data.ownerId == request.auth.uid) ||
@@ -477,8 +478,8 @@ service cloud.firestore {
         allow list: if isShopMember(shopId);
         allow create: if isValidId(staffUid) && isSignedIn() && (
           isSuperAdmin() ||
-          (isShopOwner(shopId) && incoming().role in ['shop_admin', 'shop_staff']) ||
-          (isShopAdmin(shopId) && incoming().role == 'shop_staff') ||
+          (isShopOwner(shopId) && incoming().role in ['shop_admin', 'manager', 'doctor', 'trainer', 'salesperson', 'shop_staff']) ||
+          (isShopAdmin(shopId) && incoming().role in ['manager', 'doctor', 'trainer', 'salesperson', 'shop_staff']) ||
           (request.auth.uid == staffUid &&
             incoming().role == 'shop_owner' &&
             exists(/databases/$(database)/documents/shops/$(shopId)) &&
@@ -493,18 +494,18 @@ service cloud.firestore {
             get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.email.lower() == request.auth.token.email.lower() &&
             get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.shopId == shopId &&
             incoming().role == get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.role &&
-            incoming().role in ['shop_admin', 'shop_staff'] &&
+            incoming().role in ['shop_admin', 'manager', 'doctor', 'trainer', 'salesperson', 'shop_staff'] &&
             incoming().permissions == get(/databases/$(database)/documents/shop_invites/$(incoming().inviteId)).data.permissions)
         );
         allow update: if isValidId(staffUid) && (
           isSuperAdmin() ||
-          (isShopOwner(shopId) && existing().role != 'shop_owner' && incoming().role in ['shop_admin', 'shop_staff']) ||
-          (isShopAdmin(shopId) && existing().role == 'shop_staff' && incoming().role == 'shop_staff')
+          (isShopOwner(shopId) && existing().role != 'shop_owner' && incoming().role in ['shop_admin', 'manager', 'doctor', 'trainer', 'salesperson', 'shop_staff']) ||
+          (isShopAdmin(shopId) && !(existing().role in ['shop_owner', 'shop_admin']) && incoming().role in ['manager', 'doctor', 'trainer', 'salesperson', 'shop_staff'])
         );
         allow delete: if isValidId(staffUid) && (
           isSuperAdmin() ||
           (isShopOwner(shopId) && existing().role != 'shop_owner') ||
-          (isShopAdmin(shopId) && existing().role == 'shop_staff')
+          (isShopAdmin(shopId) && !(existing().role in ['shop_owner', 'shop_admin']))
         );
       }
 
@@ -809,6 +810,182 @@ service cloud.firestore {
         allow list: if isShopMember(shopId);
         allow create: if isValidId(logId) && isShopMember(shopId) && incoming().actorId == request.auth.uid;
         allow update, delete: if isValidId(logId) && isShopAdmin(shopId);
+      }
+
+      // ====================================================
+      // MULTI-INDUSTRY VERTICAL SUBCOLLECTIONS (TENANT-ISOLATED)
+      // ====================================================
+
+      // Non-PII public offerings projection (Gym plans, Clinic doctors, Car Wash packages)
+      match /public_offerings/{offeringId} {
+        allow read: if true;
+        allow create, update, delete: if isValidId(offeringId) && isShopMember(shopId);
+      }
+
+      // 1. Gym & Fitness Center
+      match /gym_plans/{planId} {
+        allow get: if isValidId(planId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(planId) && (hasShopPermission(shopId, 'gym_members') || isShopAdmin(shopId));
+      }
+
+      match /gym_trainers/{trainerId} {
+        allow get: if isValidId(trainerId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(trainerId) && (hasShopPermission(shopId, 'gym_trainers') || isShopAdmin(shopId));
+      }
+
+      match /gym_workout_plans/{planId} {
+        allow get: if isValidId(planId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(planId) && (hasShopPermission(shopId, 'gym_trainers') || isShopAdmin(shopId));
+      }
+
+      match /gym_members/{memberId} {
+        allow get: if isValidId(memberId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(memberId) && (hasShopPermission(shopId, 'gym_members') || isShopAdmin(shopId));
+      }
+
+      match /gym_attendance/{attendanceId} {
+        allow get: if isValidId(attendanceId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(attendanceId) && (hasShopPermission(shopId, 'gym_attendance') || isShopAdmin(shopId));
+      }
+
+      // 2. Clinic & Medical Center (Privacy-First Administrative Recordkeeping)
+      match /clinic_doctors/{doctorId} {
+        allow get: if isValidId(doctorId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(doctorId) && (hasShopPermission(shopId, 'clinic_doctors') || isShopAdmin(shopId));
+      }
+
+      // Strictly NO public read/write on Patient records
+      match /clinic_patients/{patientId} {
+        allow get: if isValidId(patientId) && (hasShopPermission(shopId, 'clinic_patients') || isShopAdmin(shopId));
+        allow list: if hasShopPermission(shopId, 'clinic_patients') || isShopAdmin(shopId);
+        allow create, update, delete: if isValidId(patientId) && (hasShopPermission(shopId, 'clinic_patients') || isShopAdmin(shopId));
+      }
+
+      // Strictly NO public access; append-only for authorized clinic_notes staff; admin-only updates; never deleted
+      match /clinic_medical_notes/{noteId} {
+        allow get: if isValidId(noteId) && (hasShopPermission(shopId, 'clinic_notes') || isShopAdmin(shopId));
+        allow list: if hasShopPermission(shopId, 'clinic_notes') || isShopAdmin(shopId);
+        allow create: if isValidId(noteId) && (hasShopPermission(shopId, 'clinic_notes') || isShopAdmin(shopId));
+        allow update: if isValidId(noteId) && isShopAdmin(shopId);
+        allow delete: if false;
+      }
+
+      match /clinic_appointments/{appointmentId} {
+        allow get: if isValidId(appointmentId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create: if isValidId(appointmentId) && (
+          hasShopPermission(shopId, 'clinic_appointments') ||
+          isShopMember(shopId) || (
+            incoming().source == 'public_booking' &&
+            incoming().status == 'Pending' &&
+            incoming().feeStatus == 'unpaid' &&
+            incoming().paidAmount == 0 &&
+            incoming().shopId == shopId &&
+            incoming().patientName is string && incoming().patientName.size() >= 1 && incoming().patientName.size() <= 120 &&
+            incoming().patientPhone is string && incoming().patientPhone.size() >= 5 && incoming().patientPhone.size() <= 30
+          )
+        );
+        allow update, delete: if isValidId(appointmentId) && (hasShopPermission(shopId, 'clinic_appointments') || isShopAdmin(shopId));
+      }
+
+      // 3. Car Wash & Auto Detailing
+      match /carwash_packages/{packageId} {
+        allow get: if isValidId(packageId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(packageId) && (hasShopPermission(shopId, 'carwash_packages') || isShopAdmin(shopId));
+      }
+
+      match /carwash_customers/{customerId} {
+        allow get: if isValidId(customerId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(customerId) && (hasShopPermission(shopId, 'carwash_vehicles') || hasShopPermission(shopId, 'carwash_queue') || isShopAdmin(shopId));
+      }
+
+      match /carwash_vehicles/{vehicleId} {
+        allow get: if isValidId(vehicleId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(vehicleId) && (hasShopPermission(shopId, 'carwash_vehicles') || hasShopPermission(shopId, 'carwash_queue') || isShopAdmin(shopId));
+      }
+
+      match /carwash_jobs/{jobId} {
+        allow get: if isValidId(jobId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create: if isValidId(jobId) && (
+          hasShopPermission(shopId, 'carwash_queue') ||
+          isShopMember(shopId) || (
+            incoming().source == 'public_booking' &&
+            incoming().status == 'Booked' &&
+            incoming().paymentStatus == 'unpaid' &&
+            incoming().paidAmount == 0 &&
+            incoming().shopId == shopId &&
+            incoming().customerName is string && incoming().customerName.size() >= 1 && incoming().customerName.size() <= 120 &&
+            incoming().customerPhone is string && incoming().customerPhone.size() >= 5 && incoming().customerPhone.size() <= 30 &&
+            incoming().plateNumber is string && incoming().plateNumber.size() >= 1 && incoming().plateNumber.size() <= 30
+          )
+        );
+        allow update, delete: if isValidId(jobId) && (hasShopPermission(shopId, 'carwash_queue') || isShopAdmin(shopId));
+      }
+
+      // 4. Car Dealer & Used Car Showroom (Private Cost/Profit vs Sanitized Public Showroom)
+      match /vehicles/{vehicleId} {
+        // Strictly NEVER public: hides purchasePrice, expectedProfit, commissionAmount, internalNotes, registrationNumber
+        allow get: if isValidId(vehicleId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(vehicleId) && (hasShopPermission(shopId, 'dealer_vehicles') || hasShopPermission(shopId, 'dealer_deals') || isShopAdmin(shopId));
+      }
+
+      match /publicVehicles/{vehicleId} {
+        allow read: if true;
+        allow create, update, delete: if isValidId(vehicleId) && (hasShopPermission(shopId, 'dealer_vehicles') || hasShopPermission(shopId, 'dealer_deals') || isShopAdmin(shopId));
+      }
+
+      match /dealer_inquiries/{inquiryId} {
+        allow get: if isValidId(inquiryId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create: if isValidId(inquiryId) && (
+          isShopMember(shopId) || (
+            incoming().source == 'public_storefront' &&
+            incoming().status == 'new' &&
+            incoming().shopId == shopId &&
+            incoming().customerName is string && incoming().customerName.size() >= 1 && incoming().customerName.size() <= 120 &&
+            incoming().customerPhone is string && incoming().customerPhone.size() >= 5 && incoming().customerPhone.size() <= 30
+          )
+        );
+        allow update, delete: if isValidId(inquiryId) && (hasShopPermission(shopId, 'dealer_leads') || isShopAdmin(shopId));
+      }
+
+      match /dealer_leads/{leadId} {
+        allow get: if isValidId(leadId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(leadId) && (hasShopPermission(shopId, 'dealer_leads') || isShopAdmin(shopId));
+      }
+
+      match /dealer_deals/{dealId} {
+        allow get: if isValidId(dealId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(dealId) && (hasShopPermission(shopId, 'dealer_deals') || isShopAdmin(shopId));
+      }
+
+      // Shared Service-Vertical Payments & Immutable Audit Logs
+      match /industry_payments/{paymentId} {
+        allow get: if isValidId(paymentId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create, update, delete: if isValidId(paymentId) && (hasShopPermission(shopId, 'payments_record') || isShopAdmin(shopId));
+      }
+
+      match /auditLogs/{logId} {
+        allow get: if isValidId(logId) && isShopMember(shopId);
+        allow list: if isShopMember(shopId);
+        allow create: if isValidId(logId) && isShopMember(shopId) &&
+          incoming().shopId == shopId &&
+          incoming().actorId == request.auth.uid;
+        allow update, delete: if false;
       }
     }
 

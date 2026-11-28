@@ -17,6 +17,7 @@ import { deleteApp, getApp, getApps, initializeApp } from 'firebase/app';
 import { createUserWithEmailAndPassword, getAuth, sendPasswordResetEmail } from 'firebase/auth';
 import app, { auth, db } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
+import { getIndustryMeta, isKnownBusinessType } from '../config/industryConfig';
 import {
   BillingCycle,
   BusinessType,
@@ -1200,10 +1201,9 @@ export async function importLeadsFromCsvText(
     const email = col(r, 'email');
     const city = col(r, 'city') || 'Karachi';
     const rawIndustry = col(r, 'industry', 'businesstype', 'category').toLowerCase();
-    const industry: BusinessType =
-      rawIndustry === 'cosmetics' || rawIndustry === 'clothing' || rawIndustry === 'other_retail'
-        ? (rawIndustry as BusinessType)
-        : 'general_store';
+    const industry: BusinessType = isKnownBusinessType(rawIndustry)
+      ? rawIndustry
+      : 'general_store';
 
     if (!businessName || !phone) continue;
 
@@ -2289,20 +2289,14 @@ export function computeSalesDashboardAnalytics(
 
   // Industry breakdown across referral-registered shops (or all filtered shops if no referrals filtered)
   const industryCounts = new Map<string, number>();
-  const industryLabels: Record<string, string> = {
-    general_store: 'General Store / Kiryana',
-    cosmetics: 'Cosmetics & Beauty',
-    clothing: 'Clothing & Apparel',
-    other_retail: 'Other Retail',
-  };
   for (const r of filteredReferrals) {
     const ind = r.industry || shopMap.get(r.shopId)?.businessType || 'general_store';
     industryCounts.set(ind, (industryCounts.get(ind) || 0) + 1);
   }
   const industryBreakdown = Array.from(industryCounts.entries()).map(([k, count], idx) => ({
-    label: industryLabels[k] || k,
+    label: getIndustryMeta(k).label,
     count,
-    color: ['#065F46', '#0284c7', '#7c3aed', '#d97706'][idx % 4],
+    color: ['#065F46', '#0284c7', '#7c3aed', '#d97706', '#0f766e'][idx % 5],
   }));
 
   return {

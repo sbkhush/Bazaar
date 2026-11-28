@@ -2686,12 +2686,22 @@ Format cleanly in markdown with:
       const expiryDate = new Date(
         now.getTime() + (freePlan.durationDays || 36500) * 24 * 60 * 60 * 1000
       ).toISOString();
-      const businessType =
-        body.businessType === 'cosmetics' ||
-        body.businessType === 'clothing' ||
-        body.businessType === 'other_retail'
-          ? body.businessType
-          : 'general_store';
+      const allowedServerBusinessTypes = new Set([
+        'general_store',
+        'clothing',
+        'cosmetics',
+        'electronics',
+        'pharmacy',
+        'gym',
+        'clinic',
+        'carwash',
+        'car_dealer',
+        'other_retail',
+      ]);
+      const businessType = allowedServerBusinessTypes.has(String(body.businessType || ''))
+        ? body.businessType
+        : 'general_store';
+      const isServiceIndustry = ['gym', 'clinic', 'carwash', 'car_dealer'].includes(businessType);
 
       const newShop = stripUndefined({
         id: shopId,
@@ -2791,6 +2801,7 @@ Format cleanly in markdown with:
           'inventory',
           'coupons',
           'banners',
+          'marketing_qr',
           'appearance',
           'settings',
           'staff',
@@ -2800,6 +2811,21 @@ Format cleanly in markdown with:
           'suppliers',
           'purchases',
           'khata',
+          'payments_record',
+          'gym_members',
+          'gym_attendance',
+          'gym_trainers',
+          'clinic_appointments',
+          'clinic_patients',
+          'clinic_notes',
+          'clinic_doctors',
+          'carwash_queue',
+          'carwash_vehicles',
+          'carwash_packages',
+          'dealer_vehicles',
+          'dealer_private_pricing',
+          'dealer_leads',
+          'dealer_deals',
         ],
         status: 'active',
         createdAt: nowIso,
@@ -2846,7 +2872,9 @@ Format cleanly in markdown with:
         logoUrl: fullSettings.logoUrl,
         primaryColor: fullSettings.primaryColor,
         accentColor: fullSettings.accentColor,
-        announcement: fullSettings.announcement,
+        announcement: isServiceIndustry
+          ? `Welcome to ${shopName} — Book online or reach us on WhatsApp.`
+          : fullSettings.announcement,
         contactPhone: fullSettings.contactPhone,
         whatsappNumber: fullSettings.whatsappNumber,
         contactEmail: fullSettings.contactEmail,

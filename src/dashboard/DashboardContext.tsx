@@ -10,7 +10,13 @@ import {
   StaffPermission,
   StaffRole,
   PlanFeatures,
+  BusinessType,
+  IndustryGroup,
 } from '../types';
+import {
+  buildIndustryPublicPath,
+  getIndustryGroup,
+} from '../config/industryConfig';
 import {
   DEFAULT_SUBSCRIPTION_PLANS,
   INITIAL_SETTINGS,
@@ -27,6 +33,9 @@ import { getShopSettings } from '../services/tenantService';
 interface DashboardContextType {
   shopId: string;
   shop: Shop | null;
+  businessType: BusinessType;
+  industryGroup: IndustryGroup;
+  publicStorePath: string;
   settings: StoreSettings;
   plan: SubscriptionPlan;
   loading: boolean;
@@ -122,11 +131,18 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return Boolean(plan?.features?.[feat]);
   };
 
+  const businessType: BusinessType = shop?.businessType || 'general_store';
+  const industryGroup: IndustryGroup = getIndustryGroup(businessType);
+  const publicStorePath = buildIndustryPublicPath(shop?.slug || resolvedShopId || 'store', businessType);
+
   return (
     <DashboardContext.Provider
       value={{
         shopId: resolvedShopId,
         shop,
+        businessType,
+        industryGroup,
+        publicStorePath,
         settings,
         plan,
         loading,

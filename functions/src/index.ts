@@ -59,10 +59,24 @@ function computeCnicHmacServer(normalizedCnic: string): string {
 
 const RESERVED_SLUGS = new Set([
   'admin', 'super-admin', 'dashboard', 'login', 'merchant', 'register', 'api',
-  's', 'shop', 'cart', 'checkout', 'account', 'tracking',
+  's', 'shop', 'gym', 'clinic', 'carwash', 'dealer',
+  'cart', 'checkout', 'account', 'tracking',
   'platform', 'pricing', 'about', 'faq', 'terms', 'privacy',
   'privacy-policy', 'terms-and-conditions', 'contact',
   'salesman', 'sales-manager', 'referral', 'r',
+]);
+
+const ALLOWED_BUSINESS_TYPES = new Set([
+  'general_store',
+  'clothing',
+  'cosmetics',
+  'electronics',
+  'pharmacy',
+  'gym',
+  'clinic',
+  'carwash',
+  'car_dealer',
+  'other_retail',
 ]);
 
 function getDefaultCategoriesForBusinessTypeServer(businessType: string) {
@@ -81,6 +95,25 @@ function getDefaultCategoriesForBusinessTypeServer(businessType: string) {
         { name: 'Footwear & Chappals', slug: 'footwear', description: 'Casual shoes, sandals, Peshawari & khussa', order: 3 },
         { name: 'Accessories & Bags', slug: 'accessories', description: 'Shawls, dupattas, handbags & belts', order: 4 },
       ];
+    case 'electronics':
+      return [
+        { name: 'Mobile Accessories', slug: 'mobile-accessories', description: 'Chargers, cables, power banks & audio', order: 1 },
+        { name: 'Smartphones & Tablets', slug: 'smartphones-tablets', description: 'Phones, tablets & smart wearables', order: 2 },
+        { name: 'Computers & Peripherals', slug: 'computers-peripherals', description: 'Laptops, keyboards, mice & storage', order: 3 },
+        { name: 'Home Appliances', slug: 'home-appliances', description: 'Small kitchen & home electronics', order: 4 },
+      ];
+    case 'pharmacy':
+      return [
+        { name: 'OTC & Daily Relief', slug: 'otc-relief', description: 'First aid, pain relief & everyday care', order: 1 },
+        { name: 'Vitamins & Supplements', slug: 'vitamins-supplements', description: 'Multivitamins, minerals & nutrition', order: 2 },
+        { name: 'Mother & Baby Care', slug: 'baby-care', description: 'Infant nutrition, diapers & baby care', order: 3 },
+        { name: 'Medical Devices', slug: 'medical-devices', description: 'Thermometers, BP monitors & glucometers', order: 4 },
+      ];
+    case 'gym':
+    case 'clinic':
+    case 'carwash':
+    case 'car_dealer':
+      return [];
     case 'other_retail':
       return [
         { name: 'Featured Essentials', slug: 'featured-essentials', description: 'Popular everyday store products', order: 1 },
@@ -187,7 +220,12 @@ async function rebuildCustomClaimsForUser(
   const shops: Record<string, string> = {};
   membershipsSnap.forEach((docSnap) => {
     const data = docSnap.data();
-    if (data?.role && ['shop_owner', 'shop_admin', 'shop_staff'].includes(data.role)) {
+    if (
+      data?.role &&
+      ['shop_owner', 'shop_admin', 'manager', 'shop_staff', 'doctor', 'trainer', 'salesperson'].includes(
+        data.role
+      )
+    ) {
       shops[docSnap.id] = data.role;
     }
   });
@@ -548,9 +586,10 @@ export const registerShopWithCnic = onCall({ secrets: [cnicHmacSecret] }, async 
   const ownerPhone = String(data.ownerPhone || '').trim();
   const city = String(data.city || '').trim();
   const address = String(data.address || '').trim();
-  const businessType = ['general_store', 'cosmetics', 'clothing', 'other_retail'].includes(data.businessType)
-    ? data.businessType
+  const businessType = ALLOWED_BUSINESS_TYPES.has(String(data.businessType || ''))
+    ? String(data.businessType)
     : 'general_store';
+  const isServiceIndustry = ['gym', 'clinic', 'carwash', 'car_dealer'].includes(businessType);
 
   const normalizedCnic = normalizeCnicServer(data.cnic);
   if (!isValidCnicServer(normalizedCnic)) {
@@ -698,8 +737,12 @@ export const registerShopWithCnic = onCall({ secrets: [cnicHmacSecret] }, async 
       role: 'shop_owner',
       permissions: [
         'overview', 'products', 'categories', 'orders', 'customers',
-        'inventory', 'coupons', 'banners', 'appearance', 'settings',
+        'inventory', 'coupons', 'banners', 'marketing_qr', 'appearance', 'settings',
         'staff', 'reports', 'subscription', 'pos', 'suppliers', 'purchases', 'khata',
+        'payments_record', 'gym_members', 'gym_attendance', 'gym_trainers',
+        'clinic_appointments', 'clinic_patients', 'clinic_notes', 'clinic_doctors',
+        'carwash_queue', 'carwash_vehicles', 'carwash_packages',
+        'dealer_vehicles', 'dealer_private_pricing', 'dealer_leads', 'dealer_deals',
       ],
       status: 'active',
       createdAt: nowIso,
@@ -718,7 +761,9 @@ export const registerShopWithCnic = onCall({ secrets: [cnicHmacSecret] }, async 
       logoUrl: '',
       primaryColor: '#065f46',
       accentColor: '#d97706',
-      announcement: 'Welcome to our online store — Cash on Delivery, EasyPaisa, JazzCash & Store Pickup available.',
+      announcement: isServiceIndustry
+        ? `Welcome to ${shopName} — Book online or reach us on WhatsApp.`
+        : 'Welcome to our online store — Cash on Delivery, EasyPaisa, JazzCash & Store Pickup available.',
       contactPhone: ownerPhone,
       whatsappNumber: ownerPhone,
       contactEmail: ownerEmail,

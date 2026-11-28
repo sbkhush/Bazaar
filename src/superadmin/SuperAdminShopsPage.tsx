@@ -29,6 +29,7 @@ import { BUSINESS_TYPE_OPTIONS } from '../data/seedData';
 import { useAuth } from '../context/AuthContext';
 import { SafeImage } from '../components/common/SafeImage';
 import { CitySelect } from '../components/common/CitySelect';
+import { buildIndustryPublicPath, getIndustryGroup } from '../config/industryConfig';
 
 export const SuperAdminShopsPage: React.FC = () => {
   const { currentUser } = useAuth();
@@ -337,6 +338,22 @@ export const SuperAdminShopsPage: React.FC = () => {
         </div>
       )}
 
+      {/* Industry Totals Banner */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs">
+        {[
+          { label: 'Retail', count: shops.filter((s) => getIndustryGroup(s.businessType) === 'retail').length },
+          { label: 'Gyms', count: shops.filter((s) => getIndustryGroup(s.businessType) === 'gym').length },
+          { label: 'Clinics', count: shops.filter((s) => getIndustryGroup(s.businessType) === 'clinic').length },
+          { label: 'Car Wash', count: shops.filter((s) => getIndustryGroup(s.businessType) === 'carwash').length },
+          { label: 'Car Dealers', count: shops.filter((s) => getIndustryGroup(s.businessType) === 'car_dealer').length },
+        ].map((v) => (
+          <div key={v.label} className="bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 flex items-center justify-between">
+            <span className="font-semibold text-slate-600">{v.label}</span>
+            <span className="font-extrabold text-slate-900 tabular-nums">{v.count}</span>
+          </div>
+        ))}
+      </div>
+
       {/* Search & Filters */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
         <div className="relative">
@@ -450,7 +467,9 @@ export const SuperAdminShopsPage: React.FC = () => {
                             {s.name}
                           </Link>
                           <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="text-[11px] font-mono text-slate-500">/s/{s.slug}</span>
+                            <span className="text-[11px] font-mono text-slate-500">
+                              {buildIndustryPublicPath(s.slug, s.businessType)}
+                            </span>
                             <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-semibold">
                               {BUSINESS_TYPE_OPTIONS.find((b) => b.value === (s.businessType || 'general_store'))?.label || 'General Store'}
                             </span>
@@ -525,9 +544,9 @@ export const SuperAdminShopsPage: React.FC = () => {
                           <Eye className="w-3.5 h-3.5" />
                         </Link>
                         <Link
-                          to={`/s/${s.slug}`}
+                          to={buildIndustryPublicPath(s.slug, s.businessType)}
                           target="_blank"
-                          title="Open Public Storefront"
+                          title="Open Public Portal"
                           className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700"
                         >
                           <ExternalLink className="w-3.5 h-3.5" />

@@ -30,8 +30,21 @@ import {
 import { Order, Product, PosSale, Supplier, PurchaseInvoice } from '../types';
 import { formatPKR } from '../data/seedData';
 import { SimpleBarChart } from '../components/common/SimpleCharts';
+import { GymOverviewPage } from './industries/GymOverviewPage';
+import { ClinicOverviewPage } from './industries/ClinicOverviewPage';
+import { CarWashOverviewPage } from './industries/CarWashOverviewPage';
+import { DealerOverviewPage } from './industries/DealerOverviewPage';
 
 export const ShopOverviewPage: React.FC = () => {
+  const { industryGroup } = useDashboard();
+  if (industryGroup === 'gym') return <GymOverviewPage />;
+  if (industryGroup === 'clinic') return <ClinicOverviewPage />;
+  if (industryGroup === 'carwash') return <CarWashOverviewPage />;
+  if (industryGroup === 'car_dealer') return <DealerOverviewPage />;
+  return <RetailOverviewContent />;
+};
+
+const RetailOverviewContent: React.FC = () => {
   const { shopId, shop, settings, plan, isReadOnly, canUseFeature } = useDashboard();
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);

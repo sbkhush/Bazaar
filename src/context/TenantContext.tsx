@@ -31,7 +31,7 @@ const TenantContext = createContext<TenantContextType | undefined>(undefined);
 export const TenantProvider: React.FC<{
   slug?: string;
   shopIdOverride?: string;
-  basePrefix?: '/s' | '/shop';
+  basePrefix?: '/s' | '/shop' | '/gym' | '/clinic' | '/carwash' | '/dealer';
   children: React.ReactNode;
 }> = ({ slug, shopIdOverride, basePrefix = '/s', children }) => {
   const domainTenant = resolveTenantFromHostname();

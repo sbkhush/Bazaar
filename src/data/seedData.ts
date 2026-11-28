@@ -16,26 +16,66 @@ import {
 export const DEFAULT_SHOP_ID = 'bazaarpk';
 export const SUPER_ADMIN_EMAIL = 'hasanaamir815@gmail.com';
 
-export const BUSINESS_TYPE_OPTIONS: { value: BusinessType; label: string; description: string }[] = [
+export const BUSINESS_TYPE_OPTIONS: { value: BusinessType; label: string; description: string; group: 'Retail & Commerce' | 'Service & Vertical SaaS' }[] = [
   {
     value: 'general_store',
-    label: 'General Store / Kiryana Store',
+    label: 'General Store / Kiryana',
     description: 'Groceries, staples, beverages, household items with Piece/KG/Gram/Litre/Carton units',
-  },
-  {
-    value: 'cosmetics',
-    label: 'Cosmetics & Beauty Shop',
-    description: 'Skincare, makeup shades, fragrances, hair care & beauty essentials',
+    group: 'Retail & Commerce',
   },
   {
     value: 'clothing',
-    label: 'Clothing & Garments Store',
+    label: 'Clothing & Fashion',
     description: 'Eastern wear, stitched/unstitched suits, footwear, sizes, colors & style variants',
+    group: 'Retail & Commerce',
+  },
+  {
+    value: 'cosmetics',
+    label: 'Cosmetics & Beauty Products',
+    description: 'Skincare, makeup shades, fragrances, hair care & beauty essentials',
+    group: 'Retail & Commerce',
+  },
+  {
+    value: 'electronics',
+    label: 'Electronics & Accessories',
+    description: 'Mobiles, accessories, appliances, chargers, gadgets & warranty-friendly POS',
+    group: 'Retail & Commerce',
+  },
+  {
+    value: 'pharmacy',
+    label: 'Pharmacy',
+    description: 'Medicines, OTC health supplies, personal care & fast counter billing',
+    group: 'Retail & Commerce',
+  },
+  {
+    value: 'gym',
+    label: 'Gym & Fitness Center',
+    description: 'Members, monthly/quarterly plans, QR attendance check-in, trainers & fee collection',
+    group: 'Service & Vertical SaaS',
+  },
+  {
+    value: 'clinic',
+    label: 'Clinic & Medical Center',
+    description: 'Patient registry, doctor schedules, appointments, administrative visit notes & fees',
+    group: 'Service & Vertical SaaS',
+  },
+  {
+    value: 'carwash',
+    label: 'Car Wash & Detailing',
+    description: 'Vehicle registry, wash packages, live job queue, staff assignment & billing',
+    group: 'Service & Vertical SaaS',
+  },
+  {
+    value: 'car_dealer',
+    label: 'Car Dealer / Used Cars',
+    description: 'Showroom inventory, private cost & profit tracking, test drives, leads & commission deals',
+    group: 'Service & Vertical SaaS',
   },
   {
     value: 'other_retail',
-    label: 'Other Retail Store',
-    description: 'Flexible multi-category Pakistani retail storefront & POS billing',
+    label: 'Other Business',
+    description: 'Flexible multi-category Pakistani business storefront & POS billing',
+    group: 'Retail & Commerce',
   },
 ];
 
@@ -70,6 +110,25 @@ export function getDefaultCategoriesForBusinessType(
         { name: 'Footwear & Chappals', slug: 'footwear', description: 'Casual shoes, sandals, Peshawari & khussa', order: 3 },
         { name: 'Accessories & Bags', slug: 'accessories', description: 'Shawls, dupattas, handbags & belts', order: 4 },
       ];
+    case 'electronics':
+      return [
+        { name: 'Mobile Accessories', slug: 'mobile-accessories', description: 'Chargers, cables, power banks & audio', order: 1 },
+        { name: 'Smartphones & Tablets', slug: 'smartphones-tablets', description: 'Phones, tablets & smart wearables', order: 2 },
+        { name: 'Computers & Peripherals', slug: 'computers-peripherals', description: 'Laptops, keyboards, mice & storage', order: 3 },
+        { name: 'Home Appliances', slug: 'home-appliances', description: 'Small kitchen & home electronics', order: 4 },
+      ];
+    case 'pharmacy':
+      return [
+        { name: 'OTC & Daily Relief', slug: 'otc-relief', description: 'First aid, pain relief & everyday care', order: 1 },
+        { name: 'Vitamins & Supplements', slug: 'vitamins-supplements', description: 'Multivitamins, minerals & nutrition', order: 2 },
+        { name: 'Mother & Baby Care', slug: 'baby-care', description: 'Infant nutrition, diapers & baby care', order: 3 },
+        { name: 'Medical Devices', slug: 'medical-devices', description: 'Thermometers, BP monitors & glucometers', order: 4 },
+      ];
+    case 'gym':
+    case 'clinic':
+    case 'carwash':
+    case 'car_dealer':
+      return [];
     case 'other_retail':
       return [
         { name: 'Featured Essentials', slug: 'featured-essentials', description: 'Popular everyday store products', order: 1 },
@@ -100,11 +159,27 @@ export const ALL_STAFF_PERMISSIONS: { key: StaffPermission; label: string }[] = 
   { key: 'suppliers', label: 'Suppliers & Payables' },
   { key: 'coupons', label: 'Coupons & Discounts' },
   { key: 'banners', label: 'Promotional Banners' },
+  { key: 'marketing_qr', label: 'QR Marketing & Posters' },
   { key: 'appearance', label: 'Storefront Appearance & SEO' },
   { key: 'settings', label: 'Payment, Delivery & Self-Pickup' },
   { key: 'staff', label: 'Staff Management' },
   { key: 'reports', label: 'Reports, Expenses & Profit' },
   { key: 'subscription', label: 'Subscription & Billing' },
+  { key: 'payments_record', label: 'Fee & Payment Collection' },
+  { key: 'gym_members', label: 'Gym Members & Plans' },
+  { key: 'gym_attendance', label: 'Gym Attendance & QR' },
+  { key: 'gym_trainers', label: 'Gym Trainers & Workouts' },
+  { key: 'clinic_appointments', label: 'Clinic Appointments' },
+  { key: 'clinic_patients', label: 'Clinic Patients' },
+  { key: 'clinic_notes', label: 'Clinic Visit Notes & Prescriptions' },
+  { key: 'clinic_doctors', label: 'Clinic Doctors & Schedules' },
+  { key: 'carwash_queue', label: 'Car Wash Queue & Job Cards' },
+  { key: 'carwash_vehicles', label: 'Car Wash Customers & Vehicles' },
+  { key: 'carwash_packages', label: 'Car Wash Packages' },
+  { key: 'dealer_vehicles', label: 'Dealer Vehicle Inventory' },
+  { key: 'dealer_private_pricing', label: 'Dealer Purchase Cost & Profit' },
+  { key: 'dealer_leads', label: 'Dealer Inquiries & Leads' },
+  { key: 'dealer_deals', label: 'Dealer Deals & Commissions' },
 ];
 
 export const FALLBACK_PRODUCT_IMAGE =
@@ -149,6 +224,10 @@ export function isValidShopSlug(slug: string): boolean {
       'api',
       's',
       'shop',
+      'gym',
+      'clinic',
+      'carwash',
+      'dealer',
       'privacy-policy',
       'terms-and-conditions',
       'salesman',
@@ -363,11 +442,12 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     id: 'free-starter',
     name: 'Free Plan',
     slug: 'free-starter',
-    description: 'Launch a live online storefront with 1 active product, order receiving, and SB Khush store URL — free permanently.',
+    description: 'Launch a live online storefront or service page with basic starter capacity — free permanently.',
     monthlyPrice: 0,
     yearlyPrice: 0,
     durationDays: 36500,
     maxProducts: 1,
+    maxRecords: 15,
     maxStorageMB: 25,
     maxStaff: 1,
     features: {
@@ -386,6 +466,12 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       advancedInventory: false,
       advancedReports: false,
       prioritySupport: false,
+      gymModule: true,
+      clinicModule: true,
+      carwashModule: true,
+      dealerModule: true,
+      qrAttendance: false,
+      automatedReminders: false,
     },
     isActive: true,
     isPopular: false,
@@ -395,11 +481,12 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     id: 'starter',
     name: 'Starter Plan',
     slug: 'starter',
-    description: 'Built for neighborhood kiryana, cosmetics & clothing shops with up to 50 active products and basic inventory.',
+    description: 'Built for growing retail stores, gyms, clinics, car washes & showrooms with up to 50 products/records.',
     monthlyPrice: 799,
     yearlyPrice: 7990,
     durationDays: 30,
     maxProducts: 50,
+    maxRecords: 120,
     maxStorageMB: 150,
     maxStaff: 2,
     features: {
@@ -418,6 +505,12 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       advancedInventory: false,
       advancedReports: false,
       prioritySupport: false,
+      gymModule: true,
+      clinicModule: true,
+      carwashModule: true,
+      dealerModule: true,
+      qrAttendance: true,
+      automatedReminders: false,
     },
     isActive: true,
     isPopular: false,
@@ -427,11 +520,12 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     id: 'business',
     name: 'Business Plan',
     slug: 'business',
-    description: 'Complete counter POS billing, barcode scanning, suppliers, purchase invoices, customer Khata & 500 active products.',
+    description: 'Complete POS billing, QR attendance, automated WhatsApp reminders, Khata & multi-industry operations up to 500 records.',
     monthlyPrice: 1499,
     yearlyPrice: 14990,
     durationDays: 30,
     maxProducts: 500,
+    maxRecords: 1000,
     maxStorageMB: 750,
     maxStaff: 4,
     features: {
@@ -450,6 +544,12 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       advancedInventory: true,
       advancedReports: true,
       prioritySupport: false,
+      gymModule: true,
+      clinicModule: true,
+      carwashModule: true,
+      dealerModule: true,
+      qrAttendance: true,
+      automatedReminders: true,
     },
     isActive: true,
     isPopular: true,
@@ -459,11 +559,12 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     id: 'professional',
     name: 'Professional Plan',
     slug: 'professional',
-    description: 'Unlimited active products (fair-use storage), COGS & net profit analytics, multi-staff RBAC & priority support.',
+    description: 'Unlimited active products & vertical records, COGS & P&L analytics, multi-staff RBAC & priority support.',
     monthlyPrice: 2499,
     yearlyPrice: 24990,
     durationDays: 30,
     maxProducts: -1,
+    maxRecords: -1,
     maxStorageMB: 3072,
     maxStaff: 15,
     features: {
@@ -482,6 +583,12 @@ export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       advancedInventory: true,
       advancedReports: true,
       prioritySupport: true,
+      gymModule: true,
+      clinicModule: true,
+      carwashModule: true,
+      dealerModule: true,
+      qrAttendance: true,
+      automatedReminders: true,
     },
     isActive: true,
     isPopular: false,

@@ -27,7 +27,7 @@ service firebase.storage {
         ('shops' in request.auth.token &&
          request.auth.token.shops != null &&
          shopId in request.auth.token.shops &&
-         request.auth.token.shops[shopId] in ['shop_owner', 'shop_admin', 'shop_staff'])
+         request.auth.token.shops[shopId] in ['shop_owner', 'shop_admin', 'manager', 'doctor', 'trainer', 'salesperson', 'shop_staff'])
       );
     }
 
@@ -79,6 +79,18 @@ service firebase.storage {
       allow read: if true;
       allow create, update: if isShopMember(shopId) && isValidImageUpload();
       allow delete: if isShopMember(shopId);
+    }
+
+    match /shops/{shopId}/vehicles/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isShopMember(shopId) && isValidImageUpload();
+      allow delete: if isShopMember(shopId);
+    }
+
+    match /shops/{shopId}/receipts/{allPaths=**} {
+      allow read: if isShopMember(shopId);
+      allow create, update: if isShopMember(shopId) && isValidImageUpload();
+      allow delete: if isShopAdmin(shopId);
     }
 
     // ----------------------------------------------------

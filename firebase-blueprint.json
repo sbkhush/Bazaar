@@ -94,6 +94,7 @@
         "yearlyPrice": { "type": "number" },
         "durationDays": { "type": "number" },
         "maxProducts": { "type": "number" },
+        "maxRecords": { "type": "number" },
         "maxStorageMB": { "type": "number" },
         "maxStaff": { "type": "number" },
         "features": { "type": "object" },
@@ -137,7 +138,21 @@
         "id": { "type": "string" },
         "slug": { "type": "string" },
         "name": { "type": "string" },
-        "businessType": { "type": "string", "enum": ["general_store", "cosmetics", "clothing", "other_retail"] },
+        "businessType": {
+          "type": "string",
+          "enum": [
+            "general_store",
+            "clothing",
+            "cosmetics",
+            "electronics",
+            "pharmacy",
+            "gym",
+            "clinic",
+            "carwash",
+            "car_dealer",
+            "other_retail"
+          ]
+        },
         "ownerId": { "type": "string" },
         "ownerName": { "type": "string" },
         "ownerEmail": { "type": "string" },
@@ -200,7 +215,21 @@
         "id": { "type": "string" },
         "slug": { "type": "string" },
         "name": { "type": "string" },
-        "businessType": { "type": "string", "enum": ["general_store", "cosmetics", "clothing", "other_retail"] },
+        "businessType": {
+          "type": "string",
+          "enum": [
+            "general_store",
+            "clothing",
+            "cosmetics",
+            "electronics",
+            "pharmacy",
+            "gym",
+            "clinic",
+            "carwash",
+            "car_dealer",
+            "other_retail"
+          ]
+        },
         "logoUrl": { "type": "string" },
         "city": { "type": "string" },
         "publicContactPhone": { "type": "string" },
@@ -243,7 +272,7 @@
         "shopSlug": { "type": "string" },
         "email": { "type": "string" },
         "name": { "type": "string" },
-        "role": { "type": "string", "enum": ["shop_admin", "shop_staff"] },
+        "role": { "type": "string", "enum": ["shop_admin", "manager", "doctor", "trainer", "salesperson", "shop_staff"] },
         "permissions": { "type": "array" },
         "status": { "type": "string", "enum": ["pending", "accepted"] },
         "createdAt": { "type": "string" }
@@ -259,7 +288,23 @@
         "email": { "type": "string" },
         "displayName": { "type": "string" },
         "phoneNumber": { "type": "string" },
-        "role": { "type": "string", "enum": ["customer", "shop_owner", "shop_admin", "shop_staff", "sales_manager", "salesman", "referral_agent", "super_admin"] },
+        "role": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "shop_owner",
+            "shop_admin",
+            "manager",
+            "doctor",
+            "trainer",
+            "salesperson",
+            "shop_staff",
+            "sales_manager",
+            "salesman",
+            "referral_agent",
+            "super_admin"
+          ]
+        },
         "isBlocked": { "type": "boolean" },
         "addresses": { "type": "array" },
         "createdAt": { "type": "string" }
@@ -558,6 +603,69 @@
     "/shops/{shopId}/pickup_slots/{slotKey}": {
       "schema": { "$ref": "#/entities/PickupSlot" },
       "description": "Self-pickup date and time-slot reservation counts with strict capacity guard"
+    },
+    "/shops/{shopId}/public_offerings/{offeringId}": {
+      "description": "Publicly readable non-PII plans, doctor timings, and wash packages projection"
+    },
+    "/shops/{shopId}/gym_plans/{planId}": {
+      "description": "Tenant Gym membership pricing plans"
+    },
+    "/shops/{shopId}/gym_trainers/{trainerId}": {
+      "description": "Tenant Gym trainers & coaches"
+    },
+    "/shops/{shopId}/gym_workout_plans/{planId}": {
+      "description": "Tenant Gym workout routines & member schedules"
+    },
+    "/shops/{shopId}/gym_members/{memberId}": {
+      "description": "Tenant Gym member profiles, QR tokens, expiry dates, and pending dues"
+    },
+    "/shops/{shopId}/gym_attendance/{attendanceId}": {
+      "description": "Tenant Gym daily QR/manual check-in and check-out logs"
+    },
+    "/shops/{shopId}/clinic_doctors/{doctorId}": {
+      "description": "Tenant Clinic doctors, specialties, fees, and consultation hours"
+    },
+    "/shops/{shopId}/clinic_patients/{patientId}": {
+      "description": "Strictly private tenant Clinic patient profiles (zero public access, audit-logged)"
+    },
+    "/shops/{shopId}/clinic_medical_notes/{noteId}": {
+      "description": "Strictly private administrative clinic visit notes and prescriptions (append-only for doctors, zero public access)"
+    },
+    "/shops/{shopId}/clinic_appointments/{appointmentId}": {
+      "description": "Tenant Clinic appointments supporting desk scheduling and public booking requests"
+    },
+    "/shops/{shopId}/carwash_packages/{packageId}": {
+      "description": "Tenant Car Wash & Detailing service packages"
+    },
+    "/shops/{shopId}/carwash_customers/{customerId}": {
+      "description": "Tenant Car Wash customer directory"
+    },
+    "/shops/{shopId}/carwash_vehicles/{vehicleId}": {
+      "description": "Tenant Car Wash registered vehicles and plates"
+    },
+    "/shops/{shopId}/carwash_jobs/{jobId}": {
+      "description": "Tenant Car Wash live queue, job cards, and public wash bookings"
+    },
+    "/shops/{shopId}/vehicles/{vehicleId}": {
+      "description": "Private Car Dealer showroom inventory including purchase cost, profit margin, and commission fields"
+    },
+    "/shops/{shopId}/publicVehicles/{vehicleId}": {
+      "description": "Sanitized public showroom vehicle catalog stripping all confidential pricing, commission, and registration numbers"
+    },
+    "/shops/{shopId}/dealer_inquiries/{inquiryId}": {
+      "description": "Public test-drive, vehicle, and gym callback inquiries routed to tenant staff"
+    },
+    "/shops/{shopId}/dealer_leads/{leadId}": {
+      "description": "Car Dealer sales CRM leads & follow-ups"
+    },
+    "/shops/{shopId}/dealer_deals/{dealId}": {
+      "description": "Car Dealer closed sales, booking deposits, commissions, and P&L records"
+    },
+    "/shops/{shopId}/industry_payments/{paymentId}": {
+      "description": "PKR fee, booking, and deal payment records across service verticals"
+    },
+    "/shops/{shopId}/auditLogs/{logId}": {
+      "description": "Immutable tenant audit log trail for sensitive patient/visit-note access and operations"
     },
     "/support_tickets/{ticketId}": {
       "schema": { "$ref": "#/entities/SupportTicket" },

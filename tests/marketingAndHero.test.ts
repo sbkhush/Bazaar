@@ -257,11 +257,13 @@ describe('Tasks 4 & 5: Strict Tenant Isolation, GitHub Pages /Bazaar/ Routing & 
   it('wires /dashboard/marketing cleanly and seeds default categories & aboutUs inside Cloud Function transaction', () => {
     const appSrc = readWorkspaceFile('src/App.tsx');
     const layoutSrc = readWorkspaceFile('src/dashboard/ShopDashboardLayout.tsx');
+    const industryConfigSrc = readWorkspaceFile('src/config/industryConfig.ts');
     const marketingSrc = readWorkspaceFile('src/dashboard/ShopMarketingPage.tsx');
     const functionsSrc = readWorkspaceFile('functions/src/index.ts');
 
     expect(appSrc).toContain('path="marketing" element={<ShopMarketingPage />}');
-    expect(layoutSrc).toContain("to: '/dashboard/marketing'");
+    expect(layoutSrc).toContain('getSidebarNavForIndustry(businessType)');
+    expect(industryConfigSrc).toContain("to: '/dashboard/marketing'");
     expect(marketingSrc).toContain('assertMerchantMarketingAccess');
     expect(functionsSrc).toContain('getDefaultCategoriesForBusinessTypeServer');
     expect(functionsSrc).toContain('aboutUs:');

@@ -1,4 +1,6 @@
 import { DEFAULT_SHOP_ID, sanitizeShopSlug } from '../data/seedData';
+import { buildIndustryPublicPath } from '../config/industryConfig';
+import { BusinessType } from '../types';
 
 export const KNOWN_APP_ROOTS = [
   'register',
@@ -8,6 +10,10 @@ export const KNOWN_APP_ROOTS = [
   'dashboard',
   's',
   'shop',
+  'gym',
+  'clinic',
+  'carwash',
+  'dealer',
   'product',
   'cart',
   'checkout',
@@ -91,8 +97,15 @@ export function getRouterBasename(baseUrl?: string, pathname?: string, hostname?
   return '';
 }
 
-export function buildStorefrontPath(shopSlug?: string, subpath = ''): string {
+export function buildStorefrontPath(
+  shopSlug?: string,
+  subpath = '',
+  businessType?: BusinessType | string | null
+): string {
   const slug = sanitizeShopSlug(shopSlug || DEFAULT_SHOP_ID) || DEFAULT_SHOP_ID;
+  if (businessType) {
+    return buildIndustryPublicPath(slug, businessType, subpath);
+  }
   const cleanSub = subpath ? (subpath.startsWith('/') ? subpath : `/${subpath}`) : '';
   return `/s/${slug}${cleanSub}`;
 }

@@ -16,7 +16,9 @@ export type StorageFolder =
   | 'categories'
   | 'pages'
   | 'payments'
-  | 'subscription';
+  | 'subscription'
+  | 'vehicles'
+  | 'receipts';
 
 export interface UploadProgressOptions {
   shopId: string;
